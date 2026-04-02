@@ -2,17 +2,20 @@
 setlocal
 
 set "CONFIG=%~1"
-if "%CONFIG%"=="" set "CONFIG=Debug"
+if "%CONFIG%"=="" set "CONFIG=Release"
 
 set "RUNTIME=win-x64"
-set "OUTDIR=bin\%CONFIG%\publish\%RUNTIME%"
+set "APPNAME=StellarisModManager"
+set "OUTDIR=Output\%APPNAME%"
 
-dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained false -p:UseAppHost=true -o "%OUTDIR%"
+if exist "%OUTDIR%" rmdir /s /q "%OUTDIR%"
+
+dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:DebugType=None -p:DebugSymbols=false -p:IncludeNativeLibrariesForSelfExtract=true -o "%OUTDIR%"
 if errorlevel 1 exit /b %errorlevel%
 
-if exist "%OUTDIR%\StellarisModManager.exe" (
+if exist "%OUTDIR%\%APPNAME%.exe" (
 	echo Build succeeded.
-	echo Executable: %OUTDIR%\StellarisModManager.exe
+	echo Executable: %OUTDIR%\%APPNAME%.exe
 	exit /b 0
 )
 

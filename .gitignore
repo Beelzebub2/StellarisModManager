@@ -1,73 +1,66 @@
-## .NET / C#
+## .NET / C# / Avalonia
 
-# Build results
+# Build outputs
+[Bb]in/
+[Oo]bj/
 [Dd]ebug/
-[Dd]ebugPublic/
 [Rr]elease/
-[Rr]eleases/
+publish/
+artifacts/
+Output/
+TestResults/
+
+# Platform build folders
 x64/
 x86/
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
-bld/
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
 
-# Visual Studio
+# IDE files
 .vs/
-*.user
-*.suo
-*.userosscache
-*.sln.docobj
-*.userprefs
-
-# Rider / JetBrains
 .idea/
+*.suo
+*.user
+*.userosscache
+*.userprefs
+*.sln.docstates
 *.sln.iml
 
-# NuGet
+# Optional local VS Code workspace files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# NuGet and packages
 *.nupkg
 *.snupkg
 **/[Pp]ackages/*
 !**/[Pp]ackages/build/
-*.nuget.props
-*.nuget.targets
+.nuget/
 project.lock.json
 project.fragment.lock.json
-artifacts/
 
-# Publish output
-publish/
-PublishProfiles/
-
-# .NET CLI tools
-.dotnet/
-
-# Runtime
-*.runtimeconfig.json
-
-# Entity Framework migrations (keep the Migrations folder, ignore generated snapshot noise)
-# Uncomment if needed:
-# **/Migrations/*
-
-# Serilog log files
-logs/
+# Logs and diagnostics
+[Ll]ogs/
 *.log
+*.trx
+*.coverage
+*.coveragexml
+*.tmp
 
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Env / secrets
-*.env
-*.env.*
+# Local environment and secrets
+.env
+.env.*
 appsettings.Development.json
 secrets.json
 
-# WebView2 user data
+# WebView local runtime data
 WebView2UserData/
 EBWebView/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
