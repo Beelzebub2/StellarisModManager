@@ -32,6 +32,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnShowOlderVersionsChanged(bool value) => RebuildDropdown();
 
+    public Task LoadAsync() => LoadModsAsync();
+
     [RelayCommand]
     private async Task LoadModsAsync()
     {

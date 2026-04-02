@@ -35,11 +35,13 @@ public partial class MainViewModel : ViewModelBase
     public bool IsWorkshopActive => ReferenceEquals(ActiveView, WorkshopViewModel);
     public bool IsLibraryActive => ReferenceEquals(ActiveView, LibraryViewModel);
     public bool IsSettingsActive => ReferenceEquals(ActiveView, SettingsViewModel);
+    public bool IsVersionBrowserActive => ReferenceEquals(ActiveView, VersionBrowserViewModel);
 
-    // The three navigation items
+    // The four navigation items
     public WorkshopViewModel WorkshopViewModel { get; }
     public LibraryViewModel LibraryViewModel { get; }
     public SettingsViewModel SettingsViewModel { get; }
+    public VersionBrowserViewModel VersionBrowserViewModel { get; }
 
     // Status bar
     [ObservableProperty] private string _statusMessage = "Ready";
@@ -65,6 +67,7 @@ public partial class MainViewModel : ViewModelBase
         WorkshopViewModel = new WorkshopViewModel();
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader);
+        VersionBrowserViewModel = new VersionBrowserViewModel(db);
 
         // Wire workshop install requests to download + install flow
         WorkshopViewModel.InstallModRequested += (_, workshopId) =>
@@ -502,6 +505,13 @@ public partial class MainViewModel : ViewModelBase
     private void NavigateToSettings() => ActiveView = SettingsViewModel;
 
     [RelayCommand]
+    private async Task NavigateToVersionBrowser()
+    {
+        ActiveView = VersionBrowserViewModel;
+        await VersionBrowserViewModel.LoadAsync();
+    }
+
+    [RelayCommand]
     private void LaunchGame()
     {
         var gamePath = _settings.GamePath;
@@ -558,5 +568,6 @@ public partial class MainViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsWorkshopActive));
         OnPropertyChanged(nameof(IsLibraryActive));
         OnPropertyChanged(nameof(IsSettingsActive));
+        OnPropertyChanged(nameof(IsVersionBrowserActive));
     }
 }

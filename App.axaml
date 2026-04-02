@@ -32,6 +32,9 @@
         <DataTemplate DataType="vm:SettingsViewModel">
             <views:SettingsView />
         </DataTemplate>
+        <DataTemplate DataType="vm:VersionBrowserViewModel">
+            <views:VersionBrowserView />
+        </DataTemplate>
     </Application.DataTemplates>
 
 </Application>
