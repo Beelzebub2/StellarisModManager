@@ -275,7 +275,7 @@
                 <Border Grid.Column="1"
                         Grid.Row="1"
                         Width="300"
-                    Margin="0,8,0,0"
+                        Margin="0,8,0,0"
                         Background="{DynamicResource Theme.PanelBg}"
                         BorderBrush="{DynamicResource Theme.Border}"
                         BorderThickness="1"
