@@ -25,7 +25,7 @@ public class ModUpdateInfo
 /// </summary>
 public class ModUpdateChecker
 {
-    private static readonly ILogger _log = Log.ForContext<ModUpdateChecker>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<ModUpdateChecker>();
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     private const string SteamApiUrl =

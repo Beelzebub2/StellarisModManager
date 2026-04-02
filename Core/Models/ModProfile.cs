@@ -10,6 +10,7 @@ public class ModProfile
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;  // e.g. "Multiplayer Safe", "Solo Full"
+    public string? SharedProfileId { get; set; }
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<ModProfileEntry> Entries { get; set; } = new();

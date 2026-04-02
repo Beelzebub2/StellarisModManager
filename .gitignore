@@ -64,3 +64,6 @@ EBWebView/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Independent nested repository
+Stellarisync/

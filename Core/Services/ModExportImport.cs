@@ -44,7 +44,7 @@ public class ExportedMod
 /// </summary>
 public class ModExportImport
 {
-    private static readonly ILogger _log = Log.ForContext<ModExportImport>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<ModExportImport>();
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {

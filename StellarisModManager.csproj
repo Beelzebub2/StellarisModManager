@@ -46,6 +46,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Guard against nested repositories and generated folders being compiled as source -->
+    <Compile Remove="Stellarisync\**\*.cs" />
+    <Compile Remove="**\obj\**\*.cs" />
+    <Compile Remove="**\bin\**\*.cs" />
+
     <!-- Copy overlay.js to output so OverlayInjector can read it at runtime -->
     <None Update="UI\Assets\overlay.js">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

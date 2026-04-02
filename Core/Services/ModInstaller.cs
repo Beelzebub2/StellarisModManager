@@ -29,7 +29,7 @@ public class ModDescriptor
 /// </summary>
 public class ModInstaller
 {
-    private static readonly ILogger _log = Log.ForContext<ModInstaller>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<ModInstaller>();
 
     /// <summary>
     /// Copies downloaded mod files into the Stellaris mods folder and

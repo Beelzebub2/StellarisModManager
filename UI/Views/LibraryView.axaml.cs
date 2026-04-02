@@ -20,7 +20,13 @@ public partial class LibraryView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
+        if (_vm is not null)
+            _vm.ShareIdCopiedRequested -= OnShareIdCopiedRequested;
+
         _vm = DataContext as LibraryViewModel;
+
+        if (_vm is not null)
+            _vm.ShareIdCopiedRequested += OnShareIdCopiedRequested;
     }
 
     // ------------------------------------------------------------------
@@ -97,5 +103,21 @@ public partial class LibraryView : UserControl
         var path = files[0].TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(path))
             await _vm.ImportModListFromPathAsync(path);
+    }
+
+    private async void OnShareIdCopiedRequested(object? sender, string sharedId)
+    {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.Clipboard is null || string.IsNullOrWhiteSpace(sharedId))
+            return;
+
+        try
+        {
+            await topLevel.Clipboard.SetTextAsync(sharedId);
+        }
+        catch
+        {
+            // Clipboard copy is best effort.
+        }
     }
 }

@@ -55,7 +55,7 @@ public class WorkshopModInfo
 /// </summary>
 public class WorkshopDownloader
 {
-    private static readonly ILogger _log = Log.ForContext<WorkshopDownloader>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<WorkshopDownloader>();
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     private const string SteamCmdZipUrl =

@@ -116,7 +116,7 @@
                 BorderThickness="1"
                 CornerRadius="12"
                 Padding="12">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,*">
                 <TextBlock Grid.Column="0" Text="Profile" Foreground="{DynamicResource Theme.TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0" />
 
                 <ComboBox Grid.Column="1"
@@ -135,29 +135,55 @@
                     </StackPanel>
                 </Button>
 
-                <Button Grid.Column="3" Classes="toolbar" Command="{Binding SaveProfileCommand}" CommandParameter="{Binding ActiveProfile}" Margin="8,0,0,0">
+                <TextBox Grid.Column="3"
+                         Text="{Binding ProfileNameDraft}"
+                         Watermark="Profile name"
+                         Width="180"
+                         Margin="8,0,0,0"
+                         Background="{DynamicResource Theme.SurfaceBg}"
+                         BorderBrush="{DynamicResource Theme.Border}"
+                         Foreground="{DynamicResource Theme.TextPrimary}"
+                         CornerRadius="8" />
+
+                <Button Grid.Column="4" Classes="toolbar" Command="{Binding RenameProfileCommand}" CommandParameter="{Binding ActiveProfile}" Margin="8,0,0,0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Classes="icon-glyph" Text="&#xE74E;" />
-                        <TextBlock Text="Save" />
+                        <TextBlock Classes="icon-glyph" Text="&#xE8AC;" />
+                        <TextBlock Text="Rename" />
                     </StackPanel>
                 </Button>
 
-                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8" Margin="8,0,0,0">
-                    <Button Classes="toolbar" Command="{Binding ActivateProfileCommand}" CommandParameter="{Binding ActiveProfile}">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBlock Classes="icon-glyph" Text="&#xE73E;" />
-                            <TextBlock Text="Activate" />
-                        </StackPanel>
-                    </Button>
+                <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" Margin="8,0,0,0">
                     <Button Classes="toolbar" Command="{Binding DeleteProfileCommand}" CommandParameter="{Binding ActiveProfile}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBlock Classes="icon-glyph" Text="&#xE74D;" />
                             <TextBlock Text="Delete" />
                         </StackPanel>
                     </Button>
+                    <Button Classes="toolbar" Command="{Binding ShareProfileCommand}" CommandParameter="{Binding ActiveProfile}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE72D;" />
+                            <TextBlock Text="Share" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
 
-                <Border Grid.Column="5"
+                <StackPanel Grid.Column="6" Orientation="Horizontal" Spacing="6" Margin="8,0,0,0" VerticalAlignment="Center">
+                    <TextBox Text="{Binding SharedProfileId}"
+                             Watermark="Shared profile ID"
+                             Width="170"
+                             Background="{DynamicResource Theme.SurfaceBg}"
+                             BorderBrush="{DynamicResource Theme.Border}"
+                             Foreground="{DynamicResource Theme.TextPrimary}"
+                             CornerRadius="8" />
+                    <Button Classes="toolbar" Command="{Binding UseSharedProfileIdCommand}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE8A7;" />
+                            <TextBlock Text="Use ID" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Border Grid.Column="7"
                         HorizontalAlignment="Right"
                         Background="{DynamicResource Theme.SurfaceBg}"
                         BorderBrush="{DynamicResource Theme.Border}"

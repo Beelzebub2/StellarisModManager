@@ -11,7 +11,7 @@ namespace StellarisModManager.Core.Services;
 /// </summary>
 public class GameDetector
 {
-    private static readonly ILogger _log = Log.ForContext<GameDetector>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<GameDetector>();
 
     // Steam App ID for Stellaris
     private const string StellarisAppId = "281990";

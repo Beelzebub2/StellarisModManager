@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -121,6 +122,38 @@ public class ModDatabase
     {
         await using var ctx = _contextFactory();
         await ctx.Database.EnsureCreatedAsync();
+        await EnsureProfileSchemaAsync(ctx);
+    }
+
+    private static async Task EnsureProfileSchemaAsync(ModDbContext ctx)
+    {
+        var conn = ctx.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        if (!await ColumnExistsAsync(conn, "Profiles", "SharedProfileId"))
+        {
+            await ctx.Database.ExecuteSqlRawAsync("ALTER TABLE Profiles ADD COLUMN SharedProfileId TEXT NULL;");
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(System.Data.Common.DbConnection conn, string tableName, string columnName)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA table_info({tableName});";
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (reader.FieldCount < 2)
+                continue;
+
+            var currentName = reader.GetString(1);
+            if (string.Equals(currentName, columnName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 
     // -------------------------------------------------------------------------
@@ -317,6 +350,41 @@ public class ModDatabase
         return profile;
     }
 
+    public async Task RenameProfileAsync(int profileId, string newName)
+    {
+        await using var ctx = _contextFactory();
+
+        var profile = await ctx.Profiles.FindAsync(profileId)
+            ?? throw new InvalidOperationException($"Profile {profileId} not found.");
+
+        profile.Name = newName;
+        await ctx.SaveChangesAsync();
+    }
+
+    public async Task SetProfileSharedIdAsync(int profileId, string sharedProfileId)
+    {
+        await using var ctx = _contextFactory();
+
+        var profile = await ctx.Profiles.FindAsync(profileId)
+            ?? throw new InvalidOperationException($"Profile {profileId} not found.");
+
+        profile.SharedProfileId = sharedProfileId;
+        await ctx.SaveChangesAsync();
+    }
+
+    public async Task<List<string>> GetEnabledWorkshopIdsForProfileAsync(int profileId)
+    {
+        await using var ctx = _contextFactory();
+
+        return await ctx.ProfileEntries
+            .Where(e => e.ProfileId == profileId && e.IsEnabled)
+            .Include(e => e.Mod)
+            .Select(e => e.Mod.SteamWorkshopId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct()
+            .ToListAsync();
+    }
+
     public async Task DeleteProfileAsync(int profileId)
     {
         await using var ctx = _contextFactory();
@@ -376,6 +444,11 @@ public class ModDatabase
             ?? throw new InvalidOperationException($"Profile {profileId} not found.");
         target.IsActive = true;
 
+        // Disable all mods first, then apply profile settings.
+        var mods = await ctx.Mods.ToListAsync();
+        foreach (var mod in mods)
+            mod.IsEnabled = false;
+
         // Load entries for this profile
         var entries = await ctx.ProfileEntries
             .Where(e => e.ProfileId == profileId)
@@ -383,15 +456,6 @@ public class ModDatabase
 
         if (entries.Count > 0)
         {
-            var modIds = entries.Select(e => e.ModId).ToList();
-            var mods = await ctx.Mods.ToListAsync();
-
-            // Disable all mods first, then apply profile settings
-            foreach (var mod in mods)
-            {
-                mod.IsEnabled = false;
-            }
-
             foreach (var entry in entries)
             {
                 var mod = mods.FirstOrDefault(m => m.Id == entry.ModId);

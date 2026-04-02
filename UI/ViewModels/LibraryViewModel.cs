@@ -4,6 +4,9 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -15,7 +18,13 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class LibraryViewModel : ViewModelBase
 {
-    private static readonly ILogger _log = Log.ForContext<LibraryViewModel>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<LibraryViewModel>();
+    private static readonly HttpClient _stellarisyncHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
+    private const string StellarisyncBaseUrl = "https://stellarisync.rrmtools.uk";
+
+    private bool _isLoadingProfiles;
+    private bool _isApplyingProfileSelection;
+    private int? _currentActiveProfileId;
 
     private readonly ModDatabase _db;
     private readonly ModUpdateChecker _updateChecker;
@@ -41,12 +50,16 @@ public partial class LibraryViewModel : ViewModelBase
     // Profiles
     public ObservableCollection<ModProfile> Profiles { get; } = new();
     [ObservableProperty] private ModProfile? _activeProfile;
+    [ObservableProperty] private string _profileNameDraft = string.Empty;
+    [ObservableProperty] private string _sharedProfileId = string.Empty;
 
     // Status
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _isCheckingUpdates = false;
     [ObservableProperty] private int _updatesAvailable = 0;
     public bool HasUpdatesAvailable => UpdatesAvailable > 0;
+
+    public event EventHandler<string>? ShareIdCopiedRequested;
 
     // Status bar computed values
     public int TotalMods => Mods.Count;
@@ -69,6 +82,39 @@ public partial class LibraryViewModel : ViewModelBase
     }
 
     partial void OnUpdatesAvailableChanged(int value) => OnPropertyChanged(nameof(HasUpdatesAvailable));
+    partial void OnActiveProfileChanged(ModProfile? value)
+    {
+        ProfileNameDraft = value?.Name ?? string.Empty;
+
+        if (value is null || _isLoadingProfiles || _isApplyingProfileSelection)
+            return;
+
+        if (value.IsActive)
+            return;
+
+        _ = ActivateProfileBySelectionAsync(value);
+    }
+
+    private async Task ActivateProfileBySelectionAsync(ModProfile profile)
+    {
+        _isApplyingProfileSelection = true;
+        try
+        {
+            await SaveCurrentlyActiveProfileBeforeSwitchAsync(profile.Id);
+            await _db.ActivateProfileAsync(profile.Id);
+            await LoadModsAsync();
+            _currentActiveProfileId = profile.Id;
+            StatusMessage = $"Activated profile: {profile.Name}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Failed to activate profile: {ex.Message}";
+        }
+        finally
+        {
+            _isApplyingProfileSelection = false;
+        }
+    }
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnShowEnabledOnlyChanged(bool value) => ApplyFilter();
@@ -104,10 +150,10 @@ public partial class LibraryViewModel : ViewModelBase
 
     private async Task SaveProfileSnapshotIfActiveAsync()
     {
-        if (ActiveProfile is null)
+        if (_currentActiveProfileId is null)
             return;
 
-        await SaveCurrentStateToProfileAsync(ActiveProfile.Id);
+        await SaveCurrentStateToProfileAsync(_currentActiveProfileId.Value);
     }
 
     private async Task SaveCurrentStateToProfileAsync(int profileId)
@@ -117,6 +163,17 @@ public partial class LibraryViewModel : ViewModelBase
             .ToList();
 
         await _db.SaveProfileEntriesAsync(profileId, snapshot);
+    }
+
+    private async Task SaveCurrentlyActiveProfileBeforeSwitchAsync(int? targetProfileId = null)
+    {
+        if (_currentActiveProfileId is null)
+            return;
+
+        if (targetProfileId.HasValue && _currentActiveProfileId.Value == targetProfileId.Value)
+            return;
+
+        await SaveCurrentStateToProfileAsync(_currentActiveProfileId.Value);
     }
 
     private async Task PersistEnabledStateAsync(ModViewModel mod)
@@ -359,25 +416,204 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task CreateProfileAsync()
     {
-        var name = $"Profile {Profiles.Count + 1}";
+        var name = Profiles.Count == 0 ? "Default" : $"Profile {Profiles.Count + 1}";
+
+        // Preserve current active profile before activating a new empty one.
+        await SaveCurrentlyActiveProfileBeforeSwitchAsync();
+
         var profile = await _db.CreateProfileAsync(name);
-        await SaveCurrentStateToProfileAsync(profile.Id);
         Profiles.Add(profile);
+
+        // New profiles start empty; activating one clears enabled mods in the live list.
+        await _db.ActivateProfileAsync(profile.Id);
         ActiveProfile = profile;
-        StatusMessage = $"Created profile: {name}";
+        await LoadModsAsync();
+        StatusMessage = $"Created empty profile: {name}";
     }
 
     [RelayCommand]
-    private async Task SaveProfileAsync(ModProfile? profile)
+    private async Task RenameProfileAsync(ModProfile? profile)
     {
         if (profile is null)
         {
-            StatusMessage = "Select a profile to save.";
+            StatusMessage = "Select a profile to rename.";
             return;
         }
 
-        await SaveCurrentStateToProfileAsync(profile.Id);
-        StatusMessage = $"Saved profile: {profile.Name}";
+        var newName = ProfileNameDraft.Trim();
+        if (string.IsNullOrWhiteSpace(newName))
+        {
+            StatusMessage = "Profile name cannot be empty.";
+            return;
+        }
+
+        var duplicate = Profiles.Any(p => p.Id != profile.Id &&
+            string.Equals(p.Name, newName, StringComparison.OrdinalIgnoreCase));
+        if (duplicate)
+        {
+            StatusMessage = $"A profile named '{newName}' already exists.";
+            return;
+        }
+
+        await _db.RenameProfileAsync(profile.Id, newName);
+        profile.Name = newName;
+
+        var idx = Profiles.IndexOf(profile);
+        if (idx >= 0)
+        {
+            Profiles.RemoveAt(idx);
+            Profiles.Insert(idx, profile);
+            ActiveProfile = profile;
+        }
+
+        StatusMessage = $"Renamed profile to: {newName}";
+    }
+
+    [RelayCommand]
+    private async Task ShareProfileAsync(ModProfile? profile)
+    {
+        if (profile is null)
+        {
+            StatusMessage = "Select a profile to share.";
+            return;
+        }
+
+        if (_currentActiveProfileId == profile.Id)
+            await SaveCurrentStateToProfileAsync(profile.Id);
+
+        if (!string.IsNullOrWhiteSpace(profile.SharedProfileId))
+        {
+            ShareIdCopiedRequested?.Invoke(this, profile.SharedProfileId);
+            StatusMessage = $"Copied existing profile ID: {profile.SharedProfileId}";
+            return;
+        }
+
+        var workshopIds = await _db.GetEnabledWorkshopIdsForProfileAsync(profile.Id);
+        if (workshopIds.Count == 0)
+        {
+            StatusMessage = "Cannot share an empty profile. Enable mods first.";
+            return;
+        }
+
+        var baseUrl = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = StellarisyncBaseUrl;
+
+        var requestUrl = $"{baseUrl.TrimEnd('/')}/profiles";
+        var payload = JsonSerializer.Serialize(new
+        {
+            name = profile.Name,
+            creator = Environment.UserName,
+            mods = workshopIds,
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+        };
+
+        var apiKey = Environment.GetEnvironmentVariable("STELLARISYNC_API_KEY");
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            request.Headers.TryAddWithoutValidation("X-Stellarisync-Key", apiKey);
+
+        try
+        {
+            using var response = await _stellarisyncHttp.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                StatusMessage = $"Share failed ({(int)response.StatusCode}): {responseBody}";
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            var id = doc.RootElement.TryGetProperty("id", out var idEl)
+                ? idEl.GetString()
+                : null;
+
+            if (string.IsNullOrWhiteSpace(id))
+            {
+                StatusMessage = "Profile shared, but response did not include an ID.";
+                return;
+            }
+
+            await _db.SetProfileSharedIdAsync(profile.Id, id);
+            profile.SharedProfileId = id;
+            ShareIdCopiedRequested?.Invoke(this, id);
+            StatusMessage = $"Shared profile '{profile.Name}'. ID copied: {id}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Share failed: {ex.Message}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task UseSharedProfileIdAsync()
+    {
+        var id = SharedProfileId.Trim();
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            StatusMessage = "Enter a shared profile ID first.";
+            return;
+        }
+
+        var baseUrl = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = StellarisyncBaseUrl;
+
+        var url = $"{baseUrl.TrimEnd('/')}/profiles/{Uri.EscapeDataString(id)}/sync-check";
+        var installed = Mods
+            .Select(m => m.WorkshopId)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        var payload = JsonSerializer.Serialize(new { installedMods = installed });
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(payload, Encoding.UTF8, "application/json")
+            };
+
+            using var response = await _stellarisyncHttp.SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                StatusMessage = $"Profile ID check failed ({(int)response.StatusCode}): {body}";
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            var prompt = doc.RootElement.TryGetProperty("prompt", out var promptEl) ? promptEl.GetString() : null;
+            var shouldPromptInstall = doc.RootElement.TryGetProperty("shouldPromptInstall", out var installEl) && installEl.GetBoolean();
+            var profileName = doc.RootElement.TryGetProperty("profileName", out var nameEl) ? nameEl.GetString() : id;
+
+            if (shouldPromptInstall)
+            {
+                if (!string.IsNullOrWhiteSpace(prompt))
+                {
+                    StatusMessage = prompt;
+                    return;
+                }
+
+                var missing = doc.RootElement.TryGetProperty("missingMods", out var missingEl) && missingEl.ValueKind == JsonValueKind.Array
+                    ? missingEl.GetArrayLength()
+                    : 0;
+                StatusMessage = $"Profile '{profileName}' has {missing} missing mod(s).";
+                return;
+            }
+
+            StatusMessage = $"Profile '{profileName}' matches your installed mods.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Profile ID check failed: {ex.Message}";
+        }
     }
 
     [RelayCommand]
@@ -392,7 +628,10 @@ public partial class LibraryViewModel : ViewModelBase
         await _db.DeleteProfileAsync(profile.Id);
         Profiles.Remove(profile);
         if (ActiveProfile?.Id == profile.Id)
+        {
             ActiveProfile = null;
+            _currentActiveProfileId = null;
+        }
         StatusMessage = $"Deleted profile: {profile.Name}";
     }
 
@@ -405,10 +644,7 @@ public partial class LibraryViewModel : ViewModelBase
             return;
         }
 
-        await _db.ActivateProfileAsync(profile.Id);
-        ActiveProfile = profile;
-        await LoadModsAsync();
-        StatusMessage = $"Activated profile: {profile.Name}";
+        await ActivateProfileBySelectionAsync(profile);
     }
 
     // Load mods from DB
@@ -428,11 +664,24 @@ public partial class LibraryViewModel : ViewModelBase
         }
 
         var profiles = await _db.GetProfilesAsync();
+
+        if (profiles.Count == 0)
+        {
+            var defaultProfile = await _db.CreateProfileAsync("Default");
+            await SaveCurrentStateToProfileAsync(defaultProfile.Id);
+            await _db.ActivateProfileAsync(defaultProfile.Id);
+            profiles = await _db.GetProfilesAsync();
+        }
+
+        _isLoadingProfiles = true;
+
         Profiles.Clear();
         foreach (var p in profiles)
             Profiles.Add(p);
 
-        ActiveProfile = profiles.FirstOrDefault(p => p.IsActive);
+        ActiveProfile = profiles.FirstOrDefault(p => p.IsActive) ?? profiles.FirstOrDefault();
+        _currentActiveProfileId = ActiveProfile?.Id;
+        _isLoadingProfiles = false;
 
         ApplyFilter();
         _ = Task.Run(SyncLauncherStateAsync);

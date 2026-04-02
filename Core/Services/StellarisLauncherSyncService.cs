@@ -17,7 +17,7 @@ namespace StellarisModManager.Core.Services;
 /// </summary>
 public class StellarisLauncherSyncService
 {
-    private static readonly ILogger _log = Log.ForContext<StellarisLauncherSyncService>();
+    private static readonly Serilog.ILogger _log = Log.ForContext<StellarisLauncherSyncService>();
 
     public async Task SyncAsync(string modsPath, IReadOnlyCollection<Mod> mods, CancellationToken ct = default)
     {
