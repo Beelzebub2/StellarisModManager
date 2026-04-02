@@ -9,7 +9,7 @@ if errorlevel 1 exit /b %errorlevel%
 
 where iscc >nul 2>nul
 if errorlevel 1 (
-    echo Inno Setup compiler (iscc.exe) was not found.
+    echo Inno Setup compiler iscc.exe was not found.
     echo Install Inno Setup, then run this script again to generate Output\Installer\StellarisModManager-Setup.exe.
     exit /b 1
 )

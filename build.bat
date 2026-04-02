@@ -10,7 +10,7 @@ set "OUTDIR=Output\%APPNAME%"
 
 if exist "%OUTDIR%" rmdir /s /q "%OUTDIR%"
 
-dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:DebugType=None -p:DebugSymbols=false -p:IncludeNativeLibrariesForSelfExtract=true -o "%OUTDIR%"
+dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:DebugType=None -p:DebugSymbols=false -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -o "%OUTDIR%"
 if errorlevel 1 exit /b %errorlevel%
 
 if exist "%OUTDIR%\%APPNAME%.exe" (

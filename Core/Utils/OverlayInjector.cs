@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Reflection;
 
 namespace StellarisModManager.Core.Utils;
 
@@ -28,7 +27,7 @@ public static class OverlayInjector
                 return _cachedScript;
 
             // Try to load from the output directory (CopyToOutputDirectory = PreserveNewest)
-            var exeDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
+            var exeDir = AppContext.BaseDirectory;
             var assetPath = Path.Combine(exeDir, "UI", "Assets", "overlay.js");
 
             if (File.Exists(assetPath))
