@@ -123,6 +123,7 @@ public class ModDatabase
         await using var ctx = _contextFactory();
         await ctx.Database.EnsureCreatedAsync();
         await EnsureProfileSchemaAsync(ctx);
+        await EnsureModsSchemaAsync(ctx);
     }
 
     private static async Task EnsureProfileSchemaAsync(ModDbContext ctx)
@@ -134,6 +135,18 @@ public class ModDatabase
         if (!await ColumnExistsAsync(conn, "Profiles", "SharedProfileId"))
         {
             await ctx.Database.ExecuteSqlRawAsync("ALTER TABLE Profiles ADD COLUMN SharedProfileId TEXT NULL;");
+        }
+    }
+
+    private static async Task EnsureModsSchemaAsync(ModDbContext ctx)
+    {
+        var conn = ctx.Database.GetDbConnection();
+        if (conn.State != ConnectionState.Open)
+            await conn.OpenAsync();
+
+        if (!await ColumnExistsAsync(conn, "Mods", "TotalSubscribers"))
+        {
+            await ctx.Database.ExecuteSqlRawAsync("ALTER TABLE Mods ADD COLUMN TotalSubscribers INTEGER NULL;");
         }
     }
 
@@ -197,6 +210,7 @@ public class ModDatabase
         existing.DescriptorPath = mod.DescriptorPath;
         existing.ThumbnailUrl = mod.ThumbnailUrl;
         existing.Description = mod.Description;
+        existing.TotalSubscribers = mod.TotalSubscribers ?? existing.TotalSubscribers;
         existing.GameVersion = mod.GameVersion;
         existing.Tags = mod.Tags;
         existing.LastUpdatedAt = DateTime.UtcNow;

@@ -20,6 +20,7 @@ public class Mod
     public DateTime? LastUpdatedAt { get; set; }
     public string? ThumbnailUrl { get; set; }
     public string? Description { get; set; }
+    public long? TotalSubscribers { get; set; }
     public string? GameVersion { get; set; }      // supported_version from descriptor
     public bool IsMultiplayerSafe { get; set; }   // true if only UI/gfx/music
     public string? Tags { get; set; }             // JSON array of tags

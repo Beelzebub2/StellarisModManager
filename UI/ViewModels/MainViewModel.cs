@@ -75,6 +75,8 @@ public partial class MainViewModel : ViewModelBase
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader, db);
         VersionBrowserViewModel = new VersionBrowserViewModel(downloader, settings, new Core.Services.GameDetector());
 
+        LibraryViewModel.OpenWorkshopInAppRequested += (_, url) => OpenWorkshopUrlInApp(url);
+
         _gameStateTimer.Tick += (_, _) => RefreshGameRunningState();
         RefreshGameRunningState();
         _gameStateTimer.Start();
@@ -680,6 +682,19 @@ public partial class MainViewModel : ViewModelBase
             action();
         else
             Dispatcher.UIThread.Post(action);
+    }
+
+    private void OpenWorkshopUrlInApp(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+
+        RunOnUiThread(() =>
+        {
+            WorkshopViewModel.RequestNavigateToUrl(url);
+            ActiveView = WorkshopViewModel;
+            StatusMessage = "Opened workshop page in-app.";
+        });
     }
 
     [RelayCommand]

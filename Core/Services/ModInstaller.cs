@@ -114,6 +114,7 @@ public class ModInstaller
                 : null,
             ThumbnailUrl = modInfo?.PreviewImageUrl,
             Description = modInfo?.Description,
+            TotalSubscribers = modInfo?.TotalSubscribers,
             GameVersion = descriptor.SupportedVersion,
             Tags = modInfo?.Tags is { Count: > 0 }
                 ? System.Text.Json.JsonSerializer.Serialize(modInfo.Tags)

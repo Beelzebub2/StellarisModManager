@@ -221,9 +221,33 @@ public partial class SettingsViewModel : ViewModelBase
     [RelayCommand]
     private async Task DownloadSteamCmdAsync()
     {
-        StatusMessage = "Downloading SteamCMD...";
         try
         {
+            if (_downloader.IsSteamCmdAvailable(SteamCmdPath))
+            {
+                StatusMessage = "SteamCMD is already installed.";
+                return;
+            }
+
+            var detectedSteamCmd = _detector.DetectSteamCmdPath();
+            if (!string.IsNullOrWhiteSpace(detectedSteamCmd) && File.Exists(detectedSteamCmd))
+            {
+                SteamCmdPath = detectedSteamCmd;
+
+                if (string.IsNullOrWhiteSpace(SteamCmdDownloadPath))
+                {
+                    var detectedDir = Path.GetDirectoryName(detectedSteamCmd);
+                    if (!string.IsNullOrWhiteSpace(detectedDir))
+                        SteamCmdDownloadPath = detectedDir;
+                }
+
+                SaveSettings();
+                StatusMessage = "SteamCMD is already installed. Using detected path.";
+                return;
+            }
+
+            StatusMessage = "Downloading SteamCMD...";
+
             var targetDir = string.IsNullOrWhiteSpace(SteamCmdDownloadPath)
                 ? Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisModManager.Core.Models;
 using StellarisModManager.Core.Services;
+using StellarisModManager.Core.Utils;
 
 namespace StellarisModManager.UI.ViewModels;
 
@@ -13,6 +15,7 @@ namespace StellarisModManager.UI.ViewModels;
 public partial class ModViewModel : ViewModelBase
 {
     private readonly ModDatabase _db;
+    private bool _attemptedDescriptorVersionLoad;
 
     public Mod Model { get; }
 
@@ -24,8 +27,29 @@ public partial class ModViewModel : ViewModelBase
     public string Version => !string.IsNullOrWhiteSpace(Model.Version) ? Model.Version : "Unknown";
     public string WorkshopId => Model.SteamWorkshopId;
     public bool IsMultiplayerSafe => Model.IsMultiplayerSafe;
-    public string? GameVersion => Model.GameVersion;
+    public string? GameVersion
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(Model.GameVersion))
+                return Model.GameVersion;
+
+            if (_attemptedDescriptorVersionLoad)
+                return null;
+
+            _attemptedDescriptorVersionLoad = true;
+            var detected = TryLoadSupportedVersionFromDescriptor();
+            if (!string.IsNullOrWhiteSpace(detected))
+                Model.GameVersion = detected;
+
+            return Model.GameVersion;
+        }
+    }
     public string InstalledDate => Model.InstalledAt.ToString("yyyy-MM-dd");
+    public bool HasTotalSubscribers => Model.TotalSubscribers is > 0;
+    public string TotalSubscribersDisplay => Model.TotalSubscribers is > 0
+        ? Model.TotalSubscribers.Value.ToString("N0")
+        : "Unknown";
 
     /// <summary>Returns "Update available" when HasUpdate is true, empty string otherwise.</summary>
     public string HasUpdateText => HasUpdate ? "Update available" : string.Empty;
@@ -73,6 +97,45 @@ public partial class ModViewModel : ViewModelBase
 
     partial void OnHasUpdateChanged(bool value) => OnPropertyChanged(nameof(HasUpdateText));
     partial void OnIsEnabledChanged(bool value) => Model.IsEnabled = value;
+
+    public void SetTotalSubscribers(long? totalSubscribers)
+    {
+        Model.TotalSubscribers = totalSubscribers;
+        OnPropertyChanged(nameof(HasTotalSubscribers));
+        OnPropertyChanged(nameof(TotalSubscribersDisplay));
+    }
+
+    private string? TryLoadSupportedVersionFromDescriptor()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(Model.DescriptorPath) && File.Exists(Model.DescriptorPath))
+            {
+                var descriptorText = File.ReadAllText(Model.DescriptorPath);
+                var parsed = DescriptorParser.Parse(descriptorText);
+                if (!string.IsNullOrWhiteSpace(parsed.SupportedVersion))
+                    return parsed.SupportedVersion;
+            }
+
+            if (!string.IsNullOrWhiteSpace(Model.InstalledPath) && Directory.Exists(Model.InstalledPath))
+            {
+                var localDescriptorPath = Path.Combine(Model.InstalledPath, "descriptor.mod");
+                if (File.Exists(localDescriptorPath))
+                {
+                    var descriptorText = File.ReadAllText(localDescriptorPath);
+                    var parsed = DescriptorParser.Parse(descriptorText);
+                    if (!string.IsNullOrWhiteSpace(parsed.SupportedVersion))
+                        return parsed.SupportedVersion;
+                }
+            }
+        }
+        catch
+        {
+            // Descriptor parsing is best-effort for display metadata.
+        }
+
+        return null;
+    }
 
     // Persists the current checkbox value to the database.
     [RelayCommand]

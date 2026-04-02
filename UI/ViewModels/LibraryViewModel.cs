@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -61,10 +62,12 @@ public partial class LibraryViewModel : ViewModelBase
     public bool HasUpdatesAvailable => UpdatesAvailable > 0;
 
     public event EventHandler<string>? ShareIdCopiedRequested;
+    public event EventHandler<string>? OpenWorkshopInAppRequested;
 
     // Status bar computed values
     public int TotalMods => Mods.Count;
     public int ActiveMods => Mods.Count(m => m.IsEnabled);
+    public bool CanDeleteProfiles => Profiles.Count > 1;
 
     public LibraryViewModel(
         ModDatabase db,
@@ -147,6 +150,16 @@ public partial class LibraryViewModel : ViewModelBase
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnShowEnabledOnlyChanged(bool value) => ApplyFilter();
+    partial void OnSelectedModChanged(ModViewModel? value)
+    {
+        if (value is null)
+            return;
+
+        if (value.Model.TotalSubscribers is > 0)
+            return;
+
+        _ = HydrateSubscribersAsync(value);
+    }
 
     private void ApplyFilter()
     {
@@ -211,6 +224,24 @@ public partial class LibraryViewModel : ViewModelBase
         await SaveProfileSnapshotIfActiveAsync();
         await SyncLauncherStateAsync();
         OnPropertyChanged(nameof(ActiveMods));
+    }
+
+    private async Task HydrateSubscribersAsync(ModViewModel mod)
+    {
+        try
+        {
+            var info = await _downloader.GetModInfoAsync(mod.WorkshopId);
+            if (info?.TotalSubscribers is not > 0)
+                return;
+
+            mod.SetTotalSubscribers(info.TotalSubscribers);
+            mod.Model.LastUpdatedAt = DateTime.UtcNow;
+            await _db.UpdateModAsync(mod.Model);
+        }
+        catch
+        {
+            // Best-effort metadata enrichment for the details panel.
+        }
     }
 
     // Load order drag-drop support
@@ -457,6 +488,7 @@ public partial class LibraryViewModel : ViewModelBase
         await _db.ActivateProfileAsync(profile.Id);
         _currentActiveProfileId = profile.Id;
         ActiveProfile = profile;
+        OnPropertyChanged(nameof(CanDeleteProfiles));
         await LoadModsAsync();
         StatusMessage = $"Created empty profile: {name}";
     }
@@ -669,15 +701,85 @@ public partial class LibraryViewModel : ViewModelBase
             return;
         }
 
+        if (Profiles.Count <= 1)
+        {
+            StatusMessage = "Cannot delete the only remaining profile.";
+            return;
+        }
+
+        var deletedIndex = Profiles.IndexOf(profile);
+        var deletedWasActive = ActiveProfile?.Id == profile.Id;
+
         await _db.DeleteProfileAsync(profile.Id);
         Profiles.Remove(profile);
-        if (ActiveProfile?.Id == profile.Id)
+        OnPropertyChanged(nameof(CanDeleteProfiles));
+
+        if (deletedWasActive)
         {
+            var fallbackIndex = Math.Clamp(deletedIndex, 0, Profiles.Count - 1);
+            var nextProfile = Profiles.Count > 0 ? Profiles[fallbackIndex] : null;
+
+            if (nextProfile is not null)
+            {
+                _currentActiveProfileId = null;
+                await _db.ActivateProfileAsync(nextProfile.Id);
+                _currentActiveProfileId = nextProfile.Id;
+                ActiveProfile = nextProfile;
+                await LoadModsAsync();
+                StatusMessage = $"Deleted profile: {profile.Name}. Activated {nextProfile.Name}.";
+                return;
+            }
+
             ActiveProfile = null;
             _currentActiveProfileId = null;
         }
 
         StatusMessage = $"Deleted profile: {profile.Name}";
+    }
+
+    [RelayCommand]
+    private void OpenFileLocation(ModViewModel? mod)
+    {
+        if (mod is null)
+        {
+            StatusMessage = "Select a mod first.";
+            return;
+        }
+
+        try
+        {
+            var descriptorPath = mod.Model.DescriptorPath;
+            if (!string.IsNullOrWhiteSpace(descriptorPath) && File.Exists(descriptorPath))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"/select,\"{descriptorPath}\"",
+                    UseShellExecute = true
+                });
+                StatusMessage = "Opened file location.";
+                return;
+            }
+
+            var installedPath = mod.Model.InstalledPath;
+            if (!string.IsNullOrWhiteSpace(installedPath) && Directory.Exists(installedPath))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = "explorer.exe",
+                    Arguments = $"\"{installedPath}\"",
+                    UseShellExecute = true
+                });
+                StatusMessage = "Opened file location.";
+                return;
+            }
+
+            StatusMessage = "Mod files were not found on disk.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Could not open file location: {ex.Message}";
+        }
     }
 
     [RelayCommand]
@@ -753,6 +855,7 @@ public partial class LibraryViewModel : ViewModelBase
         _currentActiveProfileId = resolvedActive?.Id;
         ActiveProfile = resolvedActive;
         _isLoadingProfiles = false;
+        OnPropertyChanged(nameof(CanDeleteProfiles));
 
         ApplyFilter();
         _ = Task.Run(SyncLauncherStateAsync);
@@ -776,24 +879,14 @@ public partial class LibraryViewModel : ViewModelBase
             await PersistEnabledStateAsync(mod);
     }
 
-    // Opens the Steam Workshop page for the given mod in the system browser
+    // Opens the Steam Workshop page in the app's Workshop tab.
     [RelayCommand]
     private void OpenWorkshopPage(ModViewModel mod)
     {
         var url = mod.WorkshopUrl;
         if (string.IsNullOrWhiteSpace(url)) return;
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = url,
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            StatusMessage = $"Could not open browser: {ex.Message}";
-        }
+        OpenWorkshopInAppRequested?.Invoke(this, url);
+        StatusMessage = $"Opened {mod.Name} in Workshop tab.";
     }
 
     // Export with an explicit file path (called from code-behind after file dialog)

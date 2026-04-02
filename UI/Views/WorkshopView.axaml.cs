@@ -40,12 +40,23 @@ public partial class WorkshopView : UserControl
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
         if (_vm is not null)
+        {
             _vm.PropertyChanged -= OnViewModelPropertyChanged;
+            _vm.NavigateToUrlRequested -= OnNavigateToUrlRequested;
+        }
 
         _vm = DataContext as WorkshopViewModel;
 
         if (_vm is not null)
+        {
             _vm.PropertyChanged += OnViewModelPropertyChanged;
+            _vm.NavigateToUrlRequested += OnNavigateToUrlRequested;
+        }
+    }
+
+    private void OnNavigateToUrlRequested(object? sender, string url)
+    {
+        Dispatcher.UIThread.Post(() => NavigateTo(url));
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)

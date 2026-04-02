@@ -258,6 +258,14 @@ public class WorkshopDownloader
     {
         Directory.CreateDirectory(targetDir);
 
+        var existingExePath = Path.Combine(targetDir, "steamcmd.exe");
+        if (File.Exists(existingExePath))
+        {
+            _log.Information("SteamCMD already exists at {Path}; skipping download.", existingExePath);
+            progress?.Report(100);
+            return existingExePath;
+        }
+
         var zipPath = Path.Combine(targetDir, "steamcmd.zip");
         _log.Information("Downloading SteamCMD to {Dir}", targetDir);
 

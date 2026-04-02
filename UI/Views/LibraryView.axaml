@@ -172,7 +172,7 @@
                 </Button>
 
                 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="8" Margin="8,0,0,0">
-                    <Button Classes="toolbar" Command="{Binding DeleteProfileCommand}" CommandParameter="{Binding ActiveProfile}">
+                    <Button Classes="toolbar" Command="{Binding DeleteProfileCommand}" CommandParameter="{Binding ActiveProfile}" IsEnabled="{Binding CanDeleteProfiles}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <TextBlock Classes="icon-glyph" Text="&#xE74D;" />
                             <TextBlock Text="Delete" />
@@ -329,8 +329,12 @@
                                 <TextBlock Grid.Column="0" Text="Version" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
                                 <TextBlock Grid.Column="1" Text="{Binding Version}" Foreground="{DynamicResource Theme.TextPrimary}" />
                             </Grid>
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Grid.Column="0" Text="Subscribers" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding TotalSubscribersDisplay}" Foreground="{DynamicResource Theme.TextPrimary}" />
+                            </Grid>
                             <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding GameVersion, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                <TextBlock Grid.Column="0" Text="Game version" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="0" Text="Reported game support version" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
                                 <TextBlock Grid.Column="1" Text="{Binding GameVersion}" Foreground="{DynamicResource Theme.TextPrimary}" />
                             </Grid>
                             <Grid ColumnDefinitions="Auto,*">
@@ -383,6 +387,21 @@
                                 <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                     <TextBlock Classes="icon-glyph" Text="&#xE8A7;" />
                                     <TextBlock Text="Open workshop page" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Background="{DynamicResource Theme.SurfaceBg}"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    Foreground="{DynamicResource Theme.TextPrimary}"
+                                    CornerRadius="8"
+                                    Padding="10,8"
+                                    HorizontalContentAlignment="Center"
+                                    Command="{Binding #Root.((vm:LibraryViewModel)DataContext).OpenFileLocationCommand}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE838;" />
+                                    <TextBlock Text="Open file location" />
                                 </StackPanel>
                             </Button>
 

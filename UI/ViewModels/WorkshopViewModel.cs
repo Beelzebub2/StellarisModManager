@@ -28,6 +28,7 @@ public partial class WorkshopViewModel : ViewModelBase
     // Event raised when a mod install is requested from workshop overlay
     public event EventHandler<string>? InstallModRequested;  // string = workshopId
     public event EventHandler<string>? UninstallModRequested;
+    public event EventHandler<string>? NavigateToUrlRequested;
 
     public void SetInstalledWorkshopIds(IEnumerable<string> workshopIds)
     {
@@ -54,6 +55,15 @@ public partial class WorkshopViewModel : ViewModelBase
     public void OnUninstallRequested(string workshopId)
     {
         UninstallModRequested?.Invoke(this, workshopId);
+    }
+
+    public void RequestNavigateToUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return;
+
+        CurrentUrl = url;
+        NavigateToUrlRequested?.Invoke(this, url);
     }
 
     [RelayCommand]
