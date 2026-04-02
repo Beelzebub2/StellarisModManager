@@ -5,27 +5,253 @@
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
              mc:Ignorable="d"
              x:Class="StellarisModManager.UI.Views.SettingsView"
-             x:DataType="vm:SettingsViewModel">
+             x:DataType="vm:SettingsViewModel"
+             Background="{DynamicResource Theme.AppBg}">
 
-    <!-- Settings view placeholder - full implementation in Task 7 -->
-    <Grid>
-        <Border Background="#1E1E2E" CornerRadius="8" Margin="16">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                <TextBlock Text="Settings"
-                           FontSize="22"
-                           FontWeight="SemiBold"
-                           HorizontalAlignment="Center"
-                           Foreground="#CDD6F4" />
-                <TextBlock Text="Full settings UI coming in Task 7"
-                           FontSize="14"
-                           HorizontalAlignment="Center"
-                           Foreground="#6C7086" />
-                <TextBlock Text="{Binding StatusMessage}"
-                           FontSize="12"
-                           HorizontalAlignment="Center"
-                           Foreground="#A6E3A1" />
+    <UserControl.Styles>
+        <Style Selector="Button.toolbar">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextPrimary}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.toolbar:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+        </Style>
+        <Style Selector="TextBlock.icon-glyph">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <Border Grid.Row="0"
+                Margin="12,12,12,0"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="12,10">
+            <StackPanel Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Classes="icon-glyph" Text="&#xE713;" Foreground="{DynamicResource Theme.Accent}" />
+                    <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold" Foreground="{DynamicResource Theme.TextPrimary}" />
+                </StackPanel>
+                <TextBlock Text="Configure game folders and SteamCMD integration"
+                           FontSize="13"
+                           Foreground="{DynamicResource Theme.TextMuted}" />
             </StackPanel>
         </Border>
-    </Grid>
 
+        <ScrollViewer Grid.Row="1"
+                      Margin="12,10,12,0"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="12">
+
+                <Border Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="14">
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                                   Text="Game installation"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   Margin="0,0,0,8" />
+
+                        <TextBox Grid.Row="1" Grid.Column="0"
+                                 Text="{Binding GamePath}"
+                                 Watermark="Path to Stellaris installation folder"
+                                 Background="{DynamicResource Theme.SurfaceBg}"
+                                 BorderBrush="{DynamicResource Theme.Border}"
+                                 Foreground="{DynamicResource Theme.TextPrimary}"
+                                 CornerRadius="8"
+                                 Margin="0,0,8,8" />
+                        <Button Grid.Row="1" Grid.Column="1"
+                                x:Name="BrowseGamePathButton"
+                                Classes="toolbar"
+                                Content="Browse"
+                                Margin="0,0,0,8" />
+
+                        <TextBox Grid.Row="2" Grid.Column="0"
+                                 Text="{Binding ModsPath}"
+                                 Watermark="Path to Paradox mods folder"
+                                 Background="{DynamicResource Theme.SurfaceBg}"
+                                 BorderBrush="{DynamicResource Theme.Border}"
+                                 Foreground="{DynamicResource Theme.TextPrimary}"
+                                 CornerRadius="8"
+                                 Margin="0,0,8,8" />
+                        <Button Grid.Row="2" Grid.Column="1"
+                                x:Name="BrowseModsPathButton"
+                                Classes="toolbar"
+                                Content="Browse"
+                                Margin="0,0,0,8" />
+
+                        <CheckBox Grid.Row="3" Grid.Column="0"
+                                  IsChecked="{Binding AutoDetectGame}"
+                                  Content="Auto-detect game path on startup"
+                                  Foreground="{DynamicResource Theme.TextPrimary}"
+                                  VerticalAlignment="Center" />
+                        <Button Grid.Row="3" Grid.Column="1"
+                                Classes="toolbar"
+                                Content="Auto detect"
+                                Command="{Binding AutoDetectCommand}" />
+
+                        <StackPanel Grid.Row="4" Grid.Column="0" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+                            <TextBlock Text="Detected game version" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
+                            <TextBlock Text="{Binding GameVersion}" Foreground="{DynamicResource Theme.Accent}" FontSize="12" FontWeight="SemiBold" />
+                        </StackPanel>
+
+                        <Button Grid.Row="5" Grid.Column="0"
+                                Classes="toolbar"
+                                HorizontalAlignment="Left"
+                                Margin="0,10,0,0"
+                                Command="{Binding LaunchGameCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="icon-glyph" Text="&#xE768;" />
+                                <TextBlock Text="Launch Stellaris" />
+                            </StackPanel>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <Border Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="14">
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
+                                   Text="SteamCMD"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   Margin="0,0,0,8" />
+
+                        <TextBox Grid.Row="1" Grid.Column="0"
+                                 Text="{Binding SteamCmdPath}"
+                                 Watermark="Path to steamcmd.exe"
+                                 Background="{DynamicResource Theme.SurfaceBg}"
+                                 BorderBrush="{DynamicResource Theme.Border}"
+                                 Foreground="{DynamicResource Theme.TextPrimary}"
+                                 CornerRadius="8"
+                                 Margin="0,0,8,8" />
+                        <Button Grid.Row="1" Grid.Column="1"
+                                x:Name="BrowseSteamCmdPathButton"
+                                Classes="toolbar"
+                                Content="Browse"
+                                Margin="0,0,0,8" />
+
+                        <TextBox Grid.Row="2" Grid.Column="0"
+                                 Text="{Binding SteamCmdDownloadPath}"
+                                 Watermark="SteamCMD download and workshop cache path"
+                                 Background="{DynamicResource Theme.SurfaceBg}"
+                                 BorderBrush="{DynamicResource Theme.Border}"
+                                 Foreground="{DynamicResource Theme.TextPrimary}"
+                                 CornerRadius="8"
+                                 Margin="0,0,8,8" />
+                        <Button Grid.Row="2" Grid.Column="1"
+                                x:Name="BrowseSteamCmdDownloadPathButton"
+                                Classes="toolbar"
+                                Content="Browse"
+                                Margin="0,0,0,8" />
+
+                        <Grid Grid.Row="3" Grid.ColumnSpan="2" ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="SteamCMD status" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
+                                <TextBlock Text="Configured" Foreground="{DynamicResource Theme.Success}" FontSize="12" FontWeight="SemiBold"
+                                           IsVisible="{Binding IsSteamCmdConfigured}" />
+                                <TextBlock Text="Not configured" Foreground="{DynamicResource Theme.Danger}" FontSize="12" FontWeight="SemiBold"
+                                           IsVisible="{Binding !IsSteamCmdConfigured}" />
+                            </StackPanel>
+
+                            <Button Grid.Column="1"
+                                    Classes="toolbar"
+                                    Command="{Binding DownloadSteamCmdCommand}">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE896;" />
+                                    <TextBlock Text="Download SteamCMD" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <Border Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="14">
+                    <Grid ColumnDefinitions="Auto,220,Auto,*" VerticalAlignment="Center">
+                        <TextBlock Grid.Column="0" Text="Palette" Foreground="{DynamicResource Theme.TextMuted}" VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <ComboBox Grid.Column="1"
+                                  ItemsSource="{Binding PaletteOptions}"
+                                  SelectedItem="{Binding SelectedPalette}"
+                                  Background="{DynamicResource Theme.SurfaceBg}"
+                                  BorderBrush="{DynamicResource Theme.Border}"
+                                  Foreground="{DynamicResource Theme.TextPrimary}" />
+                        <Button Grid.Column="2"
+                                Classes="toolbar"
+                                Margin="10,0,0,0"
+                                Command="{Binding ApplyPaletteCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="icon-glyph" Text="&#xE790;" />
+                                <TextBlock Text="Apply" />
+                            </StackPanel>
+                        </Button>
+                        <TextBlock Grid.Column="3"
+                                   Text="Dark palettes are designed to reduce blue dominance while preserving contrast."
+                                   Margin="10,0,0,0"
+                                   Foreground="{DynamicResource Theme.TextMuted}"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Row="2"
+                Margin="12,10,12,12"
+                Background="{DynamicResource Theme.SurfaceBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="12,8">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusMessage}"
+                           Foreground="{DynamicResource Theme.Success}"
+                           FontSize="12"
+                           VerticalAlignment="Center" />
+
+                <TextBlock Grid.Column="1"
+                           Text="Unsaved changes"
+                           Foreground="{DynamicResource Theme.Warning}"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0"
+                           IsVisible="{Binding HasUnsavedChanges}" />
+
+                <Button Grid.Column="2"
+                        Classes="toolbar"
+                        Content="Validate"
+                        Command="{Binding ValidatePathsCommand}" />
+
+                <Button Grid.Column="3"
+                        Classes="toolbar"
+                        Content="Save"
+                        Margin="8,0,0,0"
+                        Command="{Binding SaveSettingsCommand}" />
+            </Grid>
+        </Border>
+
+    </Grid>
 </UserControl>

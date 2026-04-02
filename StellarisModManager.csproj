@@ -21,14 +21,10 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.*" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="11.2.*" />
 
-    <!--
-      TODO: Avalonia.WebView.Windows 0.0.5 does not exist on NuGet.
-      The official Avalonia WebView package was never published under that name.
-      Alternatives to evaluate:
-        - WebView.Avalonia.Windows (ChisterWu) 11.0.0.1
-        - Or use Microsoft.Web.WebView2 directly with a native host adapter.
-      Add the chosen package here once decided.
-    -->
+    <!-- WebView2 integration via WebView.Avalonia (ChisterWu) -->
+    <!-- NOTE: Built for Avalonia 11.0.0; works with 11.2.x at compile time.
+         Runtime requires Microsoft Edge WebView2 Runtime to be installed by the user.
+         BrowserView gracefully falls back to a manual-ID panel if the runtime is absent. -->
 
     <!-- MVVM Toolkit -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
@@ -46,7 +42,18 @@
 
     <!-- JSON -->
     <PackageReference Include="Newtonsoft.Json" Version="13.*" />
+    <PackageReference Include="WebView.Avalonia.Cross" Version="11.2.4" />
+    <PackageReference Include="WebView.Avalonia.Desktop.Cross" Version="11.2.4" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Copy overlay.js to output so OverlayInjector can read it at runtime -->
+    <None Update="UI\Assets\overlay.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="UI\Assets\icon.jpg">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 
 </Project>

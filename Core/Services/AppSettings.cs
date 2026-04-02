@@ -32,6 +32,7 @@ public class AppSettings
     public string? SteamCmdPath { get; set; }
     public string? SteamCmdDownloadPath { get; set; }
     public bool AutoDetectGame { get; set; } = true;
+    public string ThemePalette { get; set; } = "Obsidian Ember";
 
     // -------------------------------------------------------------------------
     // Load / Save

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -18,7 +20,14 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private string _steamCmdPath = "";
     [ObservableProperty] private string _steamCmdDownloadPath = "";
     [ObservableProperty] private bool _autoDetectGame = true;
+    [ObservableProperty] private string _gameVersion = "";
+    [ObservableProperty] private string _selectedPalette = "Obsidian Ember";
+    [ObservableProperty] private bool _hasUnsavedChanges = false;
     [ObservableProperty] private string _statusMessage = "";
+
+    public ObservableCollection<string> PaletteOptions { get; } = new();
+
+    public bool IsSteamCmdConfigured => _downloader.IsSteamCmdAvailable(SteamCmdPath);
 
     public SettingsViewModel(AppSettings settings, GameDetector detector, WorkshopDownloader downloader)
     {
@@ -32,7 +41,36 @@ public partial class SettingsViewModel : ViewModelBase
         SteamCmdPath = settings.SteamCmdPath ?? "";
         SteamCmdDownloadPath = settings.SteamCmdDownloadPath ?? "";
         AutoDetectGame = settings.AutoDetectGame;
+        SelectedPalette = string.IsNullOrWhiteSpace(settings.ThemePalette)
+            ? "Obsidian Ember"
+            : settings.ThemePalette;
+
+        foreach (var palette in ThemePaletteService.GetPaletteNames())
+            PaletteOptions.Add(palette);
+
+        GameVersion = !string.IsNullOrWhiteSpace(GamePath)
+            ? _detector.DetectGameVersion(GamePath) ?? ""
+            : "";
     }
+
+    partial void OnGamePathChanged(string value)
+    {
+        HasUnsavedChanges = true;
+        GameVersion = Directory.Exists(value)
+            ? _detector.DetectGameVersion(value) ?? ""
+            : "";
+    }
+
+    partial void OnModsPathChanged(string value) => HasUnsavedChanges = true;
+    partial void OnSteamCmdPathChanged(string value)
+    {
+        HasUnsavedChanges = true;
+        OnPropertyChanged(nameof(IsSteamCmdConfigured));
+    }
+
+    partial void OnSteamCmdDownloadPathChanged(string value) => HasUnsavedChanges = true;
+    partial void OnAutoDetectGameChanged(bool value) => HasUnsavedChanges = true;
+    partial void OnSelectedPaletteChanged(string value) => HasUnsavedChanges = true;
 
     [RelayCommand]
     private void AutoDetect()
@@ -57,11 +95,40 @@ public partial class SettingsViewModel : ViewModelBase
             var steamCmd = _detector.DetectSteamCmdPath();
             if (steamCmd is not null)
                 SteamCmdPath = steamCmd;
+
+            if (!string.IsNullOrWhiteSpace(GamePath))
+            {
+                GameVersion = _detector.DetectGameVersion(GamePath) ?? "";
+            }
         }
         catch (Exception ex)
         {
             StatusMessage = $"Detection failed: {ex.Message}";
         }
+    }
+
+    public void SetGamePath(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            GamePath = path;
+    }
+
+    public void SetModsPath(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            ModsPath = path;
+    }
+
+    public void SetSteamCmdPath(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            SteamCmdPath = path;
+    }
+
+    public void SetSteamCmdDownloadPath(string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+            SteamCmdDownloadPath = path;
     }
 
     [RelayCommand]
@@ -114,6 +181,42 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void ValidatePaths()
+    {
+        var errors = 0;
+
+        if (!string.IsNullOrWhiteSpace(GamePath) && !Directory.Exists(GamePath))
+        {
+            StatusMessage = "Game path does not exist.";
+            errors++;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ModsPath) && !Directory.Exists(ModsPath))
+        {
+            try
+            {
+                Directory.CreateDirectory(ModsPath);
+            }
+            catch
+            {
+                StatusMessage = "Mods path does not exist and could not be created.";
+                errors++;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(SteamCmdPath) && !File.Exists(SteamCmdPath))
+        {
+            StatusMessage = "SteamCMD executable not found at selected path.";
+            errors++;
+        }
+
+        if (errors == 0)
+        {
+            StatusMessage = "Paths validated.";
+        }
+    }
+
+    [RelayCommand]
     private void SaveSettings()
     {
         _settings.GamePath = string.IsNullOrWhiteSpace(GamePath) ? null : GamePath;
@@ -121,7 +224,73 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.SteamCmdPath = string.IsNullOrWhiteSpace(SteamCmdPath) ? null : SteamCmdPath;
         _settings.SteamCmdDownloadPath = string.IsNullOrWhiteSpace(SteamCmdDownloadPath) ? null : SteamCmdDownloadPath;
         _settings.AutoDetectGame = AutoDetectGame;
+        _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
+            ? "Obsidian Ember"
+            : SelectedPalette;
         _settings.Save();
+        ThemePaletteService.ApplyPalette(_settings.ThemePalette);
+        HasUnsavedChanges = false;
+        OnPropertyChanged(nameof(IsSteamCmdConfigured));
         StatusMessage = "Settings saved.";
+    }
+
+    [RelayCommand]
+    private void ApplyPalette()
+    {
+        var palette = string.IsNullOrWhiteSpace(SelectedPalette)
+            ? "Obsidian Ember"
+            : SelectedPalette;
+
+        ThemePaletteService.ApplyPalette(palette);
+        StatusMessage = $"Applied palette: {palette}";
+    }
+
+    [RelayCommand]
+    private void LaunchGame()
+    {
+        if (string.IsNullOrWhiteSpace(GamePath) || !Directory.Exists(GamePath))
+        {
+            StatusMessage = "Set a valid game path before launching.";
+            return;
+        }
+
+        var candidates = new[]
+        {
+            Path.Combine(GamePath, "stellaris.exe"),
+            Path.Combine(GamePath, "Stellaris.exe"),
+            Path.Combine(GamePath, "dowser.exe"),
+        };
+
+        string? executable = null;
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                executable = candidate;
+                break;
+            }
+        }
+
+        if (executable is null)
+        {
+            StatusMessage = "Could not find Stellaris executable in the selected path.";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executable,
+                WorkingDirectory = Path.GetDirectoryName(executable) ?? GamePath,
+                UseShellExecute = true,
+            });
+
+            StatusMessage = "Launching Stellaris...";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Launch failed: {ex.Message}";
+        }
     }
 }

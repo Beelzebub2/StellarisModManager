@@ -5,27 +5,384 @@
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
              mc:Ignorable="d"
              x:Class="StellarisModManager.UI.Views.LibraryView"
-             x:DataType="vm:LibraryViewModel">
+             x:DataType="vm:LibraryViewModel"
+             x:Name="Root"
+             Background="{DynamicResource Theme.AppBg}">
 
-    <!-- Library view placeholder - full implementation in Task 6 -->
-    <Grid>
-        <Border Background="#1E1E2E" CornerRadius="8" Margin="16">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
-                <TextBlock Text="Mod Library"
-                           FontSize="22"
-                           FontWeight="SemiBold"
-                           HorizontalAlignment="Center"
-                           Foreground="#CDD6F4" />
-                <TextBlock Text="Full library UI coming in Task 6"
-                           FontSize="14"
-                           HorizontalAlignment="Center"
-                           Foreground="#6C7086" />
-                <TextBlock Text="{Binding StatusMessage}"
-                           FontSize="12"
-                           HorizontalAlignment="Center"
-                           Foreground="#A6E3A1" />
-            </StackPanel>
+    <UserControl.Styles>
+        <Style Selector="Button.toolbar">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextPrimary}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+        <Style Selector="Button.toolbar:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+        </Style>
+
+        <Style Selector="Button.icon-btn">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextMuted}" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+        </Style>
+        <Style Selector="Button.icon-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextPrimary}" />
+        </Style>
+
+        <Style Selector="TextBlock.icon-glyph">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+
+        <Style Selector="ListBoxItem">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+        </Style>
+    </UserControl.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <Border Grid.Row="0"
+                Margin="12,12,12,0"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="12">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.Accent}" Text="&#xE8F1;" />
+                    <TextBlock Text="Installed Mods" Foreground="{DynamicResource Theme.TextPrimary}" FontSize="16" FontWeight="SemiBold" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <TextBox Text="{Binding SearchText}"
+                             Watermark="Search by mod name or workshop ID"
+                             Width="320"
+                             Background="{DynamicResource Theme.SurfaceBg}"
+                             BorderBrush="{DynamicResource Theme.Border}"
+                             Foreground="{DynamicResource Theme.TextPrimary}"
+                             CornerRadius="8" />
+                    <CheckBox IsChecked="{Binding ShowEnabledOnly}"
+                              Content="Enabled only"
+                              Foreground="{DynamicResource Theme.TextPrimary}"
+                              VerticalAlignment="Center" />
+                </StackPanel>
+
+                <Button Grid.Column="2" Classes="toolbar" Command="{Binding CheckForUpdatesCommand}" Margin="10,0,0,0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE895;" IsVisible="{Binding !IsCheckingUpdates}" />
+                        <ProgressBar IsIndeterminate="True" Width="36" Height="5" IsVisible="{Binding IsCheckingUpdates}" />
+                        <TextBlock Text="Check updates" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="3" Classes="toolbar" x:Name="ExportButton" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE898;" />
+                        <TextBlock Text="Export" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="4" Classes="toolbar" x:Name="ImportButton" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE896;" />
+                        <TextBlock Text="Import" />
+                    </StackPanel>
+                </Button>
+            </Grid>
         </Border>
-    </Grid>
 
+        <Border Grid.Row="1"
+                Margin="12,10,12,0"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="12">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,Auto,*">
+                <TextBlock Grid.Column="0" Text="Profile" Foreground="{DynamicResource Theme.TextMuted}" VerticalAlignment="Center" Margin="0,0,8,0" />
+
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding Profiles}"
+                          SelectedItem="{Binding ActiveProfile}"
+                          DisplayMemberBinding="{Binding Name}"
+                          MinWidth="200"
+                          Background="{DynamicResource Theme.SurfaceBg}"
+                          Foreground="{DynamicResource Theme.TextPrimary}"
+                          BorderBrush="{DynamicResource Theme.Border}" />
+
+                <Button Grid.Column="2" Classes="toolbar" Command="{Binding CreateProfileCommand}" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE710;" />
+                        <TextBlock Text="New" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="3" Classes="toolbar" Command="{Binding SaveProfileCommand}" CommandParameter="{Binding ActiveProfile}" Margin="8,0,0,0">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE74E;" />
+                        <TextBlock Text="Save" />
+                    </StackPanel>
+                </Button>
+
+                <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="8" Margin="8,0,0,0">
+                    <Button Classes="toolbar" Command="{Binding ActivateProfileCommand}" CommandParameter="{Binding ActiveProfile}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE73E;" />
+                            <TextBlock Text="Activate" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="toolbar" Command="{Binding DeleteProfileCommand}" CommandParameter="{Binding ActiveProfile}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE74D;" />
+                            <TextBlock Text="Delete" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <Border Grid.Column="5"
+                        HorizontalAlignment="Right"
+                        Background="{DynamicResource Theme.SurfaceBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="20"
+                        Padding="10,4"
+                        IsVisible="{Binding HasUpdatesAvailable}">
+                    <TextBlock Text="{Binding UpdatesAvailable, StringFormat='{}{0} updates available'}"
+                               Foreground="{DynamicResource Theme.TextPrimary}"
+                               FontSize="12" />
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="12,10,12,0" ColumnDefinitions="3*,2*">
+
+            <Border Grid.Column="0"
+                    Background="{DynamicResource Theme.PanelBg}"
+                    BorderBrush="{DynamicResource Theme.Border}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    ClipToBounds="True">
+                <ListBox ItemsSource="{Binding FilteredMods}"
+                         SelectedItem="{Binding SelectedMod}"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="vm:ModViewModel">
+                            <Border BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="0,0,0,1"
+                                    Padding="12,10">
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsEnabled}"
+                                              Command="{Binding ToggleEnabledCommand}"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,10,0" />
+
+                                    <StackPanel Grid.Column="1" Spacing="4">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="{DynamicResource Theme.TextPrimary}" />
+                                            <Border Background="{DynamicResource Theme.SurfaceBg}"
+                                                    BorderBrush="{DynamicResource Theme.Border}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="10"
+                                                    Padding="6,2"
+                                                    IsVisible="{Binding HasUpdate}">
+                                                <TextBlock Text="Update"
+                                                           FontSize="11"
+                                                           Foreground="{DynamicResource Theme.Accent}" />
+                                            </Border>
+                                        </StackPanel>
+
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Border Background="{DynamicResource Theme.SurfaceBg}" CornerRadius="8" Padding="6,2">
+                                                <TextBlock Text="{Binding Version, StringFormat='v{0}'}"
+                                                           FontSize="11"
+                                                           Foreground="{DynamicResource Theme.TextMuted}" />
+                                            </Border>
+                                            <Border Background="{DynamicResource Theme.SurfaceBg}" CornerRadius="8" Padding="6,2"
+                                                    IsVisible="{Binding GameVersion, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                <TextBlock Text="{Binding GameVersion}" FontSize="11" Foreground="{DynamicResource Theme.TextMuted}" />
+                                            </Border>
+                                            <Border Background="{DynamicResource Theme.SurfaceBg}" CornerRadius="8" Padding="6,2"
+                                                    IsVisible="{Binding IsMultiplayerSafeVisible}">
+                                                <TextBlock Text="MP safe" FontSize="11" Foreground="{DynamicResource Theme.Success}" />
+                                            </Border>
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+                                        <Button Classes="icon-btn"
+                                                ToolTip.Tip="Move up"
+                                                Command="{Binding #Root.((vm:LibraryViewModel)DataContext).MoveModUpCommand}"
+                                                CommandParameter="{Binding}">
+                                            <TextBlock Classes="icon-glyph" Text="&#xE70E;" />
+                                        </Button>
+                                        <Button Classes="icon-btn"
+                                                ToolTip.Tip="Move down"
+                                                Command="{Binding #Root.((vm:LibraryViewModel)DataContext).MoveModDownCommand}"
+                                                CommandParameter="{Binding}">
+                                            <TextBlock Classes="icon-glyph" Text="&#xE70D;" />
+                                        </Button>
+                                        <Button Classes="icon-btn"
+                                                ToolTip.Tip="Remove"
+                                                Foreground="{DynamicResource Theme.Danger}"
+                                                Command="{Binding #Root.((vm:LibraryViewModel)DataContext).UninstallModCommand}"
+                                                CommandParameter="{Binding}">
+                                            <TextBlock Classes="icon-glyph" Text="&#xE74D;" />
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Border>
+
+            <Border Grid.Column="1"
+                    Margin="12,0,0,0"
+                    Background="{DynamicResource Theme.PanelBg}"
+                    BorderBrush="{DynamicResource Theme.Border}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                <Panel>
+                    <TextBlock Text="Select a mod to view details"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="13"
+                               IsVisible="{Binding SelectedMod, Converter={x:Static ObjectConverters.IsNull}}" />
+
+                    <ScrollViewer IsVisible="{Binding SelectedMod, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel Margin="16" Spacing="12" DataContext="{Binding SelectedMod}">
+                            <TextBlock Text="{Binding Name}" FontSize="19" FontWeight="SemiBold" Foreground="{DynamicResource Theme.TextPrimary}" TextWrapping="Wrap" />
+
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Grid.Column="0" Text="Workshop ID" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding WorkshopId}" Foreground="{DynamicResource Theme.Accent}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Grid.Column="0" Text="Version" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding Version}" Foreground="{DynamicResource Theme.TextPrimary}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="Auto,*" IsVisible="{Binding GameVersion, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <TextBlock Grid.Column="0" Text="Game version" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding GameVersion}" Foreground="{DynamicResource Theme.TextPrimary}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="Auto,*">
+                                <TextBlock Grid.Column="0" Text="Installed" Foreground="{DynamicResource Theme.TextMuted}" Margin="0,0,8,0" />
+                                <TextBlock Grid.Column="1" Text="{Binding InstalledDate}" Foreground="{DynamicResource Theme.TextPrimary}" />
+                            </Grid>
+
+                            <Border Background="{DynamicResource Theme.SurfaceBg}" CornerRadius="8" Padding="8,4" HorizontalAlignment="Left"
+                                    IsVisible="{Binding IsMultiplayerSafeVisible}">
+                                <TextBlock Text="Multiplayer safe" Foreground="{DynamicResource Theme.Success}" FontSize="12" />
+                            </Border>
+
+                            <Border Background="{DynamicResource Theme.SurfaceBg}" CornerRadius="8" Padding="8,4" HorizontalAlignment="Left"
+                                    IsVisible="{Binding HasUpdate}">
+                                <TextBlock Text="Update available" Foreground="{DynamicResource Theme.Warning}" FontSize="12" />
+                            </Border>
+
+                            <StackPanel Spacing="4" IsVisible="{Binding TagsDisplay, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                <TextBlock Text="Tags" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
+                                <TextBlock Text="{Binding TagsDisplay}" Foreground="{DynamicResource Theme.TextPrimary}" FontSize="12" TextWrapping="Wrap" />
+                            </StackPanel>
+
+                            <Border Height="1" Background="{DynamicResource Theme.Border}" />
+
+                            <Button IsVisible="{Binding HasUpdate}"
+                                    Background="{DynamicResource Theme.SurfaceBg}"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    Foreground="{DynamicResource Theme.Success}"
+                                    CornerRadius="8"
+                                    Padding="10,8"
+                                    HorizontalContentAlignment="Center"
+                                    Command="{Binding #Root.((vm:LibraryViewModel)DataContext).UpdateModCommand}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE895;" />
+                                    <TextBlock Text="Update mod" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Background="{DynamicResource Theme.SurfaceBg}"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    Foreground="{DynamicResource Theme.TextPrimary}"
+                                    CornerRadius="8"
+                                    Padding="10,8"
+                                    HorizontalContentAlignment="Center"
+                                    Command="{Binding #Root.((vm:LibraryViewModel)DataContext).OpenWorkshopPageCommand}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE8A7;" />
+                                    <TextBlock Text="Open workshop page" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Background="#351A27"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    Foreground="{DynamicResource Theme.Danger}"
+                                    CornerRadius="8"
+                                    Padding="10,8"
+                                    HorizontalContentAlignment="Center"
+                                    Command="{Binding #Root.((vm:LibraryViewModel)DataContext).UninstallModCommand}"
+                                    CommandParameter="{Binding}">
+                                <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE74D;" />
+                                    <TextBlock Text="Remove mod" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Panel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="3"
+                Margin="12,10,12,12"
+                Background="{DynamicResource Theme.SurfaceBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="12,7">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12">
+                    <TextBlock Text="{Binding TotalMods, StringFormat='Total mods: {0}'}" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
+                    <TextBlock Text="{Binding ActiveMods, StringFormat='Enabled: {0}'}" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
+                    <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource Theme.Success}" FontSize="12"
+                               IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                </StackPanel>
+                <TextBlock Grid.Column="1"
+                           Text="{Binding UpdatesAvailable, StringFormat='Updates: {0}'}"
+                           Foreground="{DynamicResource Theme.TextPrimary}"
+                           FontSize="12"
+                           IsVisible="{Binding HasUpdatesAvailable}" />
+            </Grid>
+        </Border>
+
+    </Grid>
 </UserControl>
+

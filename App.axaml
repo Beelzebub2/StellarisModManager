@@ -6,7 +6,16 @@
              RequestedThemeVariant="Dark">
 
     <Application.Resources>
-        <!-- Global resources will go here -->
+        <SolidColorBrush x:Key="Theme.AppBg">#0D0F12</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.PanelBg">#171A20</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.SurfaceBg">#1D2129</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.Border">#303744</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.TextPrimary">#E6E9EF</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.TextMuted">#9CA6B7</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.Accent">#E88D3D</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.Success">#6FD7A6</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.Warning">#E2BE67</SolidColorBrush>
+        <SolidColorBrush x:Key="Theme.Danger">#F08F8F</SolidColorBrush>
     </Application.Resources>
 
     <Application.Styles>

@@ -6,9 +6,11 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class BrowserViewModel : ViewModelBase
 {
+    public const string HomeUrl = "https://steamcommunity.com/workshop/browse/?appid=281990";
+
     // Current URL in the browser
     [ObservableProperty]
-    private string _currentUrl = "https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems";
+    private string _currentUrl = HomeUrl;
 
     // Navigation state
     public bool CanGoBack { get; set; }
@@ -48,6 +50,6 @@ public partial class BrowserViewModel : ViewModelBase
     [RelayCommand]
     private void NavigateHome()
     {
-        CurrentUrl = "https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems";
+        CurrentUrl = HomeUrl;
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,6 +17,8 @@ public partial class LibraryViewModel : ViewModelBase
     private readonly ModDatabase _db;
     private readonly ModUpdateChecker _updateChecker;
     private readonly ModInstaller _installer;
+    private readonly WorkshopDownloader _downloader;
+    private readonly AppSettings _settings;
     private readonly ModExportImport _exportImport;
 
     // All installed mods
@@ -39,14 +42,28 @@ public partial class LibraryViewModel : ViewModelBase
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _isCheckingUpdates = false;
     [ObservableProperty] private int _updatesAvailable = 0;
+    public bool HasUpdatesAvailable => UpdatesAvailable > 0;
 
-    public LibraryViewModel(ModDatabase db, ModUpdateChecker updateChecker, ModInstaller installer)
+    // Status bar computed values
+    public int TotalMods => Mods.Count;
+    public int ActiveMods => Mods.Count(m => m.IsEnabled);
+
+    public LibraryViewModel(
+        ModDatabase db,
+        ModUpdateChecker updateChecker,
+        ModInstaller installer,
+        WorkshopDownloader downloader,
+        AppSettings settings)
     {
         _db = db;
         _updateChecker = updateChecker;
         _installer = installer;
+        _downloader = downloader;
+        _settings = settings;
         _exportImport = new ModExportImport();
     }
+
+    partial void OnUpdatesAvailableChanged(int value) => OnPropertyChanged(nameof(HasUpdatesAvailable));
 
     partial void OnSearchTextChanged(string value) => ApplyFilter();
     partial void OnShowEnabledOnlyChanged(bool value) => ApplyFilter();
@@ -70,39 +87,79 @@ public partial class LibraryViewModel : ViewModelBase
 
         foreach (var mod in filtered.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name))
             FilteredMods.Add(mod);
+
+        OnPropertyChanged(nameof(TotalMods));
+        OnPropertyChanged(nameof(ActiveMods));
+    }
+
+    private List<ModViewModel> GetLoadOrderSortedMods()
+    {
+        return Mods.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name).ToList();
+    }
+
+    private async Task SaveProfileSnapshotIfActiveAsync()
+    {
+        if (ActiveProfile is null)
+            return;
+
+        await SaveCurrentStateToProfileAsync(ActiveProfile.Id);
+    }
+
+    private async Task SaveCurrentStateToProfileAsync(int profileId)
+    {
+        var snapshot = GetLoadOrderSortedMods()
+            .Select((m, i) => (m.Model.Id, m.IsEnabled, i))
+            .ToList();
+
+        await _db.SaveProfileEntriesAsync(profileId, snapshot);
+    }
+
+    private async Task PersistEnabledStateAsync(ModViewModel mod)
+    {
+        await _db.SetModEnabledAsync(mod.Model.Id, mod.IsEnabled);
+        await SaveProfileSnapshotIfActiveAsync();
+        OnPropertyChanged(nameof(ActiveMods));
     }
 
     // Load order drag-drop support
     [RelayCommand]
     private void MoveModUp(ModViewModel mod)
     {
-        var idx = FilteredMods.IndexOf(mod);
+        var ordered = GetLoadOrderSortedMods();
+        var idx = ordered.IndexOf(mod);
         if (idx <= 0) return;
 
-        var prev = FilteredMods[idx - 1];
+        var prev = ordered[idx - 1];
         (mod.LoadOrder, prev.LoadOrder) = (prev.LoadOrder, mod.LoadOrder);
-        FilteredMods.Move(idx, idx - 1);
+        ApplyFilter();
         _ = SaveLoadOrderAsync();
     }
 
     [RelayCommand]
     private void MoveModDown(ModViewModel mod)
     {
-        var idx = FilteredMods.IndexOf(mod);
-        if (idx < 0 || idx >= FilteredMods.Count - 1) return;
+        var ordered = GetLoadOrderSortedMods();
+        var idx = ordered.IndexOf(mod);
+        if (idx < 0 || idx >= ordered.Count - 1) return;
 
-        var next = FilteredMods[idx + 1];
+        var next = ordered[idx + 1];
         (mod.LoadOrder, next.LoadOrder) = (next.LoadOrder, mod.LoadOrder);
-        FilteredMods.Move(idx, idx + 1);
+        ApplyFilter();
         _ = SaveLoadOrderAsync();
     }
 
     private async Task SaveLoadOrderAsync()
     {
-        var updates = FilteredMods
+        var ordered = GetLoadOrderSortedMods();
+        for (var i = 0; i < ordered.Count; i++)
+            ordered[i].LoadOrder = i;
+
+        var updates = ordered
             .Select((m, i) => (m.Model.Id, i))
             .ToList();
+
         await _db.UpdateLoadOrderAsync(updates);
+        await SaveProfileSnapshotIfActiveAsync();
     }
 
     [RelayCommand]
@@ -148,11 +205,54 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task UpdateModAsync(ModViewModel mod)
     {
+        if (string.IsNullOrWhiteSpace(_settings.SteamCmdPath) ||
+            !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath))
+        {
+            StatusMessage = "SteamCMD not configured. Set it in Settings first.";
+            return;
+        }
+
+        var modsPath = _settings.ModsPath;
+        if (string.IsNullOrWhiteSpace(modsPath))
+            modsPath = new GameDetector().GetDefaultModsPath();
+
+        var downloadBasePath = _settings.SteamCmdDownloadPath;
+        if (string.IsNullOrWhiteSpace(downloadBasePath))
+            downloadBasePath = Path.GetDirectoryName(_settings.SteamCmdPath) ?? modsPath;
+
         StatusMessage = $"Updating {mod.Name}...";
-        // Full update flow is implemented in Task 5 (BrowserView / downloader wiring)
-        // Placeholder: just refresh mod info
-        await Task.Delay(100);
-        StatusMessage = $"Update for {mod.Name} requires SteamCMD (configure in Settings)";
+
+        try
+        {
+            var downloadedPath = await _downloader.DownloadModAsync(
+                mod.WorkshopId,
+                _settings.SteamCmdPath,
+                downloadBasePath);
+
+            if (downloadedPath is null)
+            {
+                StatusMessage = $"Update failed for {mod.Name}";
+                return;
+            }
+
+            var modInfo = await _downloader.GetModInfoAsync(mod.WorkshopId);
+            var updated = await _installer.InstallModAsync(mod.WorkshopId, downloadedPath, modsPath, modInfo);
+
+            updated.Id = mod.Model.Id;
+            updated.IsEnabled = mod.IsEnabled;
+            updated.LoadOrder = mod.LoadOrder;
+            updated.InstalledAt = mod.Model.InstalledAt;
+
+            await _db.UpdateModAsync(updated);
+            await LoadModsAsync();
+
+            SelectedMod = FilteredMods.FirstOrDefault(m => m.WorkshopId == mod.WorkshopId);
+            StatusMessage = $"Updated {updated.Name}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Update failed: {ex.Message}";
+        }
     }
 
     [RelayCommand]
@@ -165,6 +265,7 @@ public partial class LibraryViewModel : ViewModelBase
             await _db.DeleteModAsync(mod.Model.Id);
             Mods.Remove(mod);
             ApplyFilter();
+            await SaveProfileSnapshotIfActiveAsync();
             StatusMessage = $"{mod.Name} uninstalled";
         }
         catch (Exception ex)
@@ -206,13 +307,34 @@ public partial class LibraryViewModel : ViewModelBase
     {
         var name = $"Profile {Profiles.Count + 1}";
         var profile = await _db.CreateProfileAsync(name);
+        await SaveCurrentStateToProfileAsync(profile.Id);
         Profiles.Add(profile);
+        ActiveProfile = profile;
         StatusMessage = $"Created profile: {name}";
     }
 
     [RelayCommand]
-    private async Task DeleteProfileAsync(ModProfile profile)
+    private async Task SaveProfileAsync(ModProfile? profile)
     {
+        if (profile is null)
+        {
+            StatusMessage = "Select a profile to save.";
+            return;
+        }
+
+        await SaveCurrentStateToProfileAsync(profile.Id);
+        StatusMessage = $"Saved profile: {profile.Name}";
+    }
+
+    [RelayCommand]
+    private async Task DeleteProfileAsync(ModProfile? profile)
+    {
+        if (profile is null)
+        {
+            StatusMessage = "Select a profile to delete.";
+            return;
+        }
+
         await _db.DeleteProfileAsync(profile.Id);
         Profiles.Remove(profile);
         if (ActiveProfile?.Id == profile.Id)
@@ -221,8 +343,14 @@ public partial class LibraryViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task ActivateProfileAsync(ModProfile profile)
+    private async Task ActivateProfileAsync(ModProfile? profile)
     {
+        if (profile is null)
+        {
+            StatusMessage = "Select a profile to activate.";
+            return;
+        }
+
         await _db.ActivateProfileAsync(profile.Id);
         ActiveProfile = profile;
         await LoadModsAsync();
@@ -237,7 +365,11 @@ public partial class LibraryViewModel : ViewModelBase
 
         var mods = await _db.GetAllModsAsync();
         foreach (var mod in mods)
-            Mods.Add(new ModViewModel(mod, _db));
+        {
+            var vm = new ModViewModel(mod, _db);
+            vm.PropertyChanged += OnModPropertyChanged;
+            Mods.Add(vm);
+        }
 
         var profiles = await _db.GetProfilesAsync();
         Profiles.Clear();
@@ -253,5 +385,89 @@ public partial class LibraryViewModel : ViewModelBase
     public async Task RefreshAsync()
     {
         await LoadModsAsync();
+    }
+
+    private async void OnModPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not ModViewModel mod)
+            return;
+
+        if (e.PropertyName == nameof(ModViewModel.IsEnabled))
+            await PersistEnabledStateAsync(mod);
+    }
+
+    // Opens the Steam Workshop page for the given mod in the system browser
+    [RelayCommand]
+    private void OpenWorkshopPage(ModViewModel mod)
+    {
+        var url = mod.WorkshopUrl;
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = url,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Could not open browser: {ex.Message}";
+        }
+    }
+
+    // Export with an explicit file path (called from code-behind after file dialog)
+    public async Task ExportModListToPathAsync(string filePath)
+    {
+        try
+        {
+            var mods = Mods.Select(m => m.Model).ToList();
+            await _exportImport.ExportModListAsync(mods, filePath);
+            StatusMessage = $"Exported {mods.Count} mods to {Path.GetFileName(filePath)}";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Export failed: {ex.Message}";
+        }
+    }
+
+    // Import with an explicit file path (called from code-behind after file dialog)
+    public async Task ImportModListFromPathAsync(string filePath)
+    {
+        try
+        {
+            var import = await _exportImport.ImportModListFullAsync(filePath);
+            var byId = import.Mods
+                .Where(m => !string.IsNullOrWhiteSpace(m.WorkshopId))
+                .ToDictionary(m => m.WorkshopId, StringComparer.OrdinalIgnoreCase);
+
+            var matched = 0;
+            var loadOrderUpdates = new List<(int modId, int order)>();
+
+            foreach (var vm in Mods)
+            {
+                if (!byId.TryGetValue(vm.WorkshopId, out var imported))
+                    continue;
+
+                matched++;
+                vm.IsEnabled = imported.IsEnabled;
+                vm.LoadOrder = imported.LoadOrder;
+                loadOrderUpdates.Add((vm.Model.Id, imported.LoadOrder));
+                await _db.SetModEnabledAsync(vm.Model.Id, imported.IsEnabled);
+            }
+
+            if (loadOrderUpdates.Count > 0)
+                await _db.UpdateLoadOrderAsync(loadOrderUpdates);
+
+            await SaveProfileSnapshotIfActiveAsync();
+            ApplyFilter();
+
+            var missing = byId.Count - matched;
+            StatusMessage = $"Imported list: matched {matched}, missing {missing}.";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Import failed: {ex.Message}";
+        }
     }
 }

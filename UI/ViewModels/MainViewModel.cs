@@ -10,6 +10,10 @@ public partial class MainViewModel : ViewModelBase
     // Currently active view model (Browser, Library, or Settings)
     [ObservableProperty] private ViewModelBase _activeView = null!;
 
+    public bool IsBrowserActive => ReferenceEquals(ActiveView, BrowserViewModel);
+    public bool IsLibraryActive => ReferenceEquals(ActiveView, LibraryViewModel);
+    public bool IsSettingsActive => ReferenceEquals(ActiveView, SettingsViewModel);
+
     // The three navigation items
     public BrowserViewModel BrowserViewModel { get; }
     public LibraryViewModel LibraryViewModel { get; }
@@ -31,7 +35,7 @@ public partial class MainViewModel : ViewModelBase
         ModUpdateChecker updateChecker)
     {
         BrowserViewModel = new BrowserViewModel();
-        LibraryViewModel = new LibraryViewModel(db, updateChecker, installer);
+        LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader);
 
         // Wire browser install requests to download + install flow
@@ -142,4 +146,11 @@ public partial class MainViewModel : ViewModelBase
 
     [RelayCommand]
     private void NavigateToSettings() => ActiveView = SettingsViewModel;
+
+    partial void OnActiveViewChanged(ViewModelBase value)
+    {
+        OnPropertyChanged(nameof(IsBrowserActive));
+        OnPropertyChanged(nameof(IsLibraryActive));
+        OnPropertyChanged(nameof(IsSettingsActive));
+    }
 }

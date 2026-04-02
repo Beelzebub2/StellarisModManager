@@ -244,6 +244,36 @@ public class ModDatabase
     }
 
     /// <summary>
+    /// Replaces all entries for a profile with the provided snapshot.
+    /// </summary>
+    public async Task SaveProfileEntriesAsync(
+        int profileId,
+        List<(int modId, bool isEnabled, int loadOrder)> entries)
+    {
+        await using var ctx = _contextFactory();
+
+        var existing = await ctx.ProfileEntries
+            .Where(e => e.ProfileId == profileId)
+            .ToListAsync();
+
+        if (existing.Count > 0)
+            ctx.ProfileEntries.RemoveRange(existing);
+
+        foreach (var entry in entries)
+        {
+            ctx.ProfileEntries.Add(new ModProfileEntry
+            {
+                ProfileId = profileId,
+                ModId = entry.modId,
+                IsEnabled = entry.isEnabled,
+                LoadOrder = entry.loadOrder,
+            });
+        }
+
+        await ctx.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// Activates the specified profile: sets it as active, deactivates all others,
     /// and updates the global mod IsEnabled / LoadOrder from the profile entries.
     /// </summary>
