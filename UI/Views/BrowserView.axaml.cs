@@ -8,16 +8,13 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using StellarisModManager.Core.Utils;
 using StellarisModManager.UI.ViewModels;
-using WebViewCore;
-using WebViewCore.Events;
 
 namespace StellarisModManager.UI.Views;
 
 public partial class BrowserView : UserControl
 {
     private BrowserViewModel? _vm;
-    private IWebViewControl? _webViewControl;
-    private bool _webViewReady;
+    private bool _isNativeEngineReady;
     private bool _eventsWired;
     private int _navigationAttempt;
     private bool _steamAutoRetryUsed;
@@ -45,42 +42,52 @@ public partial class BrowserView : UserControl
     {
         try
         {
-            _webViewControl = WebView as IWebViewControl;
-            if (_webViewControl is null)
-                throw new InvalidOperationException("WebView bridge is unavailable.");
-
             if (!_eventsWired)
             {
+                WebView.AdapterCreated += OnAdapterCreated;
+                WebView.AdapterDestroyed += OnAdapterDestroyed;
+                WebView.NavigationStarted += OnNavigationStarted;
                 WebView.NavigationCompleted += OnNavigationCompleted;
                 WebView.WebMessageReceived += OnWebMessageReceived;
-                WebView.WebViewCreated += OnWebViewCreated;
                 _eventsWired = true;
             }
 
-            _webViewReady = true;
             ShowEmbeddedBrowser();
+            _ = Dispatcher.UIThread.InvokeAsync(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
         }
         catch (Exception ex)
         {
-            _webViewReady = false;
+            _isNativeEngineReady = false;
             ShowFallback($"Embedded browser initialization failed: {ex.Message}");
         }
     }
 
-    private void OnWebViewCreated(object? sender, WebViewCreatedEventArgs e)
+    private void OnAdapterCreated(object? sender, WebViewAdapterEventArgs e)
     {
+        _isNativeEngineReady = true;
         Dispatcher.UIThread.Post(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
     }
 
-    private async void OnNavigationCompleted(object? sender, WebViewUrlLoadedEventArg e)
+    private void OnAdapterDestroyed(object? sender, WebViewAdapterEventArgs e)
+    {
+        _isNativeEngineReady = false;
+    }
+
+    private void OnNavigationStarted(object? sender, WebViewNavigationStartingEventArgs e)
+    {
+        if (_vm is not null)
+            _vm.IsLoading = true;
+    }
+
+    private async void OnNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
     {
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
-            if (_vm is not null && _webViewControl is not null)
+            if (_vm is not null)
             {
                 _vm.IsLoading = false;
-                _vm.CanGoBack = _webViewControl.IsCanGoBack;
-                _vm.CanGoForward = _webViewControl.IsCanGoForward;
+                _vm.CanGoBack = WebView.CanGoBack;
+                _vm.CanGoForward = WebView.CanGoForward;
             }
         });
 
@@ -95,7 +102,7 @@ public partial class BrowserView : UserControl
         try
         {
             var script = OverlayInjector.BuildInjectionScript();
-            await WebView.ExecuteScriptAsync(script);
+            await WebView.InvokeScript(script);
         }
         catch (Exception ex)
         {
@@ -103,11 +110,11 @@ public partial class BrowserView : UserControl
         }
     }
 
-    private void OnWebMessageReceived(object? sender, WebViewMessageReceivedEventArgs e)
+    private void OnWebMessageReceived(object? sender, WebMessageReceivedEventArgs e)
     {
         try
         {
-            var json = e.Message ?? e.MessageAsJson;
+            var json = e.Body;
             if (string.IsNullOrWhiteSpace(json))
                 return;
 
@@ -125,12 +132,6 @@ public partial class BrowserView : UserControl
 
     private void NavigateTo(string rawUrl)
     {
-        if (!_webViewReady || _webViewControl is null)
-        {
-            ShowFallback("Embedded browser is unavailable on this system.");
-            return;
-        }
-
         var url = NormalizeUrl(rawUrl);
         if (!string.Equals(url, _lastNavigatedUrl, StringComparison.OrdinalIgnoreCase))
         {
@@ -152,7 +153,9 @@ public partial class BrowserView : UserControl
 
         try
         {
-            _webViewControl.Navigate(new Uri(url));
+            WebView.Navigate(new Uri(url));
+            _isNativeEngineReady = true;
+            ShowEmbeddedBrowser();
         }
         catch (Exception ex)
         {
@@ -223,23 +226,23 @@ public partial class BrowserView : UserControl
 
     private void BackButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_webViewReady)
-            _webViewControl?.GoBack();
+        if (_isNativeEngineReady)
+            WebView.GoBack();
     }
 
     private void ForwardButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_webViewReady)
-            _webViewControl?.GoForward();
+        if (_isNativeEngineReady)
+            WebView.GoForward();
     }
 
     private void RefreshButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_webViewReady)
+        if (_isNativeEngineReady)
         {
             if (_vm is not null)
                 _vm.IsLoading = true;
-            _webViewControl?.Reload();
+            WebView.Refresh();
         }
     }
 
@@ -261,7 +264,7 @@ public partial class BrowserView : UserControl
 
     private void RetryInAppButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (!_webViewReady)
+        if (!_isNativeEngineReady)
             TryInitWebView();
         else
             NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);

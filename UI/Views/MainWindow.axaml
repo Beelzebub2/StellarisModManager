@@ -44,7 +44,6 @@
                 Background="{DynamicResource Theme.PanelBg}"
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
-                CornerRadius="12"
                 Padding="14,10">
             <Grid ColumnDefinitions="Auto,*,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">

@@ -1,5 +1,19 @@
-(function() {
+(function () {
     'use strict';
+
+    function postToHost(payload) {
+        if (typeof window.invokeCSharpAction === 'function') {
+            window.invokeCSharpAction(payload);
+            return true;
+        }
+
+        if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === 'function') {
+            window.chrome.webview.postMessage(payload);
+            return true;
+        }
+
+        return false;
+    }
 
     function extractModId(item) {
         // Try data-publishedfileid attribute first
@@ -43,17 +57,17 @@
             btn.textContent = '\u23f3 Installing...';
             btn.disabled = true;
             try {
-                if (window.chrome && window.chrome.webview) {
-                    window.chrome.webview.postMessage(JSON.stringify({
-                        action: 'install',
-                        modId: modId,
-                        modName: item.querySelector('.workshopItemTitle, .item_title, h3, .title')?.textContent?.trim() || modId
-                    }));
-                } else {
+                const payload = JSON.stringify({
+                    action: 'install',
+                    modId: modId,
+                    modName: item.querySelector('.workshopItemTitle, .item_title, h3, .title')?.textContent?.trim() || modId
+                });
+
+                if (!postToHost(payload)) {
                     // Fallback: navigate to custom scheme
                     window.location.href = 'smm://install/' + modId;
                 }
-            } catch(err) {
+            } catch (err) {
                 btn.textContent = '\u2b07 Install';
                 btn.disabled = false;
             }
@@ -91,13 +105,13 @@
             `;
             bigBtn.onclick = (e) => {
                 e.preventDefault();
-                if (window.chrome && window.chrome.webview) {
-                    window.chrome.webview.postMessage(JSON.stringify({
-                        action: 'install',
-                        modId: detailsId,
-                        modName: document.querySelector('.workshopItemTitle, h1')?.textContent?.trim() || detailsId
-                    }));
-                }
+                const payload = JSON.stringify({
+                    action: 'install',
+                    modId: detailsId,
+                    modName: document.querySelector('.workshopItemTitle, h1')?.textContent?.trim() || detailsId
+                });
+
+                postToHost(payload);
             };
             mainArea.insertBefore(bigBtn, mainArea.firstChild);
         }

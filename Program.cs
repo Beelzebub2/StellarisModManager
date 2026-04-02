@@ -1,5 +1,4 @@
 using Avalonia;
-using Avalonia.WebView.Desktop;
 using System;
 using System.IO;
 
@@ -33,6 +32,5 @@ internal sealed class Program
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .LogToTrace()
-            .UseDesktopWebView();   // WebView.Avalonia.Desktop — enables WebView2 on Windows
+            .LogToTrace();
 }

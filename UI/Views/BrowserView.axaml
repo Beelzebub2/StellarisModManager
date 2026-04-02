@@ -3,7 +3,6 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
-             xmlns:wv="using:AvaloniaWebView"
              mc:Ignorable="d"
              x:Class="StellarisModManager.UI.Views.BrowserView"
              x:DataType="vm:BrowserViewModel"
@@ -88,7 +87,7 @@
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1">
             <Grid>
-                <wv:WebView x:Name="WebView" IsVisible="True" />
+                <NativeWebView x:Name="WebView" IsVisible="True" />
 
                 <Border x:Name="FallbackPanel"
                         IsVisible="False"
