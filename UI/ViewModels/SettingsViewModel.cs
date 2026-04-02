@@ -66,6 +66,9 @@ public partial class SettingsViewModel : ViewModelBase
             ? _detector.DetectGameVersion(GamePath) ?? ""
             : "";
 
+        if (!string.IsNullOrWhiteSpace(GameVersion))
+            _settings.LastDetectedGameVersion = GameVersion;
+
         _downloader.LogLine += OnDownloaderLogLine;
         _downloader.ProgressChanged += OnDownloaderProgressChanged;
         _downloader.DownloadComplete += OnDownloaderDownloadComplete;
@@ -73,10 +76,21 @@ public partial class SettingsViewModel : ViewModelBase
 
     partial void OnGamePathChanged(string value)
     {
+        _settings.GamePath = string.IsNullOrWhiteSpace(value) ? null : value;
+
         HasUnsavedChanges = true;
         GameVersion = Directory.Exists(value)
             ? _detector.DetectGameVersion(value) ?? ""
             : "";
+
+        if (!string.IsNullOrWhiteSpace(GameVersion))
+            _settings.LastDetectedGameVersion = GameVersion;
+    }
+
+    partial void OnGameVersionChanged(string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            _settings.LastDetectedGameVersion = value;
     }
 
     partial void OnModsPathChanged(string value) => HasUnsavedChanges = true;
@@ -146,6 +160,8 @@ public partial class SettingsViewModel : ViewModelBase
             if (!string.IsNullOrWhiteSpace(GamePath))
             {
                 GameVersion = _detector.DetectGameVersion(GamePath) ?? "";
+                if (!string.IsNullOrWhiteSpace(GameVersion))
+                    _settings.LastDetectedGameVersion = GameVersion;
             }
         }
         catch (Exception ex)
@@ -273,6 +289,7 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.AutoDetectGame = AutoDetectGame;
         _settings.DeveloperMode = DeveloperMode;
         _settings.WarnBeforeRestartGame = WarnBeforeRestartGame;
+        _settings.LastDetectedGameVersion = string.IsNullOrWhiteSpace(GameVersion) ? null : GameVersion;
         _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
             ? "Obsidian Ember"
             : SelectedPalette;

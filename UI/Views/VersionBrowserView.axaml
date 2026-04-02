@@ -51,7 +51,7 @@
     <Grid RowDefinitions="Auto,*" Margin="16">
 
         <!-- Row 0: Toolbar -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto" Margin="0,0,0,12">
+        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="0,0,0,12">
 
             <!-- Col 0: Version ComboBox -->
             <ComboBox Grid.Column="0"
@@ -102,6 +102,18 @@
                      BorderBrush="{DynamicResource Theme.Border}"
                      CornerRadius="8"
                      Padding="10,8" />
+
+            <Button Grid.Column="5"
+                    Margin="10,0,0,0"
+                    Background="{DynamicResource Theme.SurfaceBg}"
+                    BorderBrush="{DynamicResource Theme.Border}"
+                    BorderThickness="1"
+                    CornerRadius="8"
+                    Padding="10,8"
+                    Command="{Binding ScanMoreCommand}"
+                    IsEnabled="{Binding CanScanMore}">
+                <TextBlock Text="Scan More (+32)" FontSize="12" FontWeight="SemiBold" />
+            </Button>
         </Grid>
 
         <Grid Grid.Row="1">

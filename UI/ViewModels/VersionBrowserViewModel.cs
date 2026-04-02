@@ -21,6 +21,8 @@ namespace StellarisModManager.UI.ViewModels;
 public partial class VersionBrowserViewModel : ViewModelBase
 {
     private const string CacheSchemaVersion = "2";
+    private const int DefaultFetchLimit = 64;
+    private const int ScanMoreStep = 32;
     private static readonly Regex AnyVersionRegex = new(@"\b\d+\.\d+(?:\.\d+)?\b", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -55,14 +57,17 @@ public partial class VersionBrowserViewModel : ViewModelBase
     [ObservableProperty] private VersionDropdownItem? _selectedVersion;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private bool _showOlderVersions;
+    [ObservableProperty] private int _fetchLimit = DefaultFetchLimit;
     [ObservableProperty] private int _displayedModCount;
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private bool _isScanningMore;
     [ObservableProperty] private bool _hasNoMods;
     [ObservableProperty] private string _statusText = "Select a Stellaris version to load workshop mods.";
 
     public bool ShowNoModsState => !IsLoading && HasNoMods;
     public bool ShowFilteredEmptyState => !IsLoading && !HasNoMods && DisplayedModCount == 0;
     public bool HasResults => !IsLoading && DisplayedModCount > 0;
+    public bool CanScanMore => !IsLoading && !IsScanningMore;
 
     public event EventHandler<string>? InstallModRequested;
     public event EventHandler<string>? UninstallModRequested;
@@ -81,7 +86,39 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         var result = new List<string>();
 
+        var hintedVersion = settings.LastDetectedGameVersion?.Trim();
+        if (!string.IsNullOrWhiteSpace(hintedVersion))
+        {
+            var hintedMatch = AnyVersionRegex.Match(hintedVersion);
+            if (hintedMatch.Success)
+            {
+                var hintedToken = hintedMatch.Value;
+                if (!string.IsNullOrWhiteSpace(hintedToken) &&
+                    !result.Contains(hintedToken, StringComparer.OrdinalIgnoreCase))
+                {
+                    result.Add(hintedToken);
+                }
+            }
+
+            var hintedNoSuffix = hintedVersion.Split('-', 2, StringSplitOptions.TrimEntries)[0];
+            if (!string.IsNullOrWhiteSpace(hintedNoSuffix) &&
+                !result.Contains(hintedNoSuffix, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(hintedNoSuffix);
+            }
+
+            var hintedNormalized = StellarisVersions.Normalize(hintedVersion);
+            if (!string.IsNullOrWhiteSpace(hintedNormalized) &&
+                !result.Contains(hintedNormalized, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(hintedNormalized);
+            }
+        }
+
         var gamePath = settings.GamePath;
+        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+            gamePath = detector.DetectGamePath();
+
         if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
             return result;
 
@@ -98,6 +135,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 var extracted = match.Value;
                 if (!string.IsNullOrWhiteSpace(extracted))
                     result.Add(extracted);
+            }
+
+            // Also handle forms like "4.2.4 - Corvus" by trimming suffix text.
+            var withoutSuffix = exact.Split('-', 2, StringSplitOptions.TrimEntries)[0];
+            if (!string.IsNullOrWhiteSpace(withoutSuffix) &&
+                !result.Contains(withoutSuffix, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(withoutSuffix);
             }
 
             var normalized = StellarisVersions.Normalize(exact);
@@ -182,6 +227,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowNoModsState));
         OnPropertyChanged(nameof(ShowFilteredEmptyState));
         OnPropertyChanged(nameof(HasResults));
+        OnPropertyChanged(nameof(CanScanMore));
+    }
+
+    partial void OnIsScanningMoreChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanScanMore));
     }
 
     partial void OnHasNoModsChanged(bool value)
@@ -263,6 +314,127 @@ public partial class VersionBrowserViewModel : ViewModelBase
         await RefreshFromWorkshopAsync();
     }
 
+    [RelayCommand]
+    private async Task ScanMoreAsync()
+    {
+        if (IsLoading || IsScanningMore)
+            return;
+
+        FetchLimit += ScanMoreStep;
+        StatusText = $"Scanning for more mods (up to {FetchLimit})...";
+        await AppendMoreModsInBackgroundAsync();
+    }
+
+    private async Task AppendMoreModsInBackgroundAsync()
+    {
+        var versionQuery = SelectedVersion?.Version;
+        if (string.IsNullOrWhiteSpace(versionQuery))
+            return;
+
+        var targetCount = Math.Max(FetchLimit, 1);
+
+        var refreshCts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _refreshCts, refreshCts);
+        previous?.Cancel();
+        previous?.Dispose();
+        var cancellationToken = refreshCts.Token;
+
+        IsScanningMore = true;
+
+        try
+        {
+            await TryAppendCachedCardsAsync(versionQuery, targetCount, cancellationToken);
+
+            if (_fetchedMods.Count < targetCount)
+            {
+                var searchQueries = GetVersionSearchQueries(versionQuery);
+                var ids = await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken, targetCount);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var existingIds = new HashSet<string>(_fetchedMods.Select(m => m.WorkshopId), StringComparer.Ordinal);
+                var missingIds = ids.Where(id => !existingIds.Contains(id)).ToList();
+
+                if (missingIds.Count > 0)
+                {
+                    var needCount = Math.Max(targetCount - _fetchedMods.Count, 1);
+                    var newCards = await ResolveWorkshopCardsAsync(versionQuery, missingIds, cancellationToken, needCount);
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var appended = AppendCards(newCards, targetCount);
+                    if (appended.Count > 0)
+                    {
+                        ApplyModStateToCards();
+                        ApplyFilter();
+                        QueueThumbnailWarm(appended);
+                        await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods.ToList(), cancellationToken);
+                    }
+                }
+            }
+
+            HasNoMods = _fetchedMods.Count == 0;
+            StatusText = HasNoMods
+                ? $"No workshop mods found for {versionQuery}."
+                : $"Loaded {_fetchedMods.Count} mods for {versionQuery}.";
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore canceled background scan.
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Scan More failed: {ex.Message}";
+        }
+        finally
+        {
+            if (ReferenceEquals(_refreshCts, refreshCts))
+                _refreshCts = null;
+
+            IsScanningMore = false;
+            refreshCts.Dispose();
+        }
+    }
+
+    private async Task TryAppendCachedCardsAsync(string versionQuery, int targetCount, CancellationToken cancellationToken)
+    {
+        var cachedCards = await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
+        if (cachedCards is null || cachedCards.Count == 0)
+            return;
+
+        var appended = AppendCards(cachedCards, targetCount);
+        if (appended.Count == 0)
+            return;
+
+        ApplyModStateToCards();
+        ApplyFilter();
+        QueueThumbnailWarm(appended);
+    }
+
+    private List<VersionModCard> AppendCards(IEnumerable<VersionModCard> candidates, int targetCount)
+    {
+        var appended = new List<VersionModCard>();
+        if (_fetchedMods.Count >= targetCount)
+            return appended;
+
+        var knownIds = new HashSet<string>(_fetchedMods.Select(m => m.WorkshopId), StringComparer.Ordinal);
+
+        foreach (var card in candidates)
+        {
+            if (_fetchedMods.Count >= targetCount)
+                break;
+
+            if (string.IsNullOrWhiteSpace(card.WorkshopId))
+                continue;
+
+            if (!knownIds.Add(card.WorkshopId))
+                continue;
+
+            _fetchedMods.Add(card);
+            appended.Add(card);
+        }
+
+        return appended;
+    }
+
     private void BuildVersionDropdown()
     {
         var currentSelection = SelectedVersion?.Version;
@@ -277,7 +449,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
             });
         }
 
-        var preserveCurrentSelection = _loadedOnce && !string.IsNullOrWhiteSpace(currentSelection);
+        var firstVersion = VersionItems.FirstOrDefault()?.Version;
+        var hasCurrentSelection = !string.IsNullOrWhiteSpace(currentSelection);
+        var isFallbackFirstSelection = hasCurrentSelection &&
+            !string.IsNullOrWhiteSpace(firstVersion) &&
+            string.Equals(currentSelection, firstVersion, StringComparison.OrdinalIgnoreCase);
+
+        var preserveCurrentSelection = _loadedOnce && hasCurrentSelection && !isFallbackFirstSelection;
 
         if (preserveCurrentSelection)
         {
@@ -295,10 +473,29 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         foreach (var candidate in preferredVersionCandidates)
         {
+            var candidateToken = ExtractVersionToken(candidate);
+
             var exact = VersionItems.FirstOrDefault(v =>
                 string.Equals(v.Version, candidate, StringComparison.OrdinalIgnoreCase));
             if (exact is not null)
                 return exact;
+
+            if (!string.IsNullOrWhiteSpace(candidateToken))
+            {
+                // Match against both the raw item version and display text while ignoring codename suffixes.
+                var tokenMatch = VersionItems.FirstOrDefault(v =>
+                {
+                    var versionToken = ExtractVersionToken(v.Version);
+                    if (string.Equals(versionToken, candidateToken, StringComparison.OrdinalIgnoreCase))
+                        return true;
+
+                    var displayToken = ExtractVersionToken(v.DisplayName);
+                    return string.Equals(displayToken, candidateToken, StringComparison.OrdinalIgnoreCase);
+                });
+
+                if (tokenMatch is not null)
+                    return tokenMatch;
+            }
 
             // If we only have major.minor, prefer newest patch variant (e.g. 4.2.4 over 4.2).
             if (Regex.IsMatch(candidate, @"^\d+\.\d+$"))
@@ -313,7 +510,16 @@ public partial class VersionBrowserViewModel : ViewModelBase
         return null;
     }
 
-    private async Task RefreshFromWorkshopAsync()
+    private static string? ExtractVersionToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+
+        var match = AnyVersionRegex.Match(value);
+        return match.Success ? match.Value : value.Trim();
+    }
+
+    private async Task RefreshFromWorkshopAsync(bool ignoreCache = false)
     {
         var versionQuery = SelectedVersion?.Version;
         if (string.IsNullOrWhiteSpace(versionQuery))
@@ -340,7 +546,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
         {
             var searchQueries = GetVersionSearchQueries(versionQuery);
 
-            var cachedCards = await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
+            var cachedCards = ignoreCache
+                ? null
+                : await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
+
             if (cachedCards is not null)
             {
                 _fetchedMods.Clear();
@@ -357,7 +566,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 return;
             }
 
-            var ids = await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken);
+            var ids = await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken, Math.Max(FetchLimit, DefaultFetchLimit));
             cancellationToken.ThrowIfCancellationRequested();
 
             var cards = await ResolveWorkshopCardsAsync(versionQuery, ids, cancellationToken);
@@ -419,15 +628,23 @@ public partial class VersionBrowserViewModel : ViewModelBase
     }
 
     private async Task<List<string>> FetchCandidateWorkshopIdsAsync(IReadOnlyList<string> searchQueries, CancellationToken cancellationToken)
+        => await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken, Math.Max(DefaultFetchLimit, 24));
+
+    private async Task<List<string>> FetchCandidateWorkshopIdsAsync(
+        IReadOnlyList<string> searchQueries,
+        CancellationToken cancellationToken,
+        int desiredCount)
     {
         var dedupe = new HashSet<string>(StringComparer.Ordinal);
         var ordered = new List<string>();
+        var targetCount = Math.Max(desiredCount, 24);
+        var hardCap = Math.Max(targetCount * 2, targetCount);
 
         foreach (var query in searchQueries)
         {
             foreach (var sort in new[] { "trend", "totaluniquesubscribers" })
             {
-                for (var page = 1; page <= 2; page++)
+                for (var page = 1; page <= 6; page++)
                 {
                     var url = BuildWorkshopBrowseUrl(query, sort, page);
                     var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
@@ -441,13 +658,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
                         if (dedupe.Add(id))
                             ordered.Add(id);
 
-                        if (ordered.Count >= 60)
+                        if (ordered.Count >= hardCap)
                             return ordered;
                     }
                 }
             }
 
-            if (ordered.Count >= 24)
+            if (ordered.Count >= targetCount)
                 return ordered;
         }
 
@@ -457,12 +674,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private async Task<List<VersionModCard>> ResolveWorkshopCardsAsync(
         string versionQuery,
         List<string> ids,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int? maxCount = null)
     {
         if (ids.Count == 0)
             return new List<VersionModCard>();
 
-        var topIds = ids.Take(32).ToList();
+        var targetCount = Math.Max(maxCount ?? FetchLimit, 1);
+        var topIds = ids.Take(Math.Max(targetCount * 2, targetCount)).ToList();
         var semaphore = new SemaphoreSlim(4);
 
         var tasks = topIds.Select(async (id, index) =>
@@ -492,7 +711,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
         });
 
         var cards = await Task.WhenAll(tasks);
-        return cards.OrderBy(c => c.Index).Select(c => c.Card).ToList();
+        return cards
+            .OrderBy(c => c.Index)
+            .Select(c => c.Card)
+            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c.Name))
+            .Take(targetCount)
+            .ToList();
     }
 
     private async Task<List<VersionModCard>?> TryLoadCachedVersionCardsAsync(string versionQuery, CancellationToken cancellationToken)
@@ -561,7 +785,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (mods.Count == 0)
             return new List<VersionModCard>();
 
-        var limited = mods.Take(32).ToList();
+        var limited = mods.Take(Math.Max(FetchLimit, 1)).ToList();
         var cards = limited
             .Select((item, index) => new IndexedCard(index, new VersionModCard
             {
@@ -762,11 +986,16 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private static IReadOnlyList<string> GetVersionSearchQueries(string versionQuery)
     {
         var queries = new List<string>();
+        var selectedToken = ExtractVersionToken(versionQuery) ?? versionQuery.Trim();
 
-        if (!string.IsNullOrWhiteSpace(versionQuery))
-            queries.Add(versionQuery.Trim());
+        if (!string.IsNullOrWhiteSpace(selectedToken))
+            queries.Add(selectedToken);
 
-        var normalized = StellarisVersions.Normalize(versionQuery);
+        // Keep patch searches strict: 4.2.4 should not be broadened to 4.2.
+        if (Regex.IsMatch(selectedToken, @"^\d+\.\d+\.\d+$"))
+            return queries;
+
+        var normalized = StellarisVersions.Normalize(selectedToken);
         if (!string.IsNullOrWhiteSpace(normalized) &&
             !queries.Contains(normalized, StringComparer.OrdinalIgnoreCase))
         {
@@ -774,6 +1003,26 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
 
         return queries;
+    }
+
+    private static bool ShouldIncludeForSelectedVersion(string versionQuery, string modName)
+    {
+        if (string.IsNullOrWhiteSpace(versionQuery) || string.IsNullOrWhiteSpace(modName))
+            return true;
+
+        var selectedToken = ExtractVersionToken(versionQuery);
+        if (string.IsNullOrWhiteSpace(selectedToken))
+            return true;
+
+        // For major.minor pages (e.g. 4.2), exclude explicitly patch-pinned mods (e.g. 4.2.4).
+        if (Regex.IsMatch(selectedToken, @"^\d+\.\d+$"))
+        {
+            var patchRegex = new Regex($@"\b{Regex.Escape(selectedToken)}\.\d+\b", RegexOptions.IgnoreCase);
+            if (patchRegex.IsMatch(modName))
+                return false;
+        }
+
+        return true;
     }
 
     private static List<string> GetVersionQueries(bool includeOlder)
