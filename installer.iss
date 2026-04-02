@@ -39,11 +39,7 @@ OutputDir={#SetupOutputDir}
 OutputBaseFilename={#SetupOutputBase}
 Compression=lzma2
 SolidCompression=yes
-#ifdef EnableDarkWizardStyle
 WizardStyle=modern dynamic windows11
-#else
-WizardStyle=modern
-#endif
 SetupIconFile={#SetupIconPath}
 WizardImageFile={#WizardImagePath}
 WizardImageBackColor=$F0F0F0
@@ -57,7 +53,7 @@ WizardSmallImageBackColorDynamicDark=$202020
 #endif
 WizardImageStretch=yes
 PrivilegesRequired=admin
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\\{#MyAppExeName}
 
 [Languages]

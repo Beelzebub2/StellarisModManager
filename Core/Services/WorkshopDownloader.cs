@@ -5,6 +5,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
@@ -95,93 +96,47 @@ public class WorkshopDownloader
 
         RaiseProgress(modId, "", 0, "Starting SteamCMD…");
 
-        // SteamCMD needs a writable install path passed via +force_install_dir
+        // Mirror WorkshopDL behavior: detect the real consumer app id from the mod id.
+        var effectiveAppId = await TryDetectWorkshopAppIdAsync(modId, ct) ?? StellarisAppId;
+        if (!string.Equals(effectiveAppId, StellarisAppId, StringComparison.Ordinal))
+            RaiseProgress(modId, "", -1, $"Detected AppID {effectiveAppId} for this item");
+
         var forceInstallDir = downloadBasePath.Replace('/', '\\');
+        var steamCmdDir = Path.GetDirectoryName(steamCmdPath) ?? downloadBasePath;
 
-        var args = $"+force_install_dir \"{forceInstallDir}\" " +
-                   $"+login anonymous " +
-                   $"+workshop_download_item {StellarisAppId} {modId} " +
-                   $"+quit";
-
-        _log.Information("Running steamcmd: {Exe} {Args}", steamCmdPath, args);
-
-        var psi = new ProcessStartInfo
+        var attempts = new[]
         {
-            FileName = steamCmdPath,
-            Arguments = args,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            $"+force_install_dir \"{forceInstallDir}\" +login anonymous +workshop_download_item {effectiveAppId} {modId} validate +quit",
+            $"+force_install_dir \"{forceInstallDir}\" +login anonymous +workshop_download_item {effectiveAppId} {modId} +quit",
         };
 
         string? downloadedPath = null;
         string? errorMessage = null;
-        bool success = false;
+        var attemptErrors = new List<string>();
 
-        try
+        foreach (var args in attempts)
         {
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-
-            process.OutputDataReceived += (_, e) =>
+            var result = await RunSteamCmdAttemptAsync(modId, effectiveAppId, steamCmdPath, steamCmdDir, downloadBasePath, args, ct);
+            if (result.Success)
             {
-                if (e.Data is null) return;
-                var line = e.Data;
-                _log.Debug("[steamcmd] {Line}", line);
-
-                // Parse progress from SteamCMD output
-                var (percent, status) = ParseSteamCmdLine(line, modId);
-                if (status is not null)
-                    RaiseProgress(modId, "", percent, status);
-            };
-
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (e.Data is not null)
-                    _log.Warning("[steamcmd stderr] {Line}", e.Data);
-            };
-
-            process.Start();
-            process.BeginOutputReadLine();
-            process.BeginErrorReadLine();
-
-            await process.WaitForExitAsync(ct);
-
-            if (process.ExitCode == 0)
-            {
-                var expectedPath = Path.Combine(
-                    downloadBasePath,
-                    "steamapps", "workshop", "content", StellarisAppId, modId);
-
-                if (Directory.Exists(expectedPath))
-                {
-                    downloadedPath = expectedPath;
-                    success = true;
-                    _log.Information("Mod {Id} downloaded to {Path}", modId, downloadedPath);
-                }
-                else
-                {
-                    errorMessage = $"SteamCMD exited cleanly but download folder not found: {expectedPath}";
-                    _log.Warning(errorMessage);
-                }
+                downloadedPath = result.DownloadedPath;
+                break;
             }
-            else
-            {
-                errorMessage = $"SteamCMD exited with code {process.ExitCode}";
-                _log.Warning(errorMessage);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            errorMessage = "Download cancelled.";
-        }
-        catch (Exception ex)
-        {
-            errorMessage = ex.Message;
-            _log.Error(ex, "Exception while running SteamCMD for mod {Id}", modId);
+
+            if (!string.IsNullOrWhiteSpace(result.ErrorMessage))
+                attemptErrors.Add(result.ErrorMessage);
         }
 
-        RaiseComplete(modId, success, downloadedPath, errorMessage);
+        if (downloadedPath is null)
+        {
+            errorMessage = attemptErrors.Count > 0
+                ? string.Join(" | ", attemptErrors)
+                : "SteamCMD failed with unknown error.";
+            RaiseComplete(modId, false, null, errorMessage);
+            return null;
+        }
+
+        RaiseComplete(modId, true, downloadedPath, null);
         return downloadedPath;
     }
 
@@ -356,6 +311,191 @@ public class WorkshopDownloader
             Log.Warning(ex, "Failed to parse Steam API response for mod {Id}", modId);
             return null;
         }
+    }
+
+    private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> RunSteamCmdAttemptAsync(
+        string modId,
+        string appId,
+        string steamCmdPath,
+        string steamCmdDir,
+        string downloadBasePath,
+        string args,
+        CancellationToken ct)
+    {
+        _log.Information("Running steamcmd: {Exe} {Args}", steamCmdPath, args);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = steamCmdPath,
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        string? downloadedPathFromOutput = null;
+        var errors = new List<string>();
+
+        try
+        {
+            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                var line = e.Data;
+                _log.Debug("[steamcmd] {Line}", line);
+
+                var (percent, status) = ParseSteamCmdLine(line, modId);
+                if (status is not null)
+                    RaiseProgress(modId, "", percent, status);
+
+                if (TryExtractDownloadedPath(line, out var path))
+                    downloadedPathFromOutput = path;
+
+                if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
+                    errors.Add(line.Trim());
+            };
+
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null) return;
+                _log.Warning("[steamcmd stderr] {Line}", e.Data);
+                errors.Add(e.Data.Trim());
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            await process.WaitForExitAsync(ct);
+
+            var candidatePaths = BuildCandidateDownloadPaths(
+                appId,
+                modId,
+                downloadBasePath,
+                steamCmdDir,
+                downloadedPathFromOutput);
+
+            foreach (var path in candidatePaths)
+            {
+                if (Directory.Exists(path))
+                {
+                    _log.Information("Mod {Id} downloaded to {Path}", modId, path);
+                    return (true, path, null);
+                }
+            }
+
+            var error = process.ExitCode == 0
+                ? $"SteamCMD exited cleanly but no downloaded folder was found for mod {modId}."
+                : $"SteamCMD exited with code {process.ExitCode}";
+
+            if (errors.Count > 0)
+                error += " Output: " + string.Join(" || ", errors);
+
+            _log.Warning(error);
+            return (false, null, error);
+        }
+        catch (OperationCanceledException)
+        {
+            return (false, null, "Download cancelled.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Exception while running SteamCMD for mod {Id}", modId);
+            return (false, null, ex.Message);
+        }
+    }
+
+    private static List<string> BuildCandidateDownloadPaths(
+        string appId,
+        string modId,
+        string downloadBasePath,
+        string steamCmdDir,
+        string? outputPath)
+    {
+        var candidates = new List<string>();
+        var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+                return;
+            var normalized = path.Trim().Trim('"');
+            if (dedupe.Add(normalized))
+                candidates.Add(normalized);
+        }
+
+        Add(outputPath);
+        Add(Path.Combine(downloadBasePath, "steamapps", "workshop", "content", appId, modId));
+        Add(Path.Combine(steamCmdDir, "steamapps", "workshop", "content", appId, modId));
+
+        return candidates;
+    }
+
+    private static bool TryExtractDownloadedPath(string line, out string? path)
+    {
+        path = null;
+
+        var match = Regex.Match(
+            line,
+            "Downloaded item\\s+\\d+\\s+to\\s+\"?(?<path>[A-Za-z]:[^\"\\r\\n]+)\"?",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+            return false;
+
+        path = match.Groups["path"].Value;
+        return !string.IsNullOrWhiteSpace(path);
+    }
+
+    private async Task<string?> TryDetectWorkshopAppIdAsync(string modId, CancellationToken ct)
+    {
+        const string url = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
+
+        var formData = new FormUrlEncodedContent(new[]
+        {
+            new KeyValuePair<string, string>("itemcount", "1"),
+            new KeyValuePair<string, string>("publishedfileids[0]", modId),
+        });
+
+        try
+        {
+            using var response = await _http.PostAsync(url, formData, ct);
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("response", out var responseEl))
+                return null;
+            if (!responseEl.TryGetProperty("publishedfiledetails", out var detailsEl))
+                return null;
+            if (detailsEl.ValueKind != JsonValueKind.Array || detailsEl.GetArrayLength() == 0)
+                return null;
+
+            var item = detailsEl[0];
+            if (item.TryGetProperty("consumer_app_id", out var consumerAppId))
+            {
+                var appId = consumerAppId.GetRawText().Trim('"');
+                if (!string.IsNullOrWhiteSpace(appId) && appId != "0")
+                    return appId;
+            }
+
+            if (item.TryGetProperty("creator_app_id", out var creatorAppId))
+            {
+                var appId = creatorAppId.GetRawText().Trim('"');
+                if (!string.IsNullOrWhiteSpace(appId) && appId != "0")
+                    return appId;
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "Could not auto-detect app id for workshop item {Id}", modId);
+        }
+
+        return null;
     }
 
     private void RaiseProgress(string modId, string modName, int percent, string status)

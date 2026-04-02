@@ -86,9 +86,7 @@
         <Border Grid.Row="1" Margin="12"
                 Background="{DynamicResource Theme.AppBg}"
                 BorderBrush="{DynamicResource Theme.Border}"
-                BorderThickness="1"
-                CornerRadius="12"
-                ClipToBounds="True">
+                BorderThickness="1">
             <Grid>
                 <wv:WebView x:Name="WebView" IsVisible="True" />
 

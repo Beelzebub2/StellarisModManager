@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Serilog;
 using StellarisModManager.Core.Models;
 using StellarisModManager.Core.Services;
 
@@ -14,12 +15,15 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class LibraryViewModel : ViewModelBase
 {
+    private static readonly ILogger _log = Log.ForContext<LibraryViewModel>();
+
     private readonly ModDatabase _db;
     private readonly ModUpdateChecker _updateChecker;
     private readonly ModInstaller _installer;
     private readonly WorkshopDownloader _downloader;
     private readonly AppSettings _settings;
     private readonly ModExportImport _exportImport;
+    private readonly StellarisLauncherSyncService _launcherSync;
 
     // All installed mods
     public ObservableCollection<ModViewModel> Mods { get; } = new();
@@ -61,6 +65,7 @@ public partial class LibraryViewModel : ViewModelBase
         _downloader = downloader;
         _settings = settings;
         _exportImport = new ModExportImport();
+        _launcherSync = new StellarisLauncherSyncService();
     }
 
     partial void OnUpdatesAvailableChanged(int value) => OnPropertyChanged(nameof(HasUpdatesAvailable));
@@ -85,7 +90,7 @@ public partial class LibraryViewModel : ViewModelBase
         if (ShowEnabledOnly)
             filtered = filtered.Where(m => m.IsEnabled);
 
-        foreach (var mod in filtered.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name))
+        foreach (var mod in filtered.OrderByDescending(m => m.Model.InstalledAt).ThenBy(m => m.Name))
             FilteredMods.Add(mod);
 
         OnPropertyChanged(nameof(TotalMods));
@@ -118,6 +123,7 @@ public partial class LibraryViewModel : ViewModelBase
     {
         await _db.SetModEnabledAsync(mod.Model.Id, mod.IsEnabled);
         await SaveProfileSnapshotIfActiveAsync();
+        await SyncLauncherStateAsync();
         OnPropertyChanged(nameof(ActiveMods));
     }
 
@@ -160,6 +166,29 @@ public partial class LibraryViewModel : ViewModelBase
 
         await _db.UpdateLoadOrderAsync(updates);
         await SaveProfileSnapshotIfActiveAsync();
+        await SyncLauncherStateAsync();
+    }
+
+    private string ResolveModsPath()
+    {
+        if (!string.IsNullOrWhiteSpace(_settings.ModsPath))
+            return _settings.ModsPath;
+
+        return new GameDetector().GetDefaultModsPath();
+    }
+
+    private async Task SyncLauncherStateAsync()
+    {
+        try
+        {
+            var modsPath = ResolveModsPath();
+            var models = Mods.Select(m => m.Model).ToList();
+            await _launcherSync.SyncAsync(modsPath, models);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Failed to sync Stellaris launcher mod state");
+        }
     }
 
     [RelayCommand]
@@ -266,6 +295,7 @@ public partial class LibraryViewModel : ViewModelBase
             Mods.Remove(mod);
             ApplyFilter();
             await SaveProfileSnapshotIfActiveAsync();
+            await SyncLauncherStateAsync();
             StatusMessage = $"{mod.Name} uninstalled";
         }
         catch (Exception ex)
@@ -379,6 +409,7 @@ public partial class LibraryViewModel : ViewModelBase
         ActiveProfile = profiles.FirstOrDefault(p => p.IsActive);
 
         ApplyFilter();
+        _ = Task.Run(SyncLauncherStateAsync);
     }
 
     // Called when a new mod is installed

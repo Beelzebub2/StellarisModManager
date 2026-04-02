@@ -22,6 +22,7 @@
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="CornerRadius" Value="10" />
             <Setter Property="Padding" Value="12,10" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Left" />
             <Setter Property="Foreground" Value="{DynamicResource Theme.TextPrimary}" />
         </Style>
@@ -92,7 +93,7 @@
                                    Margin="6,0,0,8" />
                     </StackPanel>
 
-                    <StackPanel Grid.Row="1" Spacing="6">
+                    <StackPanel Grid.Row="1" Spacing="6" HorizontalAlignment="Stretch">
                         <Grid>
                             <Button Classes="nav-btn" Command="{Binding NavigateToBrowserCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
@@ -151,16 +152,13 @@
                             CornerRadius="10"
                             Padding="10,8"
                             Margin="4">
-                        <StackPanel Spacing="8">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="Build"
-                                           Foreground="{DynamicResource Theme.TextMuted}"
-                                           FontSize="11" />
-                                <TextBlock Text="{Binding AppVersion}"
-                                           Foreground="{DynamicResource Theme.TextPrimary}"
-                                           FontSize="12"
-                                           FontWeight="SemiBold" />
-                            </StackPanel>
+                        <StackPanel Spacing="8" HorizontalAlignment="Stretch">
+                            <Button Classes="nav-btn" Command="{Binding LaunchGameCommand}">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Classes="icon-glyph" Text="&#xE768;" />
+                                    <TextBlock Text="Start Game" />
+                                </StackPanel>
+                            </Button>
 
                             <Border Height="1" Background="{DynamicResource Theme.Border}" />
 
@@ -223,7 +221,7 @@
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="12,8">
-            <Grid ColumnDefinitions="*,Auto,Auto">
+            <Grid ColumnDefinitions="*,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.TextMuted}" Text="&#xE946;" />
                     <TextBlock Text="{Binding StatusMessage}"
@@ -241,12 +239,6 @@
                              Margin="10,0"
                              VerticalAlignment="Center"
                              IsVisible="{Binding IsDownloading}" />
-
-                <TextBlock Grid.Column="2"
-                           Text="{Binding AppVersion}"
-                           Foreground="{DynamicResource Theme.TextMuted}"
-                           VerticalAlignment="Center"
-                           FontSize="12" />
             </Grid>
         </Border>
 

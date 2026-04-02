@@ -100,7 +100,7 @@ public class ModInstaller
             Version = descriptor.Version ?? string.Empty,
             InstalledPath = targetDir,
             DescriptorPath = descriptorFilePath,
-            IsEnabled = false,
+            IsEnabled = true,
             LoadOrder = 0,
             InstalledAt = DateTime.UtcNow,
             LastUpdatedAt = modInfo is not null

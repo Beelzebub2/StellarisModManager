@@ -39,6 +39,13 @@ public partial class BrowserView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _vm = DataContext as BrowserViewModel;
+        _ = DeferInitWebViewAsync();
+    }
+
+    private async Task DeferInitWebViewAsync()
+    {
+        // Give the shell time to render before paying WebView2 cold-start cost.
+        await Task.Delay(250);
         TryInitWebView();
     }
 
@@ -333,7 +340,15 @@ public partial class BrowserView : UserControl
         if (Regex.IsMatch(trimmed, @"^\d+$"))
             return trimmed;
 
-        var match = Regex.Match(trimmed, @"[?&]id=(\d+)");
+        var match = Regex.Match(trimmed, @"[?&]id=(\d+)", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return match.Groups[1].Value;
+
+        match = Regex.Match(trimmed, @"publishedfileid=(\d+)", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return match.Groups[1].Value;
+
+        match = Regex.Match(trimmed, @"\b(\d{8,})\b");
         if (match.Success)
             return match.Groups[1].Value;
 

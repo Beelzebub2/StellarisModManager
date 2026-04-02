@@ -2,11 +2,15 @@ using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisModManager.Core.Services;
+using System.IO;
+using System.Diagnostics;
 
 namespace StellarisModManager.UI.ViewModels;
 
 public partial class MainViewModel : ViewModelBase
 {
+    private readonly AppSettings _settings;
+
     // Currently active view model (Browser, Library, or Settings)
     [ObservableProperty] private ViewModelBase _activeView = null!;
 
@@ -34,6 +38,7 @@ public partial class MainViewModel : ViewModelBase
         ModInstaller installer,
         ModUpdateChecker updateChecker)
     {
+        _settings = settings;
         BrowserViewModel = new BrowserViewModel();
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader);
@@ -68,8 +73,8 @@ public partial class MainViewModel : ViewModelBase
             }
         };
 
-        // Start on BrowserView
-        ActiveView = BrowserViewModel;
+        // Start on LibraryView to avoid WebView2 cold-start cost at app launch.
+        ActiveView = LibraryViewModel;
 
         // Initialize DB and load settings asynchronously
         _ = InitializeAsync(db, settings);
@@ -146,6 +151,58 @@ public partial class MainViewModel : ViewModelBase
 
     [RelayCommand]
     private void NavigateToSettings() => ActiveView = SettingsViewModel;
+
+    [RelayCommand]
+    private void LaunchGame()
+    {
+        var gamePath = _settings.GamePath;
+        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+        {
+            StatusMessage = "Set a valid game path in Settings first.";
+            ActiveView = SettingsViewModel;
+            return;
+        }
+
+        var candidates = new[]
+        {
+            Path.Combine(gamePath, "stellaris.exe"),
+            Path.Combine(gamePath, "Stellaris.exe"),
+            Path.Combine(gamePath, "dowser.exe"),
+        };
+
+        string? executable = null;
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+            {
+                executable = candidate;
+                break;
+            }
+        }
+
+        if (executable is null)
+        {
+            StatusMessage = "Could not find Stellaris executable in the configured game path.";
+            ActiveView = SettingsViewModel;
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = executable,
+                WorkingDirectory = Path.GetDirectoryName(executable) ?? gamePath,
+                UseShellExecute = true,
+            });
+
+            StatusMessage = "Launching Stellaris...";
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Launch failed: {ex.Message}";
+        }
+    }
 
     partial void OnActiveViewChanged(ViewModelBase value)
     {
