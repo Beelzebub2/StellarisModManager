@@ -720,15 +720,36 @@ public partial class LibraryViewModel : ViewModelBase
 
         _isLoadingProfiles = true;
 
-        Profiles.Clear();
+        // Remove profiles that no longer exist.
+        var incomingIds = profiles.Select(p => p.Id).ToHashSet();
+        for (var i = Profiles.Count - 1; i >= 0; i--)
+        {
+            if (!incomingIds.Contains(Profiles[i].Id))
+                Profiles.RemoveAt(i);
+        }
+
+        // Update existing entries in place to preserve ComboBox item references,
+        // or add new profiles when needed.
         foreach (var p in profiles)
-            Profiles.Add(p);
+        {
+            var existing = Profiles.FirstOrDefault(x => x.Id == p.Id);
+            if (existing is not null)
+            {
+                existing.Name = p.Name;
+                existing.IsActive = p.IsActive;
+                existing.SharedProfileId = p.SharedProfileId;
+            }
+            else
+            {
+                Profiles.Add(p);
+            }
+        }
 
         var preferredActiveProfileId = ActiveProfile?.Id ?? _currentActiveProfileId;
         var activeByTrackedId = preferredActiveProfileId.HasValue
-            ? profiles.FirstOrDefault(p => p.Id == preferredActiveProfileId.Value)
+            ? Profiles.FirstOrDefault(p => p.Id == preferredActiveProfileId.Value)
             : null;
-        var resolvedActive = activeByTrackedId ?? profiles.FirstOrDefault(p => p.IsActive) ?? profiles.FirstOrDefault();
+        var resolvedActive = activeByTrackedId ?? Profiles.FirstOrDefault(p => p.IsActive) ?? Profiles.FirstOrDefault();
         _currentActiveProfileId = resolvedActive?.Id;
         ActiveProfile = resolvedActive;
         _isLoadingProfiles = false;

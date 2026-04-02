@@ -467,6 +467,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
             var preferredCandidates = ResolvePreferredVersionCandidates(_settings, _detector);
             SelectedVersion = ResolvePreferredVersionItem(preferredCandidates) ?? VersionItems.FirstOrDefault();
         }
+
+        // Ensure our intended selection wins after ComboBox deferred auto-select.
+        var targetSelection = SelectedVersion;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!ReferenceEquals(SelectedVersion, targetSelection))
+                SelectedVersion = targetSelection;
+        }, DispatcherPriority.Background);
     }
 
     private VersionDropdownItem? ResolvePreferredVersionItem(IReadOnlyList<string> preferredVersionCandidates)
@@ -474,6 +482,15 @@ public partial class VersionBrowserViewModel : ViewModelBase
         foreach (var candidate in preferredVersionCandidates)
         {
             var candidateToken = ExtractVersionToken(candidate);
+
+            // If we only have major.minor, prefer newest patch variant (e.g. 4.2.4 over 4.2).
+            if (!string.IsNullOrWhiteSpace(candidate) && Regex.IsMatch(candidate, @"^\d+\.\d+$"))
+            {
+                var patch = VersionItems.FirstOrDefault(v =>
+                    v.Version.StartsWith(candidate + ".", StringComparison.OrdinalIgnoreCase));
+                if (patch is not null)
+                    return patch;
+            }
 
             var exact = VersionItems.FirstOrDefault(v =>
                 string.Equals(v.Version, candidate, StringComparison.OrdinalIgnoreCase));
@@ -497,14 +514,6 @@ public partial class VersionBrowserViewModel : ViewModelBase
                     return tokenMatch;
             }
 
-            // If we only have major.minor, prefer newest patch variant (e.g. 4.2.4 over 4.2).
-            if (Regex.IsMatch(candidate, @"^\d+\.\d+$"))
-            {
-                var patch = VersionItems.FirstOrDefault(v =>
-                    v.Version.StartsWith(candidate + ".", StringComparison.OrdinalIgnoreCase));
-                if (patch is not null)
-                    return patch;
-            }
         }
 
         return null;
