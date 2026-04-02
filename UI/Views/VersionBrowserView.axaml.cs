@@ -1,22 +1,70 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
+using System;
+using System.Linq;
+using System.Threading.Tasks;
 using StellarisModManager.UI.ViewModels;
 
 namespace StellarisModManager.UI.Views;
 
 public partial class VersionBrowserView : UserControl
 {
+    private Vector _savedScrollOffset = default;
+    private NativeWebView? _modDetailsWebView;
+    private bool _modBrowserInitFailed;
+    private bool _hasTriggeredInitialLoad;
+    private bool _isInitialLoadRunning;
+
     public VersionBrowserView()
     {
         InitializeComponent();
+        PropertyChanged += OnControlPropertyChanged;
         Loaded += OnLoaded;
     }
 
-    private async void OnLoaded(object? sender, RoutedEventArgs e)
+    private void OnLoaded(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is VersionBrowserViewModel vm)
+        if (IsVisible)
+            _ = EnsureInitialLoadAsync();
+    }
+
+    private void OnControlPropertyChanged(object? sender, AvaloniaPropertyChangedEventArgs e)
+    {
+        if (e.Property != IsVisibleProperty)
+            return;
+
+        if (!IsVisible)
+            return;
+
+        _ = EnsureInitialLoadAsync();
+    }
+
+    private async Task EnsureInitialLoadAsync()
+    {
+        if (_hasTriggeredInitialLoad || _isInitialLoadRunning)
+            return;
+
+        if (DataContext is not VersionBrowserViewModel vm)
+            return;
+
+        _isInitialLoadRunning = true;
+        try
+        {
             await vm.LoadAsync();
+            _hasTriggeredInitialLoad = true;
+        }
+        catch (Exception ex)
+        {
+            vm.StatusText = $"By Version failed to load: {ex.Message}";
+        }
+        finally
+        {
+            _isInitialLoadRunning = false;
+        }
     }
 
     private void OnCardActionClick(object? sender, RoutedEventArgs e)
@@ -50,5 +98,93 @@ public partial class VersionBrowserView : UserControl
 
         if (button.DataContext is VersionModCard card)
             card.IsActionHovered = false;
+    }
+
+    private void OnModCardPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Border border)
+            return;
+
+        // Ignore presses coming from the action button.
+        if (e.Source is Visual visual && visual.GetSelfAndVisualAncestors().OfType<Button>().Any())
+            return;
+
+        if (border.DataContext is not VersionModCard card)
+            return;
+
+        if (string.IsNullOrWhiteSpace(card.WorkshopId))
+            return;
+
+        _savedScrollOffset = ResultsScrollViewer.Offset;
+
+        var url = $"https://steamcommunity.com/sharedfiles/filedetails/?id={card.WorkshopId}";
+        ModBrowserTitleText.Text = card.Name;
+        ResultsContentPanel.IsVisible = false;
+        ModBrowserPanel.IsVisible = true;
+
+        if (!EnsureModBrowserInitialized())
+            return;
+
+        try
+        {
+            _modDetailsWebView!.Navigate(new Uri(url));
+            ModBrowserFallbackPanel.IsVisible = false;
+        }
+        catch (Exception ex)
+        {
+            ModBrowserFallbackText.Text = $"Could not navigate to mod page: {ex.Message}";
+            ModBrowserFallbackPanel.IsVisible = true;
+        }
+    }
+
+    private void BackToResultsButton_Click(object? sender, RoutedEventArgs e)
+    {
+        ModBrowserPanel.IsVisible = false;
+        ResultsContentPanel.IsVisible = true;
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            ResultsScrollViewer.Offset = _savedScrollOffset;
+        }, DispatcherPriority.Background);
+    }
+
+    private void ModBrowserBackButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_modDetailsWebView is null)
+            return;
+
+        try
+        {
+            if (_modDetailsWebView.CanGoBack)
+                _modDetailsWebView.GoBack();
+        }
+        catch
+        {
+            // Ignore navigation failures; user can always go back to results.
+        }
+    }
+
+    private bool EnsureModBrowserInitialized()
+    {
+        if (_modDetailsWebView is not null)
+            return true;
+
+        if (_modBrowserInitFailed)
+            return false;
+
+        try
+        {
+            _modDetailsWebView = new NativeWebView();
+            ModBrowserHost.Content = _modDetailsWebView;
+            ModBrowserFallbackPanel.IsVisible = false;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _modBrowserInitFailed = true;
+            ModBrowserFallbackText.Text = $"Could not initialize embedded browser: {ex.Message}";
+            ModBrowserFallbackPanel.IsVisible = true;
+            return false;
+        }
     }
 }

@@ -90,7 +90,7 @@ public partial class LibraryViewModel : ViewModelBase
         if (ShowEnabledOnly)
             filtered = filtered.Where(m => m.IsEnabled);
 
-        foreach (var mod in filtered.OrderByDescending(m => m.Model.InstalledAt).ThenBy(m => m.Name))
+        foreach (var mod in filtered.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name))
             FilteredMods.Add(mod);
 
         OnPropertyChanged(nameof(TotalMods));
@@ -520,6 +520,7 @@ public partial class LibraryViewModel : ViewModelBase
                 await _db.UpdateLoadOrderAsync(loadOrderUpdates);
 
             await SaveProfileSnapshotIfActiveAsync();
+            await SyncLauncherStateAsync();
             ApplyFilter();
 
             var missing = byId.Count - matched;

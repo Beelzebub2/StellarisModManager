@@ -19,6 +19,7 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class VersionBrowserViewModel : ViewModelBase
 {
+    private const string CacheSchemaVersion = "2";
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly string ThumbnailCacheDir = Path.Combine(
@@ -31,6 +32,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         "StellarisModManager",
         "cache",
         "version-results");
+    private static readonly string CacheVersionFilePath = Path.Combine(ResultCacheDir, "cache.schema");
     private static readonly TimeSpan ResultCacheTtl = TimeSpan.FromMinutes(30);
 
     private readonly WorkshopDownloader _downloader;
@@ -65,6 +67,46 @@ public partial class VersionBrowserViewModel : ViewModelBase
         _downloader = downloader;
         Directory.CreateDirectory(ThumbnailCacheDir);
         Directory.CreateDirectory(ResultCacheDir);
+        InitializeCaches();
+    }
+
+    private static void InitializeCaches()
+    {
+        try
+        {
+            var existingVersion = File.Exists(CacheVersionFilePath)
+                ? File.ReadAllText(CacheVersionFilePath).Trim()
+                : string.Empty;
+
+            if (string.Equals(existingVersion, CacheSchemaVersion, StringComparison.Ordinal))
+                return;
+
+            ClearDirectoryFiles(ThumbnailCacheDir);
+            ClearDirectoryFiles(ResultCacheDir);
+            File.WriteAllText(CacheVersionFilePath, CacheSchemaVersion);
+        }
+        catch
+        {
+            // Cache init is best-effort only.
+        }
+    }
+
+    private static void ClearDirectoryFiles(string dir)
+    {
+        if (!Directory.Exists(dir))
+            return;
+
+        foreach (var file in Directory.GetFiles(dir))
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch
+            {
+                // Best-effort cache cleanup.
+            }
+        }
     }
 
     partial void OnSelectedVersionChanged(VersionDropdownItem? value)
@@ -318,8 +360,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (ids.Count == 0)
             return new List<VersionModCard>();
 
-        var topIds = ids.Take(48).ToList();
-        var semaphore = new SemaphoreSlim(6);
+        var topIds = ids.Take(24).ToList();
+        var semaphore = new SemaphoreSlim(2);
 
         var tasks = topIds.Select(async (id, index) =>
         {
@@ -420,8 +462,9 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (mods.Count == 0)
             return new List<VersionModCard>();
 
-        var semaphore = new SemaphoreSlim(6);
-        var tasks = mods.Select(async (item, index) =>
+        var limited = mods.Take(24).ToList();
+        var semaphore = new SemaphoreSlim(2);
+        var tasks = limited.Select(async (item, index) =>
         {
             await semaphore.WaitAsync(cancellationToken);
             try
@@ -511,8 +554,18 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 var info = new FileInfo(cachePath);
                 if (info.Length > 0)
                 {
-                    await using var cachedStream = File.OpenRead(cachePath);
-                    return new Bitmap(cachedStream);
+                    var cachedBitmap = TryLoadBitmapFromFile(cachePath);
+                    if (cachedBitmap is not null)
+                        return cachedBitmap;
+
+                    try
+                    {
+                        File.Delete(cachePath);
+                    }
+                    catch
+                    {
+                        // Best-effort delete of bad cache file.
+                    }
                 }
             }
 
@@ -526,9 +579,19 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 return null;
 
             await File.WriteAllBytesAsync(cachePath, bytes, cancellationToken);
+            return TryLoadBitmapFromFile(cachePath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
-            await using var imageStream = new MemoryStream(bytes);
-            return new Bitmap(imageStream);
+    private static Bitmap? TryLoadBitmapFromFile(string path)
+    {
+        try
+        {
+            return new Bitmap(path);
         }
         catch
         {

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
@@ -122,7 +123,10 @@ public class StellarisLauncherSyncService
 
     private sealed class DlcLoadPayload
     {
+        [JsonPropertyName("disabled_dlcs")]
         public List<string> DisabledDlcs { get; set; } = new();
+
+        [JsonPropertyName("enabled_mods")]
         public List<string> EnabledMods { get; set; } = new();
     }
 }

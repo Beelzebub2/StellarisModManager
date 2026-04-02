@@ -100,128 +100,207 @@
                      Padding="10,8" />
         </Grid>
 
-        <!-- Loading indicator -->
-        <StackPanel Grid.Row="1"
-                    IsVisible="{Binding IsLoading}"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    Spacing="12">
-            <ProgressBar IsIndeterminate="True"
-                         Width="200"
-                         Height="4"
-                         Foreground="{DynamicResource Theme.Accent}" />
-            <TextBlock Text="{Binding StatusText}"
-                       Foreground="{DynamicResource Theme.TextMuted}"
-                       FontSize="13"
-                       HorizontalAlignment="Center" />
-        </StackPanel>
+        <Grid Grid.Row="1">
+            <Grid x:Name="ResultsContentPanel">
+                <!-- Loading indicator -->
+                <StackPanel IsVisible="{Binding IsLoading}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="12">
+                    <ProgressBar IsIndeterminate="True"
+                                 Width="200"
+                                 Height="4"
+                                 Foreground="{DynamicResource Theme.Accent}" />
+                    <TextBlock Text="{Binding StatusText}"
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="13"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
 
-        <!-- Empty state: no mods installed at all -->
-        <StackPanel Grid.Row="1"
-                    IsVisible="{Binding ShowNoModsState}"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    Spacing="8">
-            <TextBlock Text="No workshop mods found."
-                       Foreground="{DynamicResource Theme.TextMuted}"
-                       FontSize="16"
-                       FontWeight="SemiBold"
-                       HorizontalAlignment="Center" />
-            <TextBlock Text="Try another version or broaden the query (for example, 4.2 instead of 4.2.4)."
-                       Foreground="{DynamicResource Theme.TextMuted}"
-                       FontSize="13"
-                       HorizontalAlignment="Center" />
-        </StackPanel>
+                <!-- Empty state: no mods installed at all -->
+                <StackPanel IsVisible="{Binding ShowNoModsState}"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Spacing="8">
+                    <TextBlock Text="No workshop mods found."
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Try another version or broaden the query (for example, 4.2 instead of 4.2.4)."
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="13"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
 
-        <!-- Empty state: mods exist but none match current filter -->
-        <TextBlock Grid.Row="1"
-                   Text="No mods found for this version."
-                   IsVisible="{Binding ShowFilteredEmptyState}"
-                   Foreground="{DynamicResource Theme.TextMuted}"
-                   FontSize="14"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Margin="0,40,0,0" />
+                <!-- Empty state: mods exist but none match current filter -->
+                <TextBlock Text="No mods found for this version."
+                           IsVisible="{Binding ShowFilteredEmptyState}"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Margin="0,40,0,0" />
 
-        <!-- Row 1: Mod grid -->
-        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled"
-                      IsVisible="{Binding HasResults}">
-            <ItemsControl ItemsSource="{Binding DisplayedMods}">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel Orientation="Horizontal" />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:VersionModCard">
-                        <Border Classes="mod-card"
-                                Width="160"
-                                Height="220"
-                                Margin="4"
-                                ClipToBounds="True">
-                            <Grid RowDefinitions="120,*,Auto">
+                <!-- Mod grid -->
+                <ScrollViewer x:Name="ResultsScrollViewer"
+                              HorizontalScrollBarVisibility="Disabled"
+                              IsVisible="{Binding HasResults}">
+                    <ItemsControl ItemsSource="{Binding DisplayedMods}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:VersionModCard">
+                                <Border Classes="mod-card"
+                                        Width="160"
+                                        Height="220"
+                                        Margin="4"
+                                        ClipToBounds="True"
+                                        PointerPressed="OnModCardPointerPressed">
+                                    <Grid RowDefinitions="120,*,Auto">
 
-                                <!-- Row 0: Thumbnail or placeholder -->
-                                <Panel Grid.Row="0">
-                                    <Image Source="{Binding ThumbnailImage}"
-                                           Stretch="UniformToFill"
-                                           IsVisible="{Binding HasThumbnail}" />
-                                    <Border Background="{DynamicResource Theme.PanelBg}"
-                                            IsVisible="{Binding !HasThumbnail}">
-                                        <TextBlock Text="{Binding PlaceholderLetter}"
-                                                   FontSize="48"
-                                                   FontWeight="Bold"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"
-                                                   Foreground="{DynamicResource Theme.TextMuted}" />
-                                    </Border>
-                                </Panel>
+                                        <!-- Row 0: Thumbnail or placeholder -->
+                                        <Panel Grid.Row="0">
+                                            <Image Source="{Binding ThumbnailImage}"
+                                                   Stretch="UniformToFill"
+                                                   IsVisible="{Binding HasThumbnail}" />
+                                            <Border Background="{DynamicResource Theme.PanelBg}"
+                                                    IsVisible="{Binding !HasThumbnail}">
+                                                <TextBlock Text="{Binding PlaceholderLetter}"
+                                                           FontSize="48"
+                                                           FontWeight="Bold"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"
+                                                           Foreground="{DynamicResource Theme.TextMuted}" />
+                                            </Border>
+                                        </Panel>
 
-                                <!-- Row 1: Mod name and version badge -->
-                                <Grid Grid.Row="1" Margin="8,6" RowDefinitions="*,Auto">
-                                    <TextBlock Grid.Row="0"
-                                               Text="{Binding Name}"
-                                               FontSize="11"
-                                               FontWeight="SemiBold"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxLines="2"
-                                               TextWrapping="Wrap"
-                                               Foreground="{DynamicResource Theme.TextPrimary}"
-                                               VerticalAlignment="Top" />
-                                    <Border Grid.Row="1"
-                                            Background="{DynamicResource Theme.Accent}"
-                                            CornerRadius="4"
-                                            Padding="5,2"
-                                            HorizontalAlignment="Left">
-                                        <TextBlock Text="{Binding GameVersionBadge}"
-                                                   Foreground="White"
-                                                   FontSize="9"
-                                                   FontWeight="SemiBold" />
-                                    </Border>
-                                </Grid>
+                                        <!-- Row 1: Mod name and version badge -->
+                                        <Grid Grid.Row="1" Margin="8,6" RowDefinitions="*,Auto">
+                                            <TextBlock Grid.Row="0"
+                                                       Text="{Binding Name}"
+                                                       FontSize="11"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       MaxLines="2"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource Theme.TextPrimary}"
+                                                       VerticalAlignment="Top" />
+                                            <Border Grid.Row="1"
+                                                    Background="{DynamicResource Theme.Accent}"
+                                                    CornerRadius="4"
+                                                    Padding="5,2"
+                                                    HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding GameVersionBadge}"
+                                                           Foreground="White"
+                                                           FontSize="9"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                        </Grid>
 
-                                <Button Grid.Row="2"
-                                        Margin="8,0,8,8"
-                                        Classes="mod-action"
-                                        Classes.installed="{Binding IsInstalledState}"
-                                        Classes.busy="{Binding IsBusyState}"
-                                        Classes.error="{Binding IsErrorState}"
-                                        Click="OnCardActionClick"
-                                        PointerEntered="OnCardActionPointerEntered"
-                                        PointerExited="OnCardActionPointerExited"
-                                        IsEnabled="{Binding IsActionEnabled}">
-                                    <TextBlock Text="{Binding ActionButtonText}"
-                                               FontSize="10"
-                                               FontWeight="SemiBold"
-                                               HorizontalAlignment="Center" />
-                                </Button>
+                                        <Button Grid.Row="2"
+                                                Margin="8,0,8,8"
+                                                Classes="mod-action"
+                                                Classes.installed="{Binding IsInstalledState}"
+                                                Classes.busy="{Binding IsBusyState}"
+                                                Classes.error="{Binding IsErrorState}"
+                                                Click="OnCardActionClick"
+                                                PointerEntered="OnCardActionPointerEntered"
+                                                PointerExited="OnCardActionPointerExited"
+                                                IsEnabled="{Binding IsActionEnabled}">
+                                            <TextBlock Text="{Binding ActionButtonText}"
+                                                       FontSize="10"
+                                                       FontWeight="SemiBold"
+                                                       HorizontalAlignment="Center" />
+                                        </Button>
 
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+
+            <Border x:Name="ModBrowserPanel"
+                    IsVisible="False"
+                    Background="{DynamicResource Theme.AppBg}"
+                    BorderBrush="{DynamicResource Theme.Border}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    ClipToBounds="True">
+                <Grid RowDefinitions="Auto,*">
+                    <Border Grid.Row="0"
+                            Background="{DynamicResource Theme.PanelBg}"
+                            BorderBrush="{DynamicResource Theme.Border}"
+                            BorderThickness="0,0,0,1"
+                            Padding="8">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Button Grid.Column="0"
+                                    Classes="mod-action"
+                                    Width="92"
+                                    Click="BackToResultsButton_Click">
+                                <TextBlock Text="Back"
+                                           FontSize="11"
+                                           FontWeight="SemiBold"
+                                           HorizontalAlignment="Center" />
+                            </Button>
+
+                            <TextBlock Grid.Column="1"
+                                       x:Name="ModBrowserTitleText"
+                                       Margin="10,0"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis"
+                                       Foreground="{DynamicResource Theme.TextPrimary}"
+                                       FontWeight="SemiBold" />
+
+                            <Button Grid.Column="2"
+                                    Width="34"
+                                    Height="30"
+                                    Background="{DynamicResource Theme.SurfaceBg}"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    ToolTip.Tip="Back in page"
+                                    Click="ModBrowserBackButton_Click">
+                                <TextBlock Text="&#xE72B;"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Center" />
+                            </Button>
+                        </Grid>
+                    </Border>
+
+                    <Grid Grid.Row="1"
+                          Background="{DynamicResource Theme.AppBg}">
+                        <ContentControl x:Name="ModBrowserHost" />
+
+                        <StackPanel x:Name="ModBrowserFallbackPanel"
+                                    IsVisible="False"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Spacing="8"
+                                    Margin="16">
+                            <TextBlock Text="Embedded browser unavailable."
+                                       Foreground="{DynamicResource Theme.TextPrimary}"
+                                       FontSize="15"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center" />
+                            <TextBlock x:Name="ModBrowserFallbackText"
+                                       Text="Could not initialize in-app browser for this mod page."
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12"
+                                       TextWrapping="Wrap"
+                                       HorizontalAlignment="Center"
+                                       TextAlignment="Center" />
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+            </Border>
+        </Grid>
 
     </Grid>
 </UserControl>

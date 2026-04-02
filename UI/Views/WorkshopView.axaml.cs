@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -22,8 +23,9 @@ public partial class WorkshopView : UserControl
     }
 
     private WorkshopViewModel? _vm;
+    private NativeWebView? _webView;
     private bool _isNativeEngineReady;
-    private bool _eventsWired;
+    private bool _webViewInitFailed;
     private int _navigationAttempt;
     private bool _steamAutoRetryUsed;
     private string _lastNavigatedUrl = string.Empty;
@@ -49,22 +51,24 @@ public partial class WorkshopView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _vm = DataContext as WorkshopViewModel;
-        TryInitWebView();
+        ShowFallback("Embedded browser is in safe mode. Click 'Retry In App' to initialize it if needed.");
     }
 
     private void TryInitWebView()
     {
+        if (_webView is not null || _webViewInitFailed)
+            return;
+
         try
         {
-            if (!_eventsWired)
-            {
-                WebView.AdapterCreated += OnAdapterCreated;
-                WebView.AdapterDestroyed += OnAdapterDestroyed;
-                WebView.NavigationStarted += OnNavigationStarted;
-                WebView.NavigationCompleted += OnNavigationCompleted;
-                WebView.WebMessageReceived += OnWebMessageReceived;
-                _eventsWired = true;
-            }
+            _webView = new NativeWebView();
+            _webView.AdapterCreated += OnAdapterCreated;
+            _webView.AdapterDestroyed += OnAdapterDestroyed;
+            _webView.NavigationStarted += OnNavigationStarted;
+            _webView.NavigationCompleted += OnNavigationCompleted;
+            _webView.WebMessageReceived += OnWebMessageReceived;
+
+            WebViewHost.Content = _webView;
 
             ShowEmbeddedBrowser();
 
@@ -75,6 +79,7 @@ public partial class WorkshopView : UserControl
         catch (Exception ex)
         {
             _isNativeEngineReady = false;
+            _webViewInitFailed = true;
             ShowFallback($"Embedded browser initialization failed: {ex.Message}");
         }
     }
@@ -103,8 +108,8 @@ public partial class WorkshopView : UserControl
             if (_vm is not null)
             {
                 _vm.IsLoading = false;
-                _vm.CanGoBack = WebView.CanGoBack;
-                _vm.CanGoForward = WebView.CanGoForward;
+                _vm.CanGoBack = _webView?.CanGoBack == true;
+                _vm.CanGoForward = _webView?.CanGoForward == true;
             }
         });
 
@@ -119,7 +124,8 @@ public partial class WorkshopView : UserControl
         try
         {
             var script = OverlayInjector.BuildInjectionScript();
-            await WebView.InvokeScript(script);
+            if (_webView is not null)
+                await _webView.InvokeScript(script);
             await ApplyOverlayStateAsync();
         }
         catch (Exception ex)
@@ -213,7 +219,10 @@ public partial class WorkshopView : UserControl
         }
 
         if (!_isNativeEngineReady)
+        {
+            TryInitWebView();
             return;
+        }
 
         var attempt = ++_navigationAttempt;
         _ = StartNavigationWatchdogAsync(attempt, url);
@@ -223,7 +232,7 @@ public partial class WorkshopView : UserControl
 
         try
         {
-            WebView.Navigate(new Uri(url));
+            _webView?.Navigate(new Uri(url));
             ShowEmbeddedBrowser();
         }
         catch (Exception ex)
@@ -283,35 +292,35 @@ public partial class WorkshopView : UserControl
     private void ShowFallback(string message)
     {
         BrowserErrorText.Text = message;
-        WebView.IsVisible = false;
+        WebViewHost.IsVisible = false;
         FallbackPanel.IsVisible = true;
     }
 
     private void ShowEmbeddedBrowser()
     {
-        WebView.IsVisible = true;
+        WebViewHost.IsVisible = true;
         FallbackPanel.IsVisible = false;
     }
 
     private void BackButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady)
-            WebView.GoBack();
+        if (_isNativeEngineReady && _webView?.CanGoBack == true)
+            _webView.GoBack();
     }
 
     private void ForwardButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady)
-            WebView.GoForward();
+        if (_isNativeEngineReady && _webView?.CanGoForward == true)
+            _webView.GoForward();
     }
 
     private void RefreshButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady)
+        if (_isNativeEngineReady && _webView is not null)
         {
             if (_vm is not null)
                 _vm.IsLoading = true;
-            WebView.Refresh();
+            _webView.Refresh();
         }
     }
 
@@ -333,6 +342,12 @@ public partial class WorkshopView : UserControl
 
     private void RetryInAppButton_Click(object? sender, RoutedEventArgs e)
     {
+        if (_webViewInitFailed)
+        {
+            ShowFallback("Embedded browser unavailable on this system. Install/repair WebView2 runtime or use default browser.");
+            return;
+        }
+
         if (!_isNativeEngineReady)
             TryInitWebView();
         else
@@ -418,7 +433,7 @@ public partial class WorkshopView : UserControl
 
     private async Task ApplyOverlayStateAsync()
     {
-        if (!_isNativeEngineReady || _vm is null)
+        if (!_isNativeEngineReady || _vm is null || _webView is null)
             return;
 
         var idsJson = string.IsNullOrWhiteSpace(_vm.InstalledWorkshopIdsJson)
@@ -429,8 +444,8 @@ public partial class WorkshopView : UserControl
             ? "{}"
             : _vm.ModStatesJson;
 
-        await WebView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
-        await WebView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
+        await _webView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
+        await _webView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -18,6 +18,8 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly AppSettings _settings;
     private readonly GameDetector _detector;
     private readonly WorkshopDownloader _downloader;
+    private readonly ModDatabase _db;
+    private readonly StellarisLauncherSyncService _launcherSync = new();
     private readonly Queue<string> _developerLogLines = new();
 
     [ObservableProperty] private string _gamePath = "";
@@ -36,11 +38,12 @@ public partial class SettingsViewModel : ViewModelBase
 
     public bool IsSteamCmdConfigured => _downloader.IsSteamCmdAvailable(SteamCmdPath);
 
-    public SettingsViewModel(AppSettings settings, GameDetector detector, WorkshopDownloader downloader)
+    public SettingsViewModel(AppSettings settings, GameDetector detector, WorkshopDownloader downloader, ModDatabase db)
     {
         _settings = settings;
         _detector = detector;
         _downloader = downloader;
+        _db = db;
 
         // Load current settings into VM
         GamePath = settings.GamePath ?? "";
@@ -268,7 +271,7 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void LaunchGame()
+    private async Task LaunchGame()
     {
         if (string.IsNullOrWhiteSpace(GamePath) || !Directory.Exists(GamePath))
         {
@@ -276,11 +279,25 @@ public partial class SettingsViewModel : ViewModelBase
             return;
         }
 
+        var modsPath = string.IsNullOrWhiteSpace(ModsPath)
+            ? _detector.GetDefaultModsPath()
+            : ModsPath;
+
+        try
+        {
+            var mods = await _db.GetAllModsAsync();
+            await _launcherSync.SyncAsync(modsPath, mods);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"Could not sync mod load order before launch: {ex.Message}";
+            return;
+        }
+
         var candidates = new[]
         {
             Path.Combine(GamePath, "stellaris.exe"),
             Path.Combine(GamePath, "Stellaris.exe"),
-            Path.Combine(GamePath, "dowser.exe"),
         };
 
         string? executable = null;
@@ -305,10 +322,11 @@ public partial class SettingsViewModel : ViewModelBase
             {
                 FileName = executable,
                 WorkingDirectory = Path.GetDirectoryName(executable) ?? GamePath,
+                Arguments = "--skiplauncher",
                 UseShellExecute = true,
             });
 
-            StatusMessage = "Launching Stellaris...";
+            StatusMessage = "Launching Stellaris directly (launcher bypass enabled)...";
         }
         catch (Exception ex)
         {

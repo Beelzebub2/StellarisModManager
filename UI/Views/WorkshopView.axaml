@@ -87,7 +87,7 @@
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1">
             <Grid>
-                <NativeWebView x:Name="WebView" IsVisible="True" />
+                <ContentControl x:Name="WebViewHost" IsVisible="True" />
 
                 <Border x:Name="FallbackPanel"
                         IsVisible="False"
