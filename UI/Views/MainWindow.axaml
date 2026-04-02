@@ -13,6 +13,7 @@
         MinWidth="940"
         MinHeight="620"
         WindowStartupLocation="CenterScreen"
+        TransparencyLevelHint="None"
         Background="{DynamicResource Theme.AppBg}"
         FontFamily="Inter, Segoe UI">
 
