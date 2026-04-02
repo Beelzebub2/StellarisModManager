@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using System;
 using System.Threading.Tasks;
+using StellarisModManager.Core.Services;
 using StellarisModManager.UI.Views;
 
 namespace StellarisModManager;
@@ -18,6 +19,15 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            if (BackgroundUpdaterRuntime.TryTakePendingRequest(out var pendingRequest) && pendingRequest is not null)
+            {
+                var updaterWindow = new UpdaterWindow(pendingRequest);
+                desktop.MainWindow = updaterWindow;
+                updaterWindow.Show();
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
+
             var splash = new SplashWindow();
             desktop.MainWindow = splash;
             splash.Show();

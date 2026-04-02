@@ -58,6 +58,111 @@
                         BorderThickness="1"
                         CornerRadius="12"
                         Padding="14">
+                    <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto,Auto,Auto">
+                        <TextBlock Grid.Row="0" Grid.ColumnSpan="4"
+                                   Text="App updates"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Theme.TextPrimary}" />
+
+                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="Current"
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12" />
+                            <TextBlock Text="{Binding AppVersion}"
+                                       Foreground="{DynamicResource Theme.Accent}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="Latest"
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12" />
+                            <TextBlock Text="{Binding AppLatestVersion}"
+                                       Foreground="{DynamicResource Theme.Success}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold"
+                                       IsVisible="{Binding HasAppUpdateAvailable}" />
+                            <TextBlock Text="(up to date)"
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12"
+                                       IsVisible="{Binding !HasAppUpdateAvailable}" />
+                        </StackPanel>
+
+                        <CheckBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2"
+                                  IsChecked="{Binding AutoCheckAppUpdates}"
+                                  Content="Auto-check updates"
+                                  Foreground="{DynamicResource Theme.TextPrimary}"
+                                  VerticalAlignment="Center" />
+
+                        <Button Grid.Row="1" Grid.Column="3"
+                                Classes="toolbar"
+                                Command="{Binding CheckForAppUpdatesCommand}"
+                                IsEnabled="{Binding !IsAppUpdateBusy}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="icon-glyph" Text="&#xE895;" IsVisible="{Binding !IsCheckingAppUpdates}" />
+                                <ProgressBar IsIndeterminate="True" Width="36" Height="5" IsVisible="{Binding IsCheckingAppUpdates}" />
+                                <TextBlock Text="Check now" />
+                            </StackPanel>
+                        </Button>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0"
+                                   Text="{Binding LastAppUpdateCheckText, StringFormat='Last checked: {0}'}"
+                                   Foreground="{DynamicResource Theme.TextMuted}"
+                                   FontSize="12" />
+
+                        <Border Grid.Row="2" Grid.Column="1"
+                                Background="{DynamicResource Theme.Danger}"
+                                CornerRadius="999"
+                                Padding="10,3"
+                                IsVisible="{Binding IsAppUpdateCritical}">
+                            <TextBlock Text="Critical"
+                                       Foreground="#121417"
+                                       FontSize="11"
+                                       FontWeight="Bold" />
+                        </Border>
+
+                        <Button Grid.Row="2" Grid.Column="2"
+                                Classes="toolbar"
+                                Content="Skip"
+                                Command="{Binding SkipAppUpdateCommand}"
+                                IsVisible="{Binding HasAppUpdateAvailable}"
+                                IsEnabled="{Binding !IsAppUpdateCritical}" />
+
+                        <Button Grid.Row="2" Grid.Column="3"
+                                Classes="toolbar"
+                                Command="{Binding InstallAppUpdateCommand}"
+                                IsVisible="{Binding HasAppUpdateAvailable}"
+                                IsEnabled="{Binding !IsAppUpdateBusy}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="icon-glyph" Text="&#xE896;" />
+                                <TextBlock Text="Install in background" />
+                            </StackPanel>
+                        </Button>
+
+                        <StackPanel Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="4" Spacing="6">
+                            <TextBlock Text="{Binding AppUpdateStep, StringFormat='Step: {0}'}"
+                                       Foreground="{DynamicResource Theme.TextPrimary}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+
+                            <ProgressBar Minimum="0"
+                                         Maximum="100"
+                                         Height="8"
+                                         Value="{Binding AppUpdateProgressPercent}"
+                                         IsVisible="{Binding IsAppUpdateBusy}" />
+
+                            <TextBlock Text="{Binding AppUpdateDetails}"
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12"
+                                       TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="14">
                     <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
                         <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                                    Text="Game installation"

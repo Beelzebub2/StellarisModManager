@@ -36,6 +36,10 @@ public class AppSettings
     public bool DeveloperMode { get; set; }
     public bool WarnBeforeRestartGame { get; set; } = true;
     public string ThemePalette { get; set; } = "Obsidian Ember";
+    public bool AutoCheckAppUpdates { get; set; } = true;
+    public string? LastAppUpdateCheckUtc { get; set; }
+    public string? LastOfferedAppVersion { get; set; }
+    public string? SkippedAppVersion { get; set; }
 
     // -------------------------------------------------------------------------
     // Load / Save

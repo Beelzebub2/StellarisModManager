@@ -1,0 +1,111 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="StellarisModManager.UI.Views.UpdaterWindow"
+        Title="Applying Update"
+        Width="640"
+        Height="360"
+        MinWidth="560"
+        MinHeight="320"
+        CanResize="False"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Theme.AppBg}">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.icon-glyph">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.toolbar">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextPrimary}" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="FontSize" Value="13" />
+        </Style>
+    </Window.Styles>
+
+    <Grid Margin="16" RowDefinitions="Auto,*,Auto">
+        <Border Grid.Row="0"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="14">
+            <StackPanel Spacing="8">
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <TextBlock Classes="icon-glyph" Text="&#xE896;" Foreground="{DynamicResource Theme.Accent}" />
+                    <TextBlock Text="Installing Stellaris Mod Manager update"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Foreground="{DynamicResource Theme.TextPrimary}" />
+                </StackPanel>
+
+                <TextBlock x:Name="TargetVersionText"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           FontSize="12"
+                           Text="Preparing update..." />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1"
+                Margin="0,12,0,0"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="14">
+            <StackPanel Spacing="10">
+                <TextBlock x:Name="StepText"
+                           Text="Step: Starting"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource Theme.TextPrimary}" />
+
+                <ProgressBar x:Name="Progress"
+                             Minimum="0"
+                             Maximum="100"
+                             Height="10"
+                             Value="0" />
+
+                <TextBlock x:Name="DetailsText"
+                           Text="Preparing updater..."
+                           FontSize="12"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           TextWrapping="Wrap" />
+
+                <TextBlock x:Name="HintText"
+                           Text="The installer runs in background and this updater tracks progress."
+                           FontSize="11"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           Opacity="0.85" />
+            </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="*,Auto,Auto">
+            <TextBlock x:Name="StatusChip"
+                       Grid.Column="0"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="12"
+                       Text="Running" />
+
+            <Button x:Name="RetryButton"
+                    Grid.Column="1"
+                    Classes="toolbar"
+                    Margin="0,0,8,0"
+                    IsVisible="False"
+                    Content="Retry install" />
+
+            <Button x:Name="CancelButton"
+                    Grid.Column="2"
+                    Classes="toolbar"
+                    Content="Cancel" />
+        </Grid>
+    </Grid>
+</Window>

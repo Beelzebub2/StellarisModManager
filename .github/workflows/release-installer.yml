@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version (example: 1.2.0)
+        description: "Release version (example: 1.2.0)"
         required: true
         type: string
         default: 1.0.0
@@ -84,3 +84,39 @@ jobs:
           generate_release_notes: true
           files: |
             ${{ steps.installer.outputs.path }}
+
+      - name: Notify Stellarisync Release Index
+        shell: pwsh
+        env:
+          STELLARISYNC_WEBHOOK_URL: ${{ secrets.STELLARISYNC_WEBHOOK_URL }}
+          STELLARISYNC_API_KEY: ${{ secrets.STELLARISYNC_API_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:STELLARISYNC_WEBHOOK_URL)) {
+            throw "Missing STELLARISYNC_WEBHOOK_URL secret."
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:STELLARISYNC_API_KEY)) {
+            throw "Missing STELLARISYNC_API_KEY secret."
+          }
+
+          $version = "${{ steps.version.outputs.value }}"
+          $tag = "v$version"
+          $installerName = "${{ steps.installer.outputs.name }}"
+          $repo = "${{ github.repository }}"
+
+          $releaseUrl = "https://github.com/$repo/releases/tag/$tag"
+          $downloadUrl = "https://github.com/$repo/releases/download/$tag/$installerName"
+
+          $payload = @{
+            version = $version
+            releaseUrl = $releaseUrl
+            downloadUrl = $downloadUrl
+            releasedAt = (Get-Date).ToUniversalTime().ToString("o")
+            changelog = "See GitHub release notes"
+            critical = $false
+            source = "github-actions"
+          } | ConvertTo-Json
+
+          Invoke-RestMethod -Method Post -Uri $env:STELLARISYNC_WEBHOOK_URL -Headers @{
+            "X-Stellarisync-Key" = $env:STELLARISYNC_API_KEY
+          } -ContentType "application/json" -Body $payload

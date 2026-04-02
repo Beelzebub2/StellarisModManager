@@ -1,6 +1,7 @@
 using Avalonia;
 using System;
 using System.IO;
+using StellarisModManager.Core.Services;
 
 namespace StellarisModManager;
 
@@ -12,6 +13,12 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        if (BackgroundUpdaterRuntime.TryConfigureUpdaterMode(args))
+        {
+            BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+            return;
+        }
+
         ConfigureWebViewUserDataFolder();
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
     }

@@ -9,7 +9,7 @@ if "%CONFIG%"=="" set "CONFIG=Release"
 set "APP_VERSION=%~2"
 if "%APP_VERSION%"=="" set "APP_VERSION=1.0.0"
 
-call "build.bat" "%CONFIG%"
+call "build.bat" "%CONFIG%" "%APP_VERSION%"
 if errorlevel 1 exit /b %errorlevel%
 
 set "ASSETSDIR=Output\InstallerAssets"

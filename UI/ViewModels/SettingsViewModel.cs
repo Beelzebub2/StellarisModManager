@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading.Tasks;
+using Avalonia;
+using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -21,7 +24,11 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ModDatabase _db;
     private readonly StellarisLauncherSyncService _launcherSync = new();
     private readonly Queue<string> _developerLogLines = new();
+    private readonly AppUpdateService _appUpdateService;
+    private readonly DispatcherTimer _appUpdateTimer = new() { Interval = TimeSpan.FromHours(24) };
+
     private bool _isRefreshingRuntimePreference;
+    private AppReleaseInfo? _availableAppRelease;
 
     [ObservableProperty] private string _gamePath = "";
     [ObservableProperty] private string _modsPath = "";
@@ -36,9 +43,23 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private bool _warnBeforeRestartGame = true;
     [ObservableProperty] private string _developerLogText = "";
 
+    [ObservableProperty] private bool _autoCheckAppUpdates = true;
+    [ObservableProperty] private string _appVersion = "";
+    [ObservableProperty] private string _appLatestVersion = "";
+    [ObservableProperty] private string _appUpdateStep = "Idle";
+    [ObservableProperty] private string _appUpdateDetails = "No update check yet.";
+    [ObservableProperty] private string _lastAppUpdateCheckText = "Never";
+    [ObservableProperty] private int _appUpdateProgressPercent = 0;
+    [ObservableProperty] private bool _hasAppUpdateAvailable = false;
+    [ObservableProperty] private bool _isCheckingAppUpdates = false;
+    [ObservableProperty] private bool _isDownloadingAppUpdate = false;
+    [ObservableProperty] private bool _isApplyingAppUpdate = false;
+    [ObservableProperty] private bool _isAppUpdateCritical = false;
+
     public ObservableCollection<string> PaletteOptions { get; } = new();
 
     public bool IsSteamCmdConfigured => _downloader.IsSteamCmdAvailable(SteamCmdPath);
+    public bool IsAppUpdateBusy => IsCheckingAppUpdates || IsDownloadingAppUpdate || IsApplyingAppUpdate;
 
     public SettingsViewModel(AppSettings settings, GameDetector detector, WorkshopDownloader downloader, ModDatabase db)
     {
@@ -46,6 +67,7 @@ public partial class SettingsViewModel : ViewModelBase
         _detector = detector;
         _downloader = downloader;
         _db = db;
+        _appUpdateService = new AppUpdateService(settings);
 
         // Load current settings into VM
         GamePath = settings.GamePath ?? "";
@@ -55,9 +77,12 @@ public partial class SettingsViewModel : ViewModelBase
         AutoDetectGame = settings.AutoDetectGame;
         DeveloperMode = settings.DeveloperMode;
         WarnBeforeRestartGame = settings.WarnBeforeRestartGame;
+        AutoCheckAppUpdates = settings.AutoCheckAppUpdates;
         SelectedPalette = string.IsNullOrWhiteSpace(settings.ThemePalette)
             ? "Obsidian Ember"
             : settings.ThemePalette;
+
+        AppVersion = _appUpdateService.CurrentVersionDisplay;
 
         foreach (var palette in ThemePaletteService.GetPaletteNames())
             PaletteOptions.Add(palette);
@@ -69,9 +94,16 @@ public partial class SettingsViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(GameVersion))
             _settings.LastDetectedGameVersion = GameVersion;
 
+        UpdateLastCheckText();
+        LoadLastBackgroundUpdateStatus();
+
         _downloader.LogLine += OnDownloaderLogLine;
         _downloader.ProgressChanged += OnDownloaderProgressChanged;
         _downloader.DownloadComplete += OnDownloaderDownloadComplete;
+
+        _appUpdateTimer.Tick += (_, _) => _ = CheckForAppUpdatesCoreAsync(false);
+        RefreshAutoUpdateTimer();
+        _ = RunStartupAppUpdateCheckAsync();
     }
 
     partial void OnGamePathChanged(string value)
@@ -110,7 +142,17 @@ public partial class SettingsViewModel : ViewModelBase
 
         HasUnsavedChanges = true;
     }
+
+    partial void OnAutoCheckAppUpdatesChanged(bool value)
+    {
+        HasUnsavedChanges = true;
+        RefreshAutoUpdateTimer();
+    }
+
     partial void OnSelectedPaletteChanged(string value) => HasUnsavedChanges = true;
+    partial void OnIsCheckingAppUpdatesChanged(bool value) => OnPropertyChanged(nameof(IsAppUpdateBusy));
+    partial void OnIsDownloadingAppUpdateChanged(bool value) => OnPropertyChanged(nameof(IsAppUpdateBusy));
+    partial void OnIsApplyingAppUpdateChanged(bool value) => OnPropertyChanged(nameof(IsAppUpdateBusy));
 
     public void RefreshRestartWarningPreference()
     {
@@ -197,7 +239,6 @@ public partial class SettingsViewModel : ViewModelBase
     [RelayCommand]
     private Task BrowseGamePathAsync()
     {
-        // Folder picker will be wired in Settings view code-behind (Task 7)
         StatusMessage = "Use the file browser to select the Stellaris game folder.";
         return Task.CompletedTask;
     }
@@ -205,7 +246,6 @@ public partial class SettingsViewModel : ViewModelBase
     [RelayCommand]
     private Task BrowseModsPathAsync()
     {
-        // Folder picker will be wired in Settings view code-behind (Task 7)
         StatusMessage = "Use the file browser to select the Stellaris mods folder.";
         return Task.CompletedTask;
     }
@@ -213,7 +253,6 @@ public partial class SettingsViewModel : ViewModelBase
     [RelayCommand]
     private Task BrowseSteamCmdPathAsync()
     {
-        // File picker will be wired in Settings view code-behind (Task 7)
         StatusMessage = "Use the file browser to locate steamcmd.exe.";
         return Task.CompletedTask;
     }
@@ -298,9 +337,88 @@ public partial class SettingsViewModel : ViewModelBase
         }
 
         if (errors == 0)
-        {
             StatusMessage = "Paths validated.";
+    }
+
+    [RelayCommand]
+    private async Task CheckForAppUpdatesAsync()
+    {
+        await CheckForAppUpdatesCoreAsync(true);
+    }
+
+    [RelayCommand]
+    private async Task InstallAppUpdateAsync()
+    {
+        if (_availableAppRelease is null || !HasAppUpdateAvailable)
+        {
+            AppUpdateDetails = "No pending update to install.";
+            return;
         }
+
+        if (IsAppUpdateBusy)
+            return;
+
+        IsDownloadingAppUpdate = true;
+        IsApplyingAppUpdate = false;
+        AppUpdateStep = "Downloading";
+        AppUpdateProgressPercent = 0;
+        AppUpdateDetails = $"Downloading installer for v{_availableAppRelease.Version}...";
+
+        try
+        {
+            _appUpdateService.ClearSkippedVersion();
+
+            var progress = new Progress<AppDownloadProgress>(p =>
+            {
+                AppUpdateProgressPercent = p.Percent >= 0 ? p.Percent : AppUpdateProgressPercent;
+                AppUpdateDetails = p.Percent >= 0
+                    ? $"Downloading installer... {p.Percent}%"
+                    : "Downloading installer...";
+            });
+
+            var installerPath = await _appUpdateService.DownloadInstallerAsync(_availableAppRelease, progress);
+
+            IsDownloadingAppUpdate = false;
+            IsApplyingAppUpdate = true;
+            AppUpdateStep = "Preparing install";
+            AppUpdateProgressPercent = 100;
+            AppUpdateDetails = "Preparing background installer...";
+
+            var started = StartBackgroundUpdater(installerPath, _availableAppRelease);
+            if (!started)
+            {
+                IsApplyingAppUpdate = false;
+                AppUpdateStep = "Failed";
+                AppUpdateDetails = "Could not start background updater.";
+                return;
+            }
+
+            AppUpdateStep = "Closing app";
+            AppUpdateDetails = "Installer is running in background. App will close now.";
+            StatusMessage = "Applying app update in background...";
+
+            await Task.Delay(750);
+            RequestApplicationShutdown();
+        }
+        catch (Exception ex)
+        {
+            IsDownloadingAppUpdate = false;
+            IsApplyingAppUpdate = false;
+            AppUpdateStep = "Failed";
+            AppUpdateDetails = $"Update install failed: {ex.Message}";
+            StatusMessage = AppUpdateDetails;
+        }
+    }
+
+    [RelayCommand]
+    private void SkipAppUpdate()
+    {
+        if (_availableAppRelease is null)
+            return;
+
+        _appUpdateService.MarkVersionSkipped(_availableAppRelease.Version);
+        HasAppUpdateAvailable = false;
+        AppUpdateDetails = $"Skipped v{_availableAppRelease.Version}.";
     }
 
     [RelayCommand]
@@ -313,10 +431,12 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.AutoDetectGame = AutoDetectGame;
         _settings.DeveloperMode = DeveloperMode;
         _settings.WarnBeforeRestartGame = WarnBeforeRestartGame;
+        _settings.AutoCheckAppUpdates = AutoCheckAppUpdates;
         _settings.LastDetectedGameVersion = string.IsNullOrWhiteSpace(GameVersion) ? null : GameVersion;
         _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
             ? "Obsidian Ember"
             : SelectedPalette;
+
         _settings.Save();
         ThemePaletteService.ApplyPalette(_settings.ThemePalette);
         HasUnsavedChanges = false;
@@ -397,6 +517,210 @@ public partial class SettingsViewModel : ViewModelBase
         {
             StatusMessage = $"Launch failed: {ex.Message}";
         }
+    }
+
+    private async Task CheckForAppUpdatesCoreAsync(bool manual)
+    {
+        if (IsAppUpdateBusy)
+            return;
+
+        IsCheckingAppUpdates = true;
+        AppUpdateStep = "Checking";
+        AppUpdateDetails = "Checking for app updates...";
+
+        try
+        {
+            var result = await _appUpdateService.CheckForUpdatesAsync(manual);
+            UpdateLastCheckText();
+
+            if (result.Release is null)
+            {
+                HasAppUpdateAvailable = false;
+                AppLatestVersion = string.Empty;
+                IsAppUpdateCritical = false;
+                AppUpdateStep = "Idle";
+                AppUpdateDetails = result.Message;
+                if (manual)
+                    StatusMessage = result.Message;
+                return;
+            }
+
+            _availableAppRelease = result.Release;
+            AppLatestVersion = $"v{result.Release.Version}";
+            IsAppUpdateCritical = result.Release.Critical;
+
+            if (result.IsUpdateAvailable)
+            {
+                HasAppUpdateAvailable = true;
+                AppUpdateStep = "Ready";
+                AppUpdateDetails = result.Release.Critical
+                    ? $"Critical update available from {result.Release.Source}."
+                    : $"Update available from {result.Release.Source}.";
+                StatusMessage = result.Message;
+            }
+            else
+            {
+                HasAppUpdateAvailable = false;
+                AppUpdateStep = "Idle";
+                AppUpdateDetails = result.Message;
+                if (manual)
+                    StatusMessage = result.Message;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppUpdateStep = "Failed";
+            AppUpdateDetails = $"Update check failed: {ex.Message}";
+            if (manual)
+                StatusMessage = AppUpdateDetails;
+        }
+        finally
+        {
+            IsCheckingAppUpdates = false;
+        }
+    }
+
+    private void LoadLastBackgroundUpdateStatus()
+    {
+        var status = AppUpdateStatusStore.TryRead();
+        if (status is null)
+            return;
+
+        if (status.Success)
+        {
+            AppUpdateStep = "Completed";
+            AppUpdateDetails = status.Message;
+            StatusMessage = status.Message;
+            HasAppUpdateAvailable = false;
+            _availableAppRelease = null;
+            AppLatestVersion = string.Empty;
+        }
+        else if (!string.IsNullOrWhiteSpace(status.Message))
+        {
+            AppUpdateStep = "Failed";
+            AppUpdateDetails = status.Message;
+        }
+    }
+
+    private void RefreshAutoUpdateTimer()
+    {
+        if (AutoCheckAppUpdates)
+        {
+            if (!_appUpdateTimer.IsEnabled)
+                _appUpdateTimer.Start();
+        }
+        else
+        {
+            if (_appUpdateTimer.IsEnabled)
+                _appUpdateTimer.Stop();
+        }
+    }
+
+    private async Task RunStartupAppUpdateCheckAsync()
+    {
+        if (!AutoCheckAppUpdates)
+            return;
+
+        if (!ShouldRunAutomaticUpdateCheck())
+            return;
+
+        await Task.Delay(1200);
+        await CheckForAppUpdatesCoreAsync(false);
+    }
+
+    private bool ShouldRunAutomaticUpdateCheck()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.LastAppUpdateCheckUtc))
+            return true;
+
+        if (!DateTime.TryParse(_settings.LastAppUpdateCheckUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var last))
+            return true;
+
+        return DateTime.UtcNow - last.ToUniversalTime() >= TimeSpan.FromHours(24);
+    }
+
+    private void UpdateLastCheckText()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.LastAppUpdateCheckUtc))
+        {
+            LastAppUpdateCheckText = "Never";
+            return;
+        }
+
+        if (!DateTime.TryParse(_settings.LastAppUpdateCheckUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+        {
+            LastAppUpdateCheckText = "Unknown";
+            return;
+        }
+
+        LastAppUpdateCheckText = parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
+    private bool StartBackgroundUpdater(string installerPath, AppReleaseInfo release)
+    {
+        var currentExe = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
+            return false;
+
+        if (!File.Exists(installerPath))
+            return false;
+
+        var tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "StellarisModManager",
+            "updater",
+            Guid.NewGuid().ToString("N"));
+
+        Directory.CreateDirectory(tempRoot);
+
+        var updaterExe = Path.Combine(tempRoot, Path.GetFileName(currentExe));
+        File.Copy(currentExe, updaterExe, true);
+
+        AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+        {
+            Step = "launching",
+            Success = false,
+            TargetVersion = release.Version,
+            Message = $"Starting background updater for v{release.Version}."
+        });
+
+        var args = string.Join(" ", new[]
+        {
+            "--apply-update",
+            "--parent-pid", Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture),
+            "--installer", Quote(installerPath),
+            "--app-exe", Quote(currentExe),
+            "--target-version", Quote(release.Version),
+            "--cleanup-root", Quote(tempRoot),
+        });
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = updaterExe,
+            Arguments = args,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = tempRoot,
+        };
+
+        var process = Process.Start(startInfo);
+        return process is not null;
+    }
+
+    private static string Quote(string value)
+    {
+        return $"\"{value.Replace("\"", "\\\"")}\"";
+    }
+
+    private static void RequestApplicationShutdown()
+    {
+        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+            return;
+        }
+
+        Environment.Exit(0);
     }
 
     private void OnDownloaderLogLine(object? sender, string line)

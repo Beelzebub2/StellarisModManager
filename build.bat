@@ -4,6 +4,9 @@ setlocal
 set "CONFIG=%~1"
 if "%CONFIG%"=="" set "CONFIG=Release"
 
+set "APP_VERSION=%~2"
+if "%APP_VERSION%"=="" set "APP_VERSION=1.0.0"
+
 set "RUNTIME=win-x64"
 set "APPNAME=StellarisModManager"
 set "OUTDIR=Output\%APPNAME%"
@@ -11,7 +14,7 @@ set "PUBLISHDIR=Output\_publish\%APPNAME%"
 
 if exist "%PUBLISHDIR%" rmdir /s /q "%PUBLISHDIR%"
 
-dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:DebugType=None -p:DebugSymbols=false -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -o "%PUBLISHDIR%"
+dotnet publish "StellarisModManager.csproj" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:Version=%APP_VERSION% -p:InformationalVersion=%APP_VERSION% -p:DebugType=None -p:DebugSymbols=false -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -o "%PUBLISHDIR%"
 if errorlevel 1 exit /b %errorlevel%
 
 if not exist "%PUBLISHDIR%\%APPNAME%.exe" (

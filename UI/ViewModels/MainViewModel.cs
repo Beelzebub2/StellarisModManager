@@ -56,7 +56,7 @@ public partial class MainViewModel : ViewModelBase
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
 
     // App version
-    public string AppVersion => "v1.0.0";
+    public string AppVersion => AppVersionInfo.GetDisplayVersion();
 
     public MainViewModel(
         ModDatabase db,
