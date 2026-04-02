@@ -14,6 +14,8 @@ public class ModProfile
     public bool IsActive { get; set; }
     public DateTime CreatedAt { get; set; }
     public List<ModProfileEntry> Entries { get; set; } = new();
+
+    public override string ToString() => Name;
 }
 
 public class ModProfileEntry

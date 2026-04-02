@@ -52,6 +52,7 @@ public partial class LibraryViewModel : ViewModelBase
     [ObservableProperty] private ModProfile? _activeProfile;
     [ObservableProperty] private string _profileNameDraft = string.Empty;
     [ObservableProperty] private string _sharedProfileId = string.Empty;
+    [ObservableProperty] private bool _isRenamingProfile;
 
     // Status
     [ObservableProperty] private string _statusMessage = "";
@@ -84,12 +85,34 @@ public partial class LibraryViewModel : ViewModelBase
     partial void OnUpdatesAvailableChanged(int value) => OnPropertyChanged(nameof(HasUpdatesAvailable));
     partial void OnActiveProfileChanged(ModProfile? value)
     {
-        ProfileNameDraft = value?.Name ?? string.Empty;
+        if (value is null)
+        {
+            if (!_isLoadingProfiles && !_isApplyingProfileSelection)
+            {
+                if (_currentActiveProfileId.HasValue)
+                {
+                    var fallback = Profiles.FirstOrDefault(p => p.Id == _currentActiveProfileId.Value);
+                    if (fallback is not null)
+                    {
+                        ActiveProfile = fallback;
+                        return;
+                    }
+                }
 
-        if (value is null || _isLoadingProfiles || _isApplyingProfileSelection)
+                ProfileNameDraft = string.Empty;
+            }
+
+            IsRenamingProfile = false;
+            return;
+        }
+
+        ProfileNameDraft = value.Name;
+        IsRenamingProfile = false;
+
+        if (_isLoadingProfiles || _isApplyingProfileSelection)
             return;
 
-        if (value.IsActive)
+        if (_currentActiveProfileId.HasValue && value.Id == _currentActiveProfileId.Value)
             return;
 
         _ = ActivateProfileBySelectionAsync(value);
@@ -102,8 +125,14 @@ public partial class LibraryViewModel : ViewModelBase
         {
             await SaveCurrentlyActiveProfileBeforeSwitchAsync(profile.Id);
             await _db.ActivateProfileAsync(profile.Id);
-            await LoadModsAsync();
             _currentActiveProfileId = profile.Id;
+            await LoadModsAsync();
+
+            // Rebind to the refreshed collection instance so ComboBox selection stays stable.
+            var refreshed = Profiles.FirstOrDefault(p => p.Id == profile.Id);
+            if (refreshed is not null && !ReferenceEquals(ActiveProfile, refreshed))
+                ActiveProfile = refreshed;
+
             StatusMessage = $"Activated profile: {profile.Name}";
         }
         catch (Exception ex)
@@ -426,6 +455,7 @@ public partial class LibraryViewModel : ViewModelBase
 
         // New profiles start empty; activating one clears enabled mods in the live list.
         await _db.ActivateProfileAsync(profile.Id);
+        _currentActiveProfileId = profile.Id;
         ActiveProfile = profile;
         await LoadModsAsync();
         StatusMessage = $"Created empty profile: {name}";
@@ -466,7 +496,21 @@ public partial class LibraryViewModel : ViewModelBase
             ActiveProfile = profile;
         }
 
+        IsRenamingProfile = false;
         StatusMessage = $"Renamed profile to: {newName}";
+    }
+
+    [RelayCommand]
+    private void BeginRenameProfile()
+    {
+        if (ActiveProfile is null)
+        {
+            StatusMessage = "Select a profile to rename.";
+            return;
+        }
+
+        ProfileNameDraft = ActiveProfile.Name;
+        IsRenamingProfile = true;
     }
 
     [RelayCommand]
@@ -632,6 +676,7 @@ public partial class LibraryViewModel : ViewModelBase
             ActiveProfile = null;
             _currentActiveProfileId = null;
         }
+
         StatusMessage = $"Deleted profile: {profile.Name}";
     }
 
@@ -679,8 +724,13 @@ public partial class LibraryViewModel : ViewModelBase
         foreach (var p in profiles)
             Profiles.Add(p);
 
-        ActiveProfile = profiles.FirstOrDefault(p => p.IsActive) ?? profiles.FirstOrDefault();
-        _currentActiveProfileId = ActiveProfile?.Id;
+        var preferredActiveProfileId = ActiveProfile?.Id ?? _currentActiveProfileId;
+        var activeByTrackedId = preferredActiveProfileId.HasValue
+            ? profiles.FirstOrDefault(p => p.Id == preferredActiveProfileId.Value)
+            : null;
+        var resolvedActive = activeByTrackedId ?? profiles.FirstOrDefault(p => p.IsActive) ?? profiles.FirstOrDefault();
+        _currentActiveProfileId = resolvedActive?.Id;
+        ActiveProfile = resolvedActive;
         _isLoadingProfiles = false;
 
         ApplyFilter();

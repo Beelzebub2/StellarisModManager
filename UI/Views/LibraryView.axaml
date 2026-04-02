@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
+             xmlns:models="using:StellarisModManager.Core.Models"
              mc:Ignorable="d"
              x:Class="StellarisModManager.UI.Views.LibraryView"
              x:DataType="vm:LibraryViewModel"
@@ -122,11 +123,21 @@
                 <ComboBox Grid.Column="1"
                           ItemsSource="{Binding Profiles}"
                           SelectedItem="{Binding ActiveProfile}"
-                          DisplayMemberBinding="{Binding Name}"
                           MinWidth="200"
                           Background="{DynamicResource Theme.SurfaceBg}"
                           Foreground="{DynamicResource Theme.TextPrimary}"
-                          BorderBrush="{DynamicResource Theme.Border}" />
+                          BorderBrush="{DynamicResource Theme.Border}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="models:ModProfile">
+                            <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                    <ComboBox.SelectionBoxItemTemplate>
+                        <DataTemplate x:DataType="models:ModProfile">
+                            <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                    </ComboBox.SelectionBoxItemTemplate>
+                </ComboBox>
 
                 <Button Grid.Column="2" Classes="toolbar" Command="{Binding CreateProfileCommand}" Margin="8,0,0,0">
                     <StackPanel Orientation="Horizontal" Spacing="6">
@@ -140,15 +151,23 @@
                          Watermark="Profile name"
                          Width="180"
                          Margin="8,0,0,0"
+                         IsVisible="{Binding IsRenamingProfile}"
                          Background="{DynamicResource Theme.SurfaceBg}"
                          BorderBrush="{DynamicResource Theme.Border}"
                          Foreground="{DynamicResource Theme.TextPrimary}"
                          CornerRadius="8" />
 
-                <Button Grid.Column="4" Classes="toolbar" Command="{Binding RenameProfileCommand}" CommandParameter="{Binding ActiveProfile}" Margin="8,0,0,0">
+                <Button Grid.Column="4" Classes="toolbar" Command="{Binding BeginRenameProfileCommand}" Margin="8,0,0,0" IsVisible="{Binding !IsRenamingProfile}">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock Classes="icon-glyph" Text="&#xE8AC;" />
                         <TextBlock Text="Rename" />
+                    </StackPanel>
+                </Button>
+
+                <Button Grid.Column="4" Classes="toolbar" Command="{Binding RenameProfileCommand}" CommandParameter="{Binding ActiveProfile}" Margin="8,0,0,0" IsVisible="{Binding IsRenamingProfile}">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock Classes="icon-glyph" Text="&#xE73E;" />
+                        <TextBlock Text="Apply" />
                     </StackPanel>
                 </Button>
 
