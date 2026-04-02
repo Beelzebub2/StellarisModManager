@@ -63,12 +63,96 @@ public class WorkshopDownloader
 
     private const string StellarisAppId = "281990";
 
+    private readonly SemaphoreSlim _steamCmdSessionLock = new(1, 1);
+    private readonly object _steamCmdStateLock = new();
+
+    private Process? _steamCmdSessionProcess;
+    private StreamWriter? _steamCmdSessionInput;
+    private TaskCompletionSource<bool>? _steamCmdSessionReady;
+    private TaskCompletionSource<SteamCmdSessionResult>? _steamCmdCommandTcs;
+    private SteamCmdCommandState? _steamCmdCommandState;
+
+    private string? _steamCmdSessionExePath;
+    private string? _steamCmdSessionWorkingDir;
+    private string? _steamCmdSessionForceInstallDir;
+    private bool _steamCmdForceDirectMode;
+
+    private sealed record SteamCmdSessionResult(bool Success, string? DownloadedPath, string? ErrorMessage);
+
+    private sealed class SteamCmdCommandState
+    {
+        public required string ModId { get; init; }
+        public string? DownloadedPath { get; set; }
+        public bool SawSuccessLine { get; set; }
+        public List<string> Errors { get; } = new();
+    }
+
     // -------------------------------------------------------------------------
     // Events
     // -------------------------------------------------------------------------
 
     public event EventHandler<DownloadProgressEventArgs>? ProgressChanged;
     public event EventHandler<DownloadCompleteEventArgs>? DownloadComplete;
+    public event EventHandler<string>? LogLine;
+
+    public void PublishDiagnostic(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        RaiseLog(message);
+    }
+
+    public async Task WarmUpSteamCmdAsync(
+        string steamCmdPath,
+        string downloadBasePath,
+        CancellationToken ct = default)
+    {
+        if (!IsSteamCmdAvailable(steamCmdPath))
+        {
+            RaiseLog("SteamCMD warm-up skipped: executable not configured.");
+            return;
+        }
+
+        var basePath = string.IsNullOrWhiteSpace(downloadBasePath)
+            ? Path.GetDirectoryName(steamCmdPath) ?? Environment.CurrentDirectory
+            : downloadBasePath;
+
+        var forceInstallDir = basePath.Replace('/', '\\');
+        var steamCmdDir = Path.GetDirectoryName(steamCmdPath) ?? basePath;
+
+        await _steamCmdSessionLock.WaitAsync(ct);
+        try
+        {
+            if (_steamCmdForceDirectMode)
+            {
+                RaiseLog("SteamCMD warm-up using direct mode (interactive mode previously unavailable).");
+                return;
+            }
+
+            await EnsureSteamCmdSessionCoreAsync(
+                steamCmdPath,
+                steamCmdDir,
+                forceInstallDir,
+                modId: "warmup",
+                emitProgress: false,
+                ct);
+
+            if (_steamCmdForceDirectMode)
+                RaiseLog("SteamCMD warm-up switched to direct mode.");
+            else
+                RaiseLog("SteamCMD warm-up completed.");
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "SteamCMD warm-up failed.");
+            RaiseLog($"SteamCMD warm-up failed: {ex.Message}");
+        }
+        finally
+        {
+            _steamCmdSessionLock.Release();
+        }
+    }
 
     // -------------------------------------------------------------------------
     // Public API
@@ -90,14 +174,14 @@ public class WorkshopDownloader
         if (!IsSteamCmdAvailable(steamCmdPath))
         {
             _log.Error("steamcmd not found at {Path}", steamCmdPath);
+            RaiseLog($"steamcmd.exe not found at '{steamCmdPath}'");
             RaiseComplete(modId, false, null, "steamcmd.exe not found");
             return null;
         }
 
-        RaiseProgress(modId, "", 0, "Starting SteamCMD…");
-
         // Mirror WorkshopDL behavior: detect the real consumer app id from the mod id.
         var effectiveAppId = await TryDetectWorkshopAppIdAsync(modId, ct) ?? StellarisAppId;
+        RaiseLog($"Download requested for mod {modId}, app {effectiveAppId}");
         if (!string.Equals(effectiveAppId, StellarisAppId, StringComparison.Ordinal))
             RaiseProgress(modId, "", -1, $"Detected AppID {effectiveAppId} for this item");
 
@@ -106,8 +190,8 @@ public class WorkshopDownloader
 
         var attempts = new[]
         {
-            $"+force_install_dir \"{forceInstallDir}\" +login anonymous +workshop_download_item {effectiveAppId} {modId} validate +quit",
-            $"+force_install_dir \"{forceInstallDir}\" +login anonymous +workshop_download_item {effectiveAppId} {modId} +quit",
+            $"workshop_download_item {effectiveAppId} {modId} validate",
+            $"workshop_download_item {effectiveAppId} {modId}",
         };
 
         string? downloadedPath = null;
@@ -116,10 +200,20 @@ public class WorkshopDownloader
 
         foreach (var args in attempts)
         {
-            var result = await RunSteamCmdAttemptAsync(modId, effectiveAppId, steamCmdPath, steamCmdDir, downloadBasePath, args, ct);
+            var result = await RunSteamCmdCommandAttemptAsync(
+                modId,
+                effectiveAppId,
+                steamCmdPath,
+                steamCmdDir,
+                forceInstallDir,
+                downloadBasePath,
+                args,
+                ct);
+
             if (result.Success)
             {
                 downloadedPath = result.DownloadedPath;
+                RaiseLog($"SteamCMD command succeeded for mod {modId}");
                 break;
             }
 
@@ -313,21 +407,334 @@ public class WorkshopDownloader
         }
     }
 
-    private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> RunSteamCmdAttemptAsync(
+    private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> RunSteamCmdCommandAttemptAsync(
         string modId,
         string appId,
         string steamCmdPath,
         string steamCmdDir,
+        string forceInstallDir,
         string downloadBasePath,
-        string args,
+        string command,
         CancellationToken ct)
     {
-        _log.Information("Running steamcmd: {Exe} {Args}", steamCmdPath, args);
+        await _steamCmdSessionLock.WaitAsync(ct);
+        try
+        {
+            if (_steamCmdForceDirectMode)
+            {
+                RaiseProgress(modId, "", -1, "Using SteamCMD direct mode...");
+                return await RunSteamCmdSingleAttemptAsync(
+                    modId,
+                    appId,
+                    steamCmdPath,
+                    steamCmdDir,
+                    forceInstallDir,
+                    downloadBasePath,
+                    command,
+                    ct);
+            }
+
+            await EnsureSteamCmdSessionCoreAsync(steamCmdPath, steamCmdDir, forceInstallDir, modId, emitProgress: true, ct);
+
+            if (_steamCmdForceDirectMode)
+            {
+                return await RunSteamCmdSingleAttemptAsync(
+                    modId,
+                    appId,
+                    steamCmdPath,
+                    steamCmdDir,
+                    forceInstallDir,
+                    downloadBasePath,
+                    command,
+                    ct);
+            }
+
+            _log.Information("Running steamcmd command: {Command}", command);
+            RaiseLog($"steamcmd> {command}");
+
+            var tcs = new TaskCompletionSource<SteamCmdSessionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            lock (_steamCmdStateLock)
+            {
+                _steamCmdCommandState = new SteamCmdCommandState { ModId = modId };
+                _steamCmdCommandTcs = tcs;
+            }
+
+            _steamCmdSessionInput!.WriteLine(command);
+            _steamCmdSessionInput.Flush();
+
+            SteamCmdSessionResult result;
+            try
+            {
+                using var commandCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                commandCts.CancelAfter(TimeSpan.FromMinutes(3));
+                result = await tcs.Task.WaitAsync(commandCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (ct.IsCancellationRequested)
+                    return (false, null, "Download cancelled.");
+
+                ShutdownSteamCmdSessionCore();
+                RaiseProgress(modId, "", -1, "SteamCMD session timed out, retrying with direct launch...");
+                RaiseLog("SteamCMD session command timed out; using direct-launch fallback");
+                return await RunSteamCmdSingleAttemptAsync(
+                    modId,
+                    appId,
+                    steamCmdPath,
+                    steamCmdDir,
+                    forceInstallDir,
+                    downloadBasePath,
+                    command,
+                    ct);
+            }
+
+            var candidatePaths = BuildCandidateDownloadPaths(
+                appId,
+                modId,
+                downloadBasePath,
+                steamCmdDir,
+                result.DownloadedPath);
+
+            foreach (var path in candidatePaths)
+            {
+                if (Directory.Exists(path))
+                {
+                    _log.Information("Mod {Id} downloaded to {Path}", modId, path);
+                    return (true, path, null);
+                }
+            }
+
+            var error = result.ErrorMessage;
+            if (string.IsNullOrWhiteSpace(error))
+                error = "SteamCMD finished but no downloaded folder was found.";
+
+            return (false, null, error);
+        }
+        catch (OperationCanceledException)
+        {
+            return (false, null, "Download cancelled.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Exception while running SteamCMD for mod {Id}", modId);
+            ShutdownSteamCmdSessionCore();
+            return (false, null, ex.Message);
+        }
+        finally
+        {
+            _steamCmdSessionLock.Release();
+        }
+    }
+
+    private async Task EnsureSteamCmdSessionCoreAsync(
+        string steamCmdPath,
+        string steamCmdDir,
+        string forceInstallDir,
+        string modId,
+        bool emitProgress,
+        CancellationToken ct)
+    {
+        if (_steamCmdSessionProcess is not null &&
+            !_steamCmdSessionProcess.HasExited &&
+            string.Equals(_steamCmdSessionExePath, steamCmdPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_steamCmdSessionWorkingDir, steamCmdDir, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_steamCmdSessionForceInstallDir, forceInstallDir, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ShutdownSteamCmdSessionCore();
+        if (emitProgress)
+            RaiseProgress(modId, "", 0, "Starting SteamCMD...");
+        RaiseLog("Starting persistent SteamCMD session...");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = steamCmdPath,
+            Arguments = $"+force_install_dir \"{forceInstallDir}\" +login anonymous",
+            WorkingDirectory = steamCmdDir,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.OutputDataReceived += OnSteamCmdOutputDataReceived;
+        process.ErrorDataReceived += OnSteamCmdErrorDataReceived;
+        process.Exited += OnSteamCmdSessionExited;
+
+        if (!process.Start())
+            throw new InvalidOperationException("Could not start steamcmd process.");
+
+        _steamCmdSessionProcess = process;
+        _steamCmdSessionInput = process.StandardInput;
+        _steamCmdSessionExePath = steamCmdPath;
+        _steamCmdSessionWorkingDir = steamCmdDir;
+        _steamCmdSessionForceInstallDir = forceInstallDir;
+        _steamCmdSessionReady = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        try
+        {
+            var readyTask = _steamCmdSessionReady.Task;
+            var delayTask = Task.Delay(TimeSpan.FromSeconds(6), ct);
+            var completed = await Task.WhenAny(readyTask, delayTask);
+
+            if (completed == readyTask)
+            {
+                var ready = await readyTask;
+                if (!ready)
+                    throw new InvalidOperationException("SteamCMD session failed to initialize.");
+
+                if (emitProgress)
+                    RaiseProgress(modId, "", -1, "SteamCMD session ready");
+                RaiseLog("SteamCMD session ready");
+            }
+            else
+            {
+                if (process.HasExited)
+                    throw new InvalidOperationException($"SteamCMD exited during startup (code {process.ExitCode}).");
+
+                _steamCmdForceDirectMode = true;
+                if (emitProgress)
+                    RaiseProgress(modId, "", -1, "SteamCMD interactive prompt not detected; switching to direct mode");
+                RaiseLog("SteamCMD prompt did not appear; switching to direct mode for reliability");
+                ShutdownSteamCmdSessionCore();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            ShutdownSteamCmdSessionCore();
+            if (ct.IsCancellationRequested)
+                throw;
+
+            throw new TimeoutException("Timed out starting SteamCMD session.");
+        }
+    }
+
+    private void OnSteamCmdSessionExited(object? sender, EventArgs e)
+    {
+        lock (_steamCmdStateLock)
+        {
+            _steamCmdSessionReady?.TrySetResult(false);
+
+            if (_steamCmdCommandTcs is not null)
+            {
+                _steamCmdCommandTcs.TrySetResult(
+                    new SteamCmdSessionResult(false, null, "SteamCMD session exited unexpectedly."));
+                _steamCmdCommandTcs = null;
+                _steamCmdCommandState = null;
+            }
+        }
+    }
+
+    private void OnSteamCmdOutputDataReceived(object? sender, DataReceivedEventArgs e)
+    {
+        if (e.Data is null)
+            return;
+
+        var line = e.Data;
+        _log.Debug("[steamcmd] {Line}", line);
+        RaiseLog($"[steamcmd] {line}");
+        HandleSteamCmdSessionOutput(line);
+    }
+
+    private void OnSteamCmdErrorDataReceived(object? sender, DataReceivedEventArgs e)
+    {
+        if (e.Data is null)
+            return;
+
+        var line = e.Data;
+        _log.Warning("[steamcmd stderr] {Line}", line);
+        RaiseLog($"[steamcmd stderr] {line}");
+        HandleSteamCmdSessionOutput(line);
+    }
+
+    private void HandleSteamCmdSessionOutput(string line)
+    {
+        if (IsSteamCmdPrompt(line))
+            _steamCmdSessionReady?.TrySetResult(true);
+
+        SteamCmdCommandState? state;
+        TaskCompletionSource<SteamCmdSessionResult>? tcs;
+
+        lock (_steamCmdStateLock)
+        {
+            state = _steamCmdCommandState;
+            tcs = _steamCmdCommandTcs;
+        }
+
+        if (state is null || tcs is null)
+            return;
+
+        var (percent, status) = ParseSteamCmdLine(line, state.ModId);
+        if (status is not null)
+            RaiseProgress(state.ModId, "", percent, status);
+
+        if (TryExtractDownloadedPath(line, out var path))
+            state.DownloadedPath = path;
+
+        if (line.Contains("success.", StringComparison.OrdinalIgnoreCase) &&
+            line.Contains("Downloaded item", StringComparison.OrdinalIgnoreCase))
+        {
+            state.SawSuccessLine = true;
+
+            lock (_steamCmdStateLock)
+            {
+                if (ReferenceEquals(tcs, _steamCmdCommandTcs) && ReferenceEquals(state, _steamCmdCommandState))
+                {
+                    _steamCmdCommandTcs = null;
+                    _steamCmdCommandState = null;
+                    tcs.TrySetResult(new SteamCmdSessionResult(true, state.DownloadedPath, null));
+                }
+            }
+
+            return;
+        }
+
+        if (line.Contains("error", StringComparison.OrdinalIgnoreCase))
+            state.Errors.Add(line.Trim());
+
+        if (!IsSteamCmdPrompt(line))
+            return;
+
+        lock (_steamCmdStateLock)
+        {
+            if (!ReferenceEquals(tcs, _steamCmdCommandTcs) || !ReferenceEquals(state, _steamCmdCommandState))
+                return;
+
+            var error = state.Errors.Count > 0 ? string.Join(" || ", state.Errors) : null;
+            _steamCmdCommandTcs = null;
+            _steamCmdCommandState = null;
+            tcs.TrySetResult(new SteamCmdSessionResult(state.SawSuccessLine, state.DownloadedPath, error));
+        }
+    }
+
+    private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> RunSteamCmdSingleAttemptAsync(
+        string modId,
+        string appId,
+        string steamCmdPath,
+        string steamCmdDir,
+        string forceInstallDir,
+        string downloadBasePath,
+        string command,
+        CancellationToken ct,
+        bool allowBootstrapRetry = true)
+    {
+        var args = $"+force_install_dir \"{forceInstallDir}\" +login anonymous +{command} +quit";
+        _log.Information("Running direct steamcmd fallback: {Exe} {Args}", steamCmdPath, args);
+        RaiseLog($"Running direct fallback: {command}");
 
         var psi = new ProcessStartInfo
         {
             FileName = steamCmdPath,
             Arguments = args,
+            WorkingDirectory = steamCmdDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -336,6 +743,8 @@ public class WorkshopDownloader
 
         string? downloadedPathFromOutput = null;
         var errors = new List<string>();
+        var sawSuccessfulDownload = false;
+        var sawBootstrapUpdateActivity = false;
 
         try
         {
@@ -343,13 +752,38 @@ public class WorkshopDownloader
 
             process.OutputDataReceived += (_, e) =>
             {
-                if (e.Data is null) return;
+                if (e.Data is null)
+                    return;
+
                 var line = e.Data;
-                _log.Debug("[steamcmd] {Line}", line);
+                _log.Debug("[steamcmd-fallback] {Line}", line);
+                RaiseLog($"[steamcmd-fallback] {line}");
+
+                if (line.Contains("Success.", StringComparison.OrdinalIgnoreCase) &&
+                    line.Contains("Downloaded item", StringComparison.OrdinalIgnoreCase))
+                {
+                    sawSuccessfulDownload = true;
+                }
+
+                if (line.Contains("Checking for available updates", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("Verifying installation", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("Updating", StringComparison.OrdinalIgnoreCase) ||
+                    line.Contains("Looks like steam didn't shutdown cleanly", StringComparison.OrdinalIgnoreCase))
+                {
+                    sawBootstrapUpdateActivity = true;
+                }
 
                 var (percent, status) = ParseSteamCmdLine(line, modId);
                 if (status is not null)
-                    RaiseProgress(modId, "", percent, status);
+                {
+                    var isPostSuccessProgress =
+                        sawSuccessfulDownload &&
+                        percent >= 0 &&
+                        status.StartsWith("Downloading", StringComparison.OrdinalIgnoreCase);
+
+                    if (!isPostSuccessProgress)
+                        RaiseProgress(modId, "", percent, status);
+                }
 
                 if (TryExtractDownloadedPath(line, out var path))
                     downloadedPathFromOutput = path;
@@ -360,15 +794,17 @@ public class WorkshopDownloader
 
             process.ErrorDataReceived += (_, e) =>
             {
-                if (e.Data is null) return;
-                _log.Warning("[steamcmd stderr] {Line}", e.Data);
+                if (e.Data is null)
+                    return;
+
+                _log.Warning("[steamcmd-fallback stderr] {Line}", e.Data);
+                RaiseLog($"[steamcmd-fallback stderr] {e.Data}");
                 errors.Add(e.Data.Trim());
             };
 
             process.Start();
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-
             await process.WaitForExitAsync(ct);
 
             var candidatePaths = BuildCandidateDownloadPaths(
@@ -381,20 +817,33 @@ public class WorkshopDownloader
             foreach (var path in candidatePaths)
             {
                 if (Directory.Exists(path))
-                {
-                    _log.Information("Mod {Id} downloaded to {Path}", modId, path);
                     return (true, path, null);
-                }
+            }
+
+            if (allowBootstrapRetry && !sawSuccessfulDownload && sawBootstrapUpdateActivity)
+            {
+                RaiseProgress(modId, "", -1, "SteamCMD bootstrap/update detected, retrying command...");
+                RaiseLog("SteamCMD appears to be doing first-run bootstrap/update; retrying command once automatically");
+
+                return await RunSteamCmdSingleAttemptAsync(
+                    modId,
+                    appId,
+                    steamCmdPath,
+                    steamCmdDir,
+                    forceInstallDir,
+                    downloadBasePath,
+                    command,
+                    ct,
+                    allowBootstrapRetry: false);
             }
 
             var error = process.ExitCode == 0
-                ? $"SteamCMD exited cleanly but no downloaded folder was found for mod {modId}."
-                : $"SteamCMD exited with code {process.ExitCode}";
+                ? "SteamCMD fallback exited but no downloaded folder was found."
+                : $"SteamCMD fallback exited with code {process.ExitCode}.";
 
             if (errors.Count > 0)
                 error += " Output: " + string.Join(" || ", errors);
 
-            _log.Warning(error);
             return (false, null, error);
         }
         catch (OperationCanceledException)
@@ -403,9 +852,58 @@ public class WorkshopDownloader
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "Exception while running SteamCMD for mod {Id}", modId);
+            _log.Error(ex, "Exception in direct SteamCMD fallback for mod {Id}", modId);
             return (false, null, ex.Message);
         }
+    }
+
+    private static bool IsSteamCmdPrompt(string line)
+    {
+        var trimmed = line.Trim();
+        return string.Equals(trimmed, "Steam>", StringComparison.OrdinalIgnoreCase) ||
+               trimmed.EndsWith("Steam>", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ShutdownSteamCmdSessionCore()
+    {
+        lock (_steamCmdStateLock)
+        {
+            _steamCmdCommandTcs?.TrySetResult(new SteamCmdSessionResult(false, null, "SteamCMD session was reset."));
+            _steamCmdCommandTcs = null;
+            _steamCmdCommandState = null;
+        }
+
+        try
+        {
+            _steamCmdSessionInput?.WriteLine("quit");
+            _steamCmdSessionInput?.Flush();
+        }
+        catch
+        {
+            // Best effort shutdown.
+        }
+
+        try
+        {
+            if (_steamCmdSessionProcess is not null && !_steamCmdSessionProcess.HasExited)
+            {
+                if (!_steamCmdSessionProcess.WaitForExit(1500))
+                    _steamCmdSessionProcess.Kill(true);
+            }
+        }
+        catch
+        {
+            // Best effort shutdown.
+        }
+
+        _steamCmdSessionInput?.Dispose();
+        _steamCmdSessionInput = null;
+        _steamCmdSessionReady = null;
+        _steamCmdSessionProcess?.Dispose();
+        _steamCmdSessionProcess = null;
+        _steamCmdSessionExePath = null;
+        _steamCmdSessionWorkingDir = null;
+        _steamCmdSessionForceInstallDir = null;
     }
 
     private static List<string> BuildCandidateDownloadPaths(
@@ -518,5 +1016,10 @@ public class WorkshopDownloader
             DownloadedPath = path,
             ErrorMessage = error,
         });
+    }
+
+    private void RaiseLog(string message)
+    {
+        LogLine?.Invoke(this, message);
     }
 }

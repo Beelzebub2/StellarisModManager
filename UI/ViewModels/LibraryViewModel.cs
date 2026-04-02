@@ -287,6 +287,30 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task UninstallModAsync(ModViewModel mod)
     {
+        await UninstallModCoreAsync(mod);
+    }
+
+    public IReadOnlyList<string> GetInstalledWorkshopIds()
+    {
+        return Mods
+            .Select(m => m.WorkshopId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public async Task<bool> UninstallByWorkshopIdAsync(string workshopId)
+    {
+        var mod = Mods.FirstOrDefault(m => string.Equals(m.WorkshopId, workshopId, StringComparison.Ordinal));
+        if (mod is null)
+            return false;
+
+        await UninstallModCoreAsync(mod);
+        return true;
+    }
+
+    private async Task UninstallModCoreAsync(ModViewModel mod)
+    {
         StatusMessage = $"Uninstalling {mod.Name}...";
         try
         {

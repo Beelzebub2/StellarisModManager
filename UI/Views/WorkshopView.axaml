@@ -4,8 +4,8 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
              mc:Ignorable="d"
-             x:Class="StellarisModManager.UI.Views.BrowserView"
-             x:DataType="vm:BrowserViewModel"
+             x:Class="StellarisModManager.UI.Views.WorkshopView"
+             x:DataType="vm:WorkshopViewModel"
              Background="{DynamicResource Theme.AppBg}">
 
     <UserControl.Styles>
@@ -186,7 +186,7 @@
                 Padding="10,6">
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.TextMuted}" Text="&#xE946;" />
-                <TextBlock Text="Browser overlay installs are active when Steam Workshop loads successfully."
+                <TextBlock Text="Workshop overlay actions are active when Steam Workshop loads successfully."
                            Foreground="{DynamicResource Theme.TextMuted}"
                            FontSize="12" />
             </StackPanel>

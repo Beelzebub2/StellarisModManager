@@ -37,48 +37,9 @@
         </Style>
     </Window.Styles>
 
-    <Grid RowDefinitions="Auto,*,Auto" Background="{DynamicResource Theme.AppBg}">
+    <Grid RowDefinitions="*,Auto" Background="{DynamicResource Theme.AppBg}">
 
-        <Border Grid.Row="0"
-                Margin="12,12,12,0"
-                Background="{DynamicResource Theme.PanelBg}"
-                BorderBrush="{DynamicResource Theme.Border}"
-                BorderThickness="1"
-                Padding="14,10">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
-                    <Border Width="30" Height="30"
-                            Background="{DynamicResource Theme.SurfaceBg}"
-                            BorderBrush="{DynamicResource Theme.Border}"
-                            BorderThickness="1"
-                            CornerRadius="8">
-                        <TextBlock Text="SM"
-                                   Foreground="{DynamicResource Theme.Accent}"
-                                   FontWeight="Bold"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   FontSize="12" />
-                    </Border>
-                    <StackPanel>
-                        <TextBlock Text="Stellaris Mod Manager"
-                                   FontSize="18"
-                                   FontWeight="SemiBold"
-                                   Foreground="{DynamicResource Theme.TextPrimary}" />
-                        <TextBlock Text="Workshop download and library control"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource Theme.TextMuted}" />
-                    </StackPanel>
-                </StackPanel>
-
-                <TextBlock Grid.Column="2"
-                           Text="{Binding AppVersion}"
-                           Foreground="{DynamicResource Theme.TextMuted}"
-                           VerticalAlignment="Center"
-                           FontSize="12" />
-            </Grid>
-        </Border>
-
-        <Grid Grid.Row="1" ColumnDefinitions="220,*" Margin="12">
+        <Grid Grid.Row="0" ColumnDefinitions="220,*" Margin="12">
             <Border Grid.Column="0"
                     Background="{DynamicResource Theme.PanelBg}"
                     BorderBrush="{DynamicResource Theme.Border}"
@@ -95,17 +56,17 @@
 
                     <StackPanel Grid.Row="1" Spacing="6" HorizontalAlignment="Stretch">
                         <Grid>
-                            <Button Classes="nav-btn" Command="{Binding NavigateToBrowserCommand}">
+                            <Button Classes="nav-btn" Command="{Binding NavigateToWorkshopCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <TextBlock Classes="icon-glyph" Text="&#xE774;" />
-                                    <TextBlock Text="Browser" />
+                                    <TextBlock Text="Workshop" />
                                 </StackPanel>
                             </Button>
                             <Border Background="{DynamicResource Theme.SurfaceBg}"
                                     BorderBrush="{DynamicResource Theme.Border}"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    IsVisible="{Binding IsBrowserActive}"
+                                    IsVisible="{Binding IsWorkshopActive}"
                                     IsHitTestVisible="False">
                                 <Grid ColumnDefinitions="3,*">
                                     <Border Grid.Column="0"
@@ -113,7 +74,7 @@
                                             CornerRadius="10,0,0,10" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="12,10">
                                         <TextBlock Classes="icon-glyph" Text="&#xE774;" />
-                                        <TextBlock Text="Browser" />
+                                        <TextBlock Text="Workshop" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -197,30 +158,28 @@
                     BorderBrush="{DynamicResource Theme.Border}"
                     BorderThickness="1"
                     CornerRadius="12">
-                <ContentControl Content="{Binding ActiveView}">
-                    <ContentControl.DataTemplates>
-                        <DataTemplate DataType="vm:BrowserViewModel">
-                            <views:BrowserView />
-                        </DataTemplate>
-                        <DataTemplate DataType="vm:LibraryViewModel">
-                            <views:LibraryView />
-                        </DataTemplate>
-                        <DataTemplate DataType="vm:SettingsViewModel">
-                            <views:SettingsView />
-                        </DataTemplate>
-                    </ContentControl.DataTemplates>
-                </ContentControl>
+                <Grid>
+                    <Border IsVisible="{Binding IsWorkshopActive}">
+                        <views:WorkshopView DataContext="{Binding WorkshopViewModel}" />
+                    </Border>
+                    <Border IsVisible="{Binding IsLibraryActive}">
+                        <views:LibraryView DataContext="{Binding LibraryViewModel}" />
+                    </Border>
+                    <Border IsVisible="{Binding IsSettingsActive}">
+                        <views:SettingsView DataContext="{Binding SettingsViewModel}" />
+                    </Border>
+                </Grid>
             </Border>
         </Grid>
 
-        <Border Grid.Row="2"
+        <Border Grid.Row="1"
                 Margin="12,0,12,12"
                 Background="{DynamicResource Theme.SurfaceBg}"
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="12,8">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto">
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.TextMuted}" Text="&#xE946;" />
                     <TextBlock Text="{Binding StatusMessage}"
@@ -229,12 +188,20 @@
                                VerticalAlignment="Center" />
                 </StackPanel>
 
-                <ProgressBar Grid.Column="1"
+                <TextBlock Grid.Column="1"
+                           Text="{Binding QueueProgressText}"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           FontSize="12"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding IsDownloading}" />
+
+                <ProgressBar Grid.Column="2"
                              Value="{Binding DownloadProgress}"
                              Minimum="0"
                              Maximum="100"
-                             Width="180"
-                             Height="6"
+                             Width="220"
+                             Height="8"
                              Margin="10,0"
                              VerticalAlignment="Center"
                              IsVisible="{Binding IsDownloading}" />

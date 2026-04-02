@@ -1,5 +1,7 @@
 using System;
+using System.ComponentModel;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -11,16 +13,22 @@ using StellarisModManager.UI.ViewModels;
 
 namespace StellarisModManager.UI.Views;
 
-public partial class BrowserView : UserControl
+public partial class WorkshopView : UserControl
 {
-    private BrowserViewModel? _vm;
+    private sealed class OverlayRequest
+    {
+        public string? Action { get; set; }
+        public string? ModId { get; set; }
+    }
+
+    private WorkshopViewModel? _vm;
     private bool _isNativeEngineReady;
     private bool _eventsWired;
     private int _navigationAttempt;
     private bool _steamAutoRetryUsed;
     private string _lastNavigatedUrl = string.Empty;
 
-    public BrowserView()
+    public WorkshopView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
@@ -29,12 +37,18 @@ public partial class BrowserView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        _vm = DataContext as BrowserViewModel;
+        if (_vm is not null)
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+
+        _vm = DataContext as WorkshopViewModel;
+
+        if (_vm is not null)
+            _vm.PropertyChanged += OnViewModelPropertyChanged;
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
-        _vm = DataContext as BrowserViewModel;
+        _vm = DataContext as WorkshopViewModel;
         TryInitWebView();
     }
 
@@ -56,7 +70,7 @@ public partial class BrowserView : UserControl
 
             // If adapter is already alive (e.g., after re-attach), navigate immediately.
             if (_isNativeEngineReady)
-                _ = Dispatcher.UIThread.InvokeAsync(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
+                _ = Dispatcher.UIThread.InvokeAsync(() => NavigateTo(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl));
         }
         catch (Exception ex)
         {
@@ -68,7 +82,7 @@ public partial class BrowserView : UserControl
     private void OnAdapterCreated(object? sender, WebViewAdapterEventArgs e)
     {
         _isNativeEngineReady = true;
-        Dispatcher.UIThread.Post(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
+        Dispatcher.UIThread.Post(() => NavigateTo(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl));
     }
 
     private void OnAdapterDestroyed(object? sender, WebViewAdapterEventArgs e)
@@ -106,10 +120,11 @@ public partial class BrowserView : UserControl
         {
             var script = OverlayInjector.BuildInjectionScript();
             await WebView.InvokeScript(script);
+            await ApplyOverlayStateAsync();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[BrowserView] Overlay injection failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[WorkshopView] Overlay injection failed: {ex.Message}");
         }
     }
 
@@ -121,16 +136,65 @@ public partial class BrowserView : UserControl
             if (string.IsNullOrWhiteSpace(json))
                 return;
 
-            var modId = ExtractJsonString(json, "modId");
+            var payload = ParseOverlayRequest(json);
+            var modId = payload?.ModId;
             if (string.IsNullOrWhiteSpace(modId))
                 return;
 
-            Dispatcher.UIThread.Post(() => _vm?.OnInstallRequested(modId));
+            var action = payload?.Action?.Trim().ToLowerInvariant() ?? "install";
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (action == "uninstall")
+                    _vm?.OnUninstallRequested(modId);
+                else
+                    _vm?.OnInstallRequested(modId);
+            });
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[BrowserView] Web message parse failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[WorkshopView] Web message parse failed: {ex.Message}");
         }
+    }
+
+    private static OverlayRequest? ParseOverlayRequest(string message)
+    {
+        // Some adapters deliver a JSON object, others deliver a JSON-encoded string.
+        try
+        {
+            var direct = JsonSerializer.Deserialize<OverlayRequest>(message);
+            if (!string.IsNullOrWhiteSpace(direct?.ModId))
+                return direct;
+        }
+        catch
+        {
+            // Try alternate shape below.
+        }
+
+        try
+        {
+            var wrapped = JsonSerializer.Deserialize<string>(message);
+            if (!string.IsNullOrWhiteSpace(wrapped))
+            {
+                var parsed = JsonSerializer.Deserialize<OverlayRequest>(wrapped);
+                if (!string.IsNullOrWhiteSpace(parsed?.ModId))
+                    return parsed;
+            }
+        }
+        catch
+        {
+            // Try regex fallback below.
+        }
+
+        var modId = ExtractJsonString(message, "modId");
+        if (string.IsNullOrWhiteSpace(modId))
+            return null;
+
+        return new OverlayRequest
+        {
+            ModId = modId,
+            Action = ExtractJsonString(message, "action")
+        };
     }
 
     private void NavigateTo(string rawUrl)
@@ -207,7 +271,7 @@ public partial class BrowserView : UserControl
     {
         var trimmed = (value ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(trimmed))
-            return BrowserViewModel.HomeUrl;
+            return WorkshopViewModel.HomeUrl;
 
         if (trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
             trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -253,7 +317,7 @@ public partial class BrowserView : UserControl
 
     private void HomeButton_Click(object? sender, RoutedEventArgs e)
     {
-        NavigateTo(BrowserViewModel.HomeUrl);
+        NavigateTo(WorkshopViewModel.HomeUrl);
     }
 
     private void AddressInput_KeyDown(object? sender, KeyEventArgs e)
@@ -272,7 +336,7 @@ public partial class BrowserView : UserControl
         if (!_isNativeEngineReady)
             TryInitWebView();
         else
-            NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);
+            NavigateTo(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl);
     }
 
     private void InstallRuntimeButton_Click(object? sender, RoutedEventArgs e)
@@ -282,7 +346,7 @@ public partial class BrowserView : UserControl
 
     private void OpenSteamButton_Click(object? sender, RoutedEventArgs e)
     {
-        OpenUrl(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);
+        OpenUrl(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl);
     }
 
     private void ModIdInput_KeyDown(object? sender, KeyEventArgs e)
@@ -348,8 +412,34 @@ public partial class BrowserView : UserControl
     private static string? ExtractJsonString(string json, string key)
     {
         var pattern = "\"" + Regex.Escape(key) + "\"\\s*:\\s*\"([^\"]+)\"";
-        var match = Regex.Match(json, pattern);
+        var match = Regex.Match(json, pattern, RegexOptions.IgnoreCase);
         return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private async Task ApplyOverlayStateAsync()
+    {
+        if (!_isNativeEngineReady || _vm is null)
+            return;
+
+        var idsJson = string.IsNullOrWhiteSpace(_vm.InstalledWorkshopIdsJson)
+            ? "[]"
+            : _vm.InstalledWorkshopIdsJson;
+
+        var statesJson = string.IsNullOrWhiteSpace(_vm.ModStatesJson)
+            ? "{}"
+            : _vm.ModStatesJson;
+
+        await WebView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
+        await WebView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(WorkshopViewModel.InstalledWorkshopIdsJson) &&
+            e.PropertyName != nameof(WorkshopViewModel.ModStatesJson))
+            return;
+
+        _ = Dispatcher.UIThread.InvokeAsync(ApplyOverlayStateAsync);
     }
 
     private static void OpenUrl(string url)
@@ -364,7 +454,7 @@ public partial class BrowserView : UserControl
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[BrowserView] OpenUrl failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[WorkshopView] OpenUrl failed: {ex.Message}");
         }
     }
 }

@@ -127,6 +127,46 @@
                         BorderThickness="1"
                         CornerRadius="12"
                         Padding="14">
+                    <StackPanel Spacing="10">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <CheckBox Grid.Column="0"
+                                      IsChecked="{Binding DeveloperMode}"
+                                      Content="Developer mode (show SteamCMD/runtime logs)"
+                                      Foreground="{DynamicResource Theme.TextPrimary}" />
+
+                            <Button Grid.Column="1"
+                                    Classes="toolbar"
+                                    Content="Clear logs"
+                                    Command="{Binding ClearDeveloperLogsCommand}"
+                                    IsVisible="{Binding DeveloperMode}" />
+                        </Grid>
+
+                        <Border Background="{DynamicResource Theme.SurfaceBg}"
+                                BorderBrush="{DynamicResource Theme.Border}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8"
+                                IsVisible="{Binding DeveloperMode}">
+                            <TextBox Text="{Binding DeveloperLogText}"
+                                     IsReadOnly="True"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     MinHeight="150"
+                                     MaxHeight="260"
+                                     Background="Transparent"
+                                     BorderThickness="0"
+                                     Foreground="{DynamicResource Theme.TextPrimary}"
+                                     FontFamily="Consolas, Cascadia Mono, Segoe UI"
+                                     FontSize="12" />
+                        </Border>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="14">
                     <Grid RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto">
                         <TextBlock Grid.Row="0" Grid.ColumnSpan="2"
                                    Text="SteamCMD"

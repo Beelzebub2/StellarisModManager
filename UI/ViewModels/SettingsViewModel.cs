@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisModManager.Core.Services;
@@ -11,9 +13,12 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class SettingsViewModel : ViewModelBase
 {
+    private const int MaxDeveloperLogLines = 500;
+
     private readonly AppSettings _settings;
     private readonly GameDetector _detector;
     private readonly WorkshopDownloader _downloader;
+    private readonly Queue<string> _developerLogLines = new();
 
     [ObservableProperty] private string _gamePath = "";
     [ObservableProperty] private string _modsPath = "";
@@ -24,6 +29,8 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private string _selectedPalette = "Obsidian Ember";
     [ObservableProperty] private bool _hasUnsavedChanges = false;
     [ObservableProperty] private string _statusMessage = "";
+    [ObservableProperty] private bool _developerMode = false;
+    [ObservableProperty] private string _developerLogText = "";
 
     public ObservableCollection<string> PaletteOptions { get; } = new();
 
@@ -41,6 +48,7 @@ public partial class SettingsViewModel : ViewModelBase
         SteamCmdPath = settings.SteamCmdPath ?? "";
         SteamCmdDownloadPath = settings.SteamCmdDownloadPath ?? "";
         AutoDetectGame = settings.AutoDetectGame;
+        DeveloperMode = settings.DeveloperMode;
         SelectedPalette = string.IsNullOrWhiteSpace(settings.ThemePalette)
             ? "Obsidian Ember"
             : settings.ThemePalette;
@@ -51,6 +59,10 @@ public partial class SettingsViewModel : ViewModelBase
         GameVersion = !string.IsNullOrWhiteSpace(GamePath)
             ? _detector.DetectGameVersion(GamePath) ?? ""
             : "";
+
+        _downloader.LogLine += OnDownloaderLogLine;
+        _downloader.ProgressChanged += OnDownloaderProgressChanged;
+        _downloader.DownloadComplete += OnDownloaderDownloadComplete;
     }
 
     partial void OnGamePathChanged(string value)
@@ -70,7 +82,16 @@ public partial class SettingsViewModel : ViewModelBase
 
     partial void OnSteamCmdDownloadPathChanged(string value) => HasUnsavedChanges = true;
     partial void OnAutoDetectGameChanged(bool value) => HasUnsavedChanges = true;
+    partial void OnDeveloperModeChanged(bool value) => HasUnsavedChanges = true;
     partial void OnSelectedPaletteChanged(string value) => HasUnsavedChanges = true;
+
+    [RelayCommand]
+    private void ClearDeveloperLogs()
+    {
+        _developerLogLines.Clear();
+        DeveloperLogText = string.Empty;
+        StatusMessage = "Developer logs cleared.";
+    }
 
     [RelayCommand]
     private void AutoDetect()
@@ -224,6 +245,7 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.SteamCmdPath = string.IsNullOrWhiteSpace(SteamCmdPath) ? null : SteamCmdPath;
         _settings.SteamCmdDownloadPath = string.IsNullOrWhiteSpace(SteamCmdDownloadPath) ? null : SteamCmdDownloadPath;
         _settings.AutoDetectGame = AutoDetectGame;
+        _settings.DeveloperMode = DeveloperMode;
         _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
             ? "Obsidian Ember"
             : SelectedPalette;
@@ -292,5 +314,45 @@ public partial class SettingsViewModel : ViewModelBase
         {
             StatusMessage = $"Launch failed: {ex.Message}";
         }
+    }
+
+    private void OnDownloaderLogLine(object? sender, string line)
+    {
+        AppendDeveloperLog(line);
+    }
+
+    private void OnDownloaderProgressChanged(object? sender, DownloadProgressEventArgs e)
+    {
+        var mod = string.IsNullOrWhiteSpace(e.ModId) ? "-" : e.ModId;
+        AppendDeveloperLog($"[progress:{mod}] {e.StatusMessage}");
+    }
+
+    private void OnDownloaderDownloadComplete(object? sender, DownloadCompleteEventArgs e)
+    {
+        var outcome = e.Success ? "success" : "failed";
+        var details = e.Success
+            ? e.DownloadedPath ?? "(path unknown)"
+            : e.ErrorMessage ?? "(no error details)";
+
+        AppendDeveloperLog($"[complete:{e.ModId}] {outcome} - {details}");
+    }
+
+    private void AppendDeveloperLog(string line)
+    {
+        var entry = $"[{DateTime.Now:HH:mm:ss}] {line}";
+
+        void Update()
+        {
+            _developerLogLines.Enqueue(entry);
+            while (_developerLogLines.Count > MaxDeveloperLogLines)
+                _developerLogLines.Dequeue();
+
+            DeveloperLogText = string.Join(Environment.NewLine, _developerLogLines);
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+            Update();
+        else
+            Dispatcher.UIThread.Post(Update);
     }
 }

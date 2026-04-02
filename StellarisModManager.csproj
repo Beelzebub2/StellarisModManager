@@ -25,7 +25,7 @@
     <!-- WebView2 integration via WebView.Avalonia (ChisterWu) -->
     <!-- NOTE: Built for Avalonia 11.0.0; works with 11.2.x at compile time.
          Runtime requires Microsoft Edge WebView2 Runtime to be installed by the user.
-         BrowserView gracefully falls back to a manual-ID panel if the runtime is absent. -->
+         WorkshopView gracefully falls back to a manual-ID panel if the runtime is absent. -->
 
     <!-- MVVM Toolkit -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />

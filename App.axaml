@@ -23,8 +23,8 @@
     </Application.Styles>
 
     <Application.DataTemplates>
-        <DataTemplate DataType="vm:BrowserViewModel">
-            <views:BrowserView />
+        <DataTemplate DataType="vm:WorkshopViewModel">
+            <views:WorkshopView />
         </DataTemplate>
         <DataTemplate DataType="vm:LibraryViewModel">
             <views:LibraryView />
