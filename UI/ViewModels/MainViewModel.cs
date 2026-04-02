@@ -67,7 +67,7 @@ public partial class MainViewModel : ViewModelBase
         WorkshopViewModel = new WorkshopViewModel();
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader);
-        VersionBrowserViewModel = new VersionBrowserViewModel(db);
+        VersionBrowserViewModel = new VersionBrowserViewModel(downloader);
 
         // Wire workshop install requests to download + install flow
         WorkshopViewModel.InstallModRequested += (_, workshopId) =>
@@ -76,6 +76,16 @@ public partial class MainViewModel : ViewModelBase
         };
 
         WorkshopViewModel.UninstallModRequested += async (_, workshopId) =>
+        {
+            await HandleUninstallRequestAsync(workshopId);
+        };
+
+        VersionBrowserViewModel.InstallModRequested += (_, workshopId) =>
+        {
+            EnqueueInstallRequest(workshopId);
+        };
+
+        VersionBrowserViewModel.UninstallModRequested += async (_, workshopId) =>
         {
             await HandleUninstallRequestAsync(workshopId);
         };
@@ -443,6 +453,8 @@ public partial class MainViewModel : ViewModelBase
 
             WorkshopViewModel.SetInstalledWorkshopIds(installedIds);
             WorkshopViewModel.SetModStates(snapshot);
+            VersionBrowserViewModel.SetInstalledWorkshopIds(installedIds);
+            VersionBrowserViewModel.SetModStates(snapshot);
         });
     }
 

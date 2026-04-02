@@ -5,6 +5,7 @@
              xmlns:vm="using:StellarisModManager.UI.ViewModels"
              mc:Ignorable="d"
              x:Class="StellarisModManager.UI.Views.VersionBrowserView"
+             x:Name="Root"
              x:DataType="vm:VersionBrowserViewModel"
              FontFamily="Inter, Segoe UI">
 
@@ -17,6 +18,29 @@
         </Style>
         <Style Selector="Border.mod-card:pointerover">
             <Setter Property="BorderBrush" Value="{DynamicResource Theme.Accent}" />
+        </Style>
+        <Style Selector="Button.mod-action">
+            <Setter Property="Background" Value="#2F6FEB" />
+            <Setter Property="BorderBrush" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="Button.mod-action.installed">
+            <Setter Property="Background" Value="#E3B341" />
+            <Setter Property="Foreground" Value="#1A1A1A" />
+        </Style>
+        <Style Selector="Button.mod-action.installed:pointerover">
+            <Setter Property="Background" Value="#C93C37" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
+        <Style Selector="Button.mod-action.busy">
+            <Setter Property="Background" Value="#4B5568" />
+        </Style>
+        <Style Selector="Button.mod-action.error">
+            <Setter Property="Background" Value="#C97A19" />
         </Style>
     </UserControl.Styles>
 
@@ -49,6 +73,13 @@
                        VerticalAlignment="Center"
                        Margin="12,0,0,0" />
 
+            <TextBlock Grid.Column="1"
+                       Text="{Binding StatusText}"
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="11"
+                       VerticalAlignment="Center"
+                       Margin="12,18,0,0" />
+
             <!-- Col 2: Show older versions checkbox -->
             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0">
                 <CheckBox IsChecked="{Binding ShowOlderVersions}" />
@@ -69,8 +100,52 @@
                      Padding="10,8" />
         </Grid>
 
+        <!-- Loading indicator -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding IsLoading}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="12">
+            <ProgressBar IsIndeterminate="True"
+                         Width="200"
+                         Height="4"
+                         Foreground="{DynamicResource Theme.Accent}" />
+            <TextBlock Text="{Binding StatusText}"
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="13"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <!-- Empty state: no mods installed at all -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding ShowNoModsState}"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Spacing="8">
+            <TextBlock Text="No workshop mods found."
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Try another version or broaden the query (for example, 4.2 instead of 4.2.4)."
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="13"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+
+        <!-- Empty state: mods exist but none match current filter -->
+        <TextBlock Grid.Row="1"
+                   Text="No mods found for this version."
+                   IsVisible="{Binding ShowFilteredEmptyState}"
+                   Foreground="{DynamicResource Theme.TextMuted}"
+                   FontSize="14"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Margin="0,40,0,0" />
+
         <!-- Row 1: Mod grid -->
-        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled"
+                      IsVisible="{Binding HasResults}">
             <ItemsControl ItemsSource="{Binding DisplayedMods}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -81,14 +156,14 @@
                     <DataTemplate x:DataType="vm:VersionModCard">
                         <Border Classes="mod-card"
                                 Width="160"
-                                Height="190"
+                                Height="220"
                                 Margin="4"
                                 ClipToBounds="True">
-                            <Grid RowDefinitions="120,*">
+                            <Grid RowDefinitions="120,*,Auto">
 
                                 <!-- Row 0: Thumbnail or placeholder -->
                                 <Panel Grid.Row="0">
-                                    <Image Source="{Binding ThumbnailUrl}"
+                                    <Image Source="{Binding ThumbnailImage}"
                                            Stretch="UniformToFill"
                                            IsVisible="{Binding HasThumbnail}" />
                                     <Border Background="{DynamicResource Theme.PanelBg}"
@@ -124,6 +199,22 @@
                                                    FontWeight="SemiBold" />
                                     </Border>
                                 </Grid>
+
+                                <Button Grid.Row="2"
+                                        Margin="8,0,8,8"
+                                        Classes="mod-action"
+                                        Classes.installed="{Binding IsInstalledState}"
+                                        Classes.busy="{Binding IsBusyState}"
+                                        Classes.error="{Binding IsErrorState}"
+                                        Click="OnCardActionClick"
+                                        PointerEntered="OnCardActionPointerEntered"
+                                        PointerExited="OnCardActionPointerExited"
+                                        IsEnabled="{Binding IsActionEnabled}">
+                                    <TextBlock Text="{Binding ActionButtonText}"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               HorizontalAlignment="Center" />
+                                </Button>
 
                             </Grid>
                         </Border>

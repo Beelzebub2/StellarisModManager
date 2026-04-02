@@ -35,6 +35,20 @@
             <Setter Property="FontSize" Value="14" />
             <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
+        <Style Selector="Border.status-chip">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="999" />
+            <Setter Property="Padding" Value="10,4" />
+        </Style>
+        <Style Selector="Border.status-chip-muted">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="999" />
+            <Setter Property="Padding" Value="10,4" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="*,Auto" Background="{DynamicResource Theme.AppBg}">
@@ -56,25 +70,25 @@
 
                     <StackPanel Grid.Row="1" Spacing="6" HorizontalAlignment="Stretch">
                         <Grid>
-                            <Button Classes="nav-btn" Command="{Binding NavigateToWorkshopCommand}">
+                            <Button Classes="nav-btn" Command="{Binding NavigateToVersionBrowserCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <TextBlock Classes="icon-glyph" Text="&#xE774;" />
-                                    <TextBlock Text="Workshop" />
+                                    <TextBlock Classes="icon-glyph" Text="&#xE81C;" />
+                                    <TextBlock Text="By Version" />
                                 </StackPanel>
                             </Button>
                             <Border Background="{DynamicResource Theme.SurfaceBg}"
                                     BorderBrush="{DynamicResource Theme.Border}"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    IsVisible="{Binding IsWorkshopActive}"
+                                    IsVisible="{Binding IsVersionBrowserActive}"
                                     IsHitTestVisible="False">
                                 <Grid ColumnDefinitions="3,*">
                                     <Border Grid.Column="0"
                                             Background="{DynamicResource Theme.Accent}"
                                             CornerRadius="10,0,0,10" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="12,10">
-                                        <TextBlock Classes="icon-glyph" Text="&#xE774;" />
-                                        <TextBlock Text="Workshop" />
+                                        <TextBlock Classes="icon-glyph" Text="&#xE81C;" />
+                                        <TextBlock Text="By Version" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -106,25 +120,25 @@
                         </Grid>
 
                         <Grid>
-                            <Button Classes="nav-btn" Command="{Binding NavigateToVersionBrowserCommand}">
+                            <Button Classes="nav-btn" Command="{Binding NavigateToWorkshopCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <TextBlock Classes="icon-glyph" Text="&#xE81C;" />
-                                    <TextBlock Text="Versions" />
+                                    <TextBlock Classes="icon-glyph" Text="&#xE774;" />
+                                    <TextBlock Text="Workshop" />
                                 </StackPanel>
                             </Button>
                             <Border Background="{DynamicResource Theme.SurfaceBg}"
                                     BorderBrush="{DynamicResource Theme.Border}"
                                     BorderThickness="1"
                                     CornerRadius="10"
-                                    IsVisible="{Binding IsVersionBrowserActive}"
+                                    IsVisible="{Binding IsWorkshopActive}"
                                     IsHitTestVisible="False">
                                 <Grid ColumnDefinitions="3,*">
                                     <Border Grid.Column="0"
                                             Background="{DynamicResource Theme.Accent}"
                                             CornerRadius="10,0,0,10" />
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" Margin="12,10">
-                                        <TextBlock Classes="icon-glyph" Text="&#xE81C;" />
-                                        <TextBlock Text="Versions" />
+                                        <TextBlock Classes="icon-glyph" Text="&#xE774;" />
+                                        <TextBlock Text="Workshop" />
                                     </StackPanel>
                                 </Grid>
                             </Border>
@@ -205,34 +219,74 @@
                 Background="{DynamicResource Theme.SurfaceBg}"
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
-                CornerRadius="10"
-                Padding="12,8">
-            <Grid ColumnDefinitions="*,Auto,Auto">
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.TextMuted}" Text="&#xE946;" />
-                    <TextBlock Text="{Binding StatusMessage}"
-                               Foreground="{DynamicResource Theme.TextPrimary}"
-                               FontSize="12"
-                               VerticalAlignment="Center" />
+                CornerRadius="12"
+                Padding="14,10">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                <StackPanel Grid.Column="0" Grid.RowSpan="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                    <Border Background="{DynamicResource Theme.PanelBg}"
+                            BorderBrush="{DynamicResource Theme.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="8,6">
+                        <TextBlock Classes="icon-glyph"
+                                   Foreground="{DynamicResource Theme.Accent}"
+                                   Text="&#xE946;" />
+                    </Border>
+
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Activity"
+                                   Foreground="{DynamicResource Theme.TextMuted}"
+                                   FontSize="11" />
+                        <TextBlock Text="{Binding StatusMessage}"
+                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   FontSize="12"
+                                   FontWeight="SemiBold" />
+                    </StackPanel>
                 </StackPanel>
 
-                <TextBlock Grid.Column="1"
-                           Text="{Binding QueueProgressText}"
-                           Foreground="{DynamicResource Theme.TextMuted}"
-                           FontSize="12"
-                           Margin="0,0,8,0"
-                           VerticalAlignment="Center"
-                           IsVisible="{Binding IsDownloading}" />
+                <StackPanel Grid.Column="1"
+                            Grid.Row="0"
+                            Orientation="Horizontal"
+                            Spacing="8"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
+                        <TextBlock Text="{Binding QueueProgressText, StringFormat='Queue {0}'}"
+                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold" />
+                    </Border>
 
-                <ProgressBar Grid.Column="2"
-                             Value="{Binding DownloadProgress}"
-                             Minimum="0"
-                             Maximum="100"
-                             Width="220"
-                             Height="8"
-                             Margin="10,0"
-                             VerticalAlignment="Center"
-                             IsVisible="{Binding IsDownloading}" />
+                    <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
+                        <TextBlock Text="{Binding DownloadProgress, StringFormat='{}{0}%'}"
+                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold" />
+                    </Border>
+
+                    <Border Classes="status-chip-muted" IsVisible="{Binding !IsDownloading}">
+                        <TextBlock Text="Idle"
+                                   Foreground="{DynamicResource Theme.TextMuted}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold" />
+                    </Border>
+                </StackPanel>
+
+                <Border Grid.Column="1"
+                        Grid.Row="1"
+                        Width="300"
+                    Margin="0,8,0,0"
+                        Background="{DynamicResource Theme.PanelBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="8,6"
+                        IsVisible="{Binding IsDownloading}">
+                    <ProgressBar Value="{Binding DownloadProgress}"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Height="8" />
+                </Border>
             </Grid>
         </Border>
 
