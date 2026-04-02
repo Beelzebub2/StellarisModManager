@@ -1,0 +1,31 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:StellarisModManager.UI.ViewModels"
+             mc:Ignorable="d"
+             x:Class="StellarisModManager.UI.Views.LibraryView"
+             x:DataType="vm:LibraryViewModel">
+
+    <!-- Library view placeholder - full implementation in Task 6 -->
+    <Grid>
+        <Border Background="#1E1E2E" CornerRadius="8" Margin="16">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="12">
+                <TextBlock Text="Mod Library"
+                           FontSize="22"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"
+                           Foreground="#CDD6F4" />
+                <TextBlock Text="Full library UI coming in Task 6"
+                           FontSize="14"
+                           HorizontalAlignment="Center"
+                           Foreground="#6C7086" />
+                <TextBlock Text="{Binding StatusMessage}"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           Foreground="#A6E3A1" />
+            </StackPanel>
+        </Border>
+    </Grid>
+
+</UserControl>

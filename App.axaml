@@ -1,7 +1,8 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="StellarisModManager.App"
-             xmlns:local="using:StellarisModManager"
+             xmlns:vm="using:StellarisModManager.UI.ViewModels"
+             xmlns:views="using:StellarisModManager.UI.Views"
              RequestedThemeVariant="Dark">
 
     <Application.Resources>
@@ -11,5 +12,17 @@
     <Application.Styles>
         <FluentTheme />
     </Application.Styles>
+
+    <Application.DataTemplates>
+        <DataTemplate DataType="vm:BrowserViewModel">
+            <views:BrowserView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:LibraryViewModel">
+            <views:LibraryView />
+        </DataTemplate>
+        <DataTemplate DataType="vm:SettingsViewModel">
+            <views:SettingsView />
+        </DataTemplate>
+    </Application.DataTemplates>
 
 </Application>

@@ -2,20 +2,205 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="using:StellarisModManager.UI.ViewModels"
+        xmlns:views="using:StellarisModManager.UI.Views"
         mc:Ignorable="d"
         x:Class="StellarisModManager.UI.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
         Title="Stellaris Mod Manager"
         Width="1280"
         Height="800"
         MinWidth="800"
         MinHeight="600"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Background="#181825">
 
-    <Grid>
-        <TextBlock Text="Stellaris Mod Manager"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   FontSize="24" />
+    <Window.Resources>
+        <SolidColorBrush x:Key="SidebarBackground">#11111B</SolidColorBrush>
+        <SolidColorBrush x:Key="AccentBrush">#89B4FA</SolidColorBrush>
+        <SolidColorBrush x:Key="ForegroundMuted">#6C7086</SolidColorBrush>
+        <SolidColorBrush x:Key="ForegroundNormal">#CDD6F4</SolidColorBrush>
+    </Window.Resources>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Title bar row -->
+        <Border Grid.Row="0"
+                Background="#11111B"
+                BorderBrush="#313244"
+                BorderThickness="0,0,0,1"
+                Padding="16,10">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10">
+                    <TextBlock Text="&#x1F30C;"
+                               FontSize="20"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="Stellaris Mod Manager"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               Foreground="#CDD6F4"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+                <TextBlock Grid.Column="2"
+                           Text="{Binding AppVersion}"
+                           FontSize="11"
+                           Foreground="#6C7086"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
+        <!-- Main content: sidebar + active view -->
+        <Grid Grid.Row="1" ColumnDefinitions="200,*">
+
+            <!-- Sidebar -->
+            <Border Grid.Column="0"
+                    Background="#11111B"
+                    BorderBrush="#313244"
+                    BorderThickness="0,0,1,0">
+                <Grid RowDefinitions="*,Auto">
+
+                    <!-- Nav buttons -->
+                    <StackPanel Grid.Row="0"
+                                Spacing="4"
+                                Margin="8,12">
+
+                        <!-- Browser nav button -->
+                        <Button Command="{Binding NavigateToBrowserCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="12,10"
+                                CornerRadius="6">
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="#CDD6F4" />
+                                    <Setter Property="BorderThickness" Value="0" />
+                                </Style>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="#1E1E2E" />
+                                </Style>
+                            </Button.Styles>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="&#x1F310;" FontSize="16" VerticalAlignment="Center" />
+                                <TextBlock Text="Browser"
+                                           FontSize="14"
+                                           VerticalAlignment="Center"
+                                           Foreground="#CDD6F4" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Library nav button -->
+                        <Button Command="{Binding NavigateToLibraryCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="12,10"
+                                CornerRadius="6">
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="#CDD6F4" />
+                                    <Setter Property="BorderThickness" Value="0" />
+                                </Style>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="#1E1E2E" />
+                                </Style>
+                            </Button.Styles>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="&#x1F4E6;" FontSize="16" VerticalAlignment="Center" />
+                                <TextBlock Text="Library"
+                                           FontSize="14"
+                                           VerticalAlignment="Center"
+                                           Foreground="#CDD6F4" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- Settings nav button -->
+                        <Button Command="{Binding NavigateToSettingsCommand}"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Left"
+                                Padding="12,10"
+                                CornerRadius="6">
+                            <Button.Styles>
+                                <Style Selector="Button">
+                                    <Setter Property="Background" Value="Transparent" />
+                                    <Setter Property="Foreground" Value="#CDD6F4" />
+                                    <Setter Property="BorderThickness" Value="0" />
+                                </Style>
+                                <Style Selector="Button:pointerover /template/ ContentPresenter">
+                                    <Setter Property="Background" Value="#1E1E2E" />
+                                </Style>
+                            </Button.Styles>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <TextBlock Text="&#x2699;" FontSize="16" VerticalAlignment="Center" />
+                                <TextBlock Text="Settings"
+                                           FontSize="14"
+                                           VerticalAlignment="Center"
+                                           Foreground="#CDD6F4" />
+                            </StackPanel>
+                        </Button>
+
+                    </StackPanel>
+
+                    <!-- Version at sidebar bottom -->
+                    <TextBlock Grid.Row="1"
+                               Text="{Binding AppVersion}"
+                               FontSize="11"
+                               Foreground="#6C7086"
+                               HorizontalAlignment="Center"
+                               Margin="8,8" />
+                </Grid>
+            </Border>
+
+            <!-- Content area: switches between Browser / Library / Settings views -->
+            <ContentControl Grid.Column="1"
+                            Content="{Binding ActiveView}">
+                <ContentControl.DataTemplates>
+                    <DataTemplate DataType="vm:BrowserViewModel">
+                        <views:BrowserView />
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:LibraryViewModel">
+                        <views:LibraryView />
+                    </DataTemplate>
+                    <DataTemplate DataType="vm:SettingsViewModel">
+                        <views:SettingsView />
+                    </DataTemplate>
+                </ContentControl.DataTemplates>
+            </ContentControl>
+
+        </Grid>
+
+        <!-- Status bar -->
+        <Border Grid.Row="2"
+                Background="#11111B"
+                BorderBrush="#313244"
+                BorderThickness="0,1,0,0"
+                Padding="12,6">
+            <Grid ColumnDefinitions="*,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusMessage}"
+                           FontSize="12"
+                           Foreground="#CDD6F4"
+                           VerticalAlignment="Center" />
+
+                <!-- Download progress bar (visible only while downloading) -->
+                <ProgressBar Grid.Column="1"
+                             Value="{Binding DownloadProgress}"
+                             Minimum="0"
+                             Maximum="100"
+                             Width="150"
+                             Height="8"
+                             Margin="8,0"
+                             VerticalAlignment="Center"
+                             IsVisible="{Binding IsDownloading}" />
+
+                <TextBlock Grid.Column="2"
+                           Text="{Binding AppVersion}"
+                           FontSize="11"
+                           Foreground="#6C7086"
+                           VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
     </Grid>
 
 </Window>
