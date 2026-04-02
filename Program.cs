@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.WebView.Desktop;
 using System;
+using System.IO;
 
 namespace StellarisModManager;
 
@@ -12,19 +13,19 @@ internal sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        var existingArgs = Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
-        const string compatibilityFlag = "--disable-gpu";
-
-        if (string.IsNullOrWhiteSpace(existingArgs))
-        {
-            Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", compatibilityFlag);
-        }
-        else if (!existingArgs.Contains(compatibilityFlag, StringComparison.OrdinalIgnoreCase))
-        {
-            Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", existingArgs + " " + compatibilityFlag);
-        }
-
+        ConfigureWebViewUserDataFolder();
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    private static void ConfigureWebViewUserDataFolder()
+    {
+        var userDataFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "StellarisModManager",
+            "WebView2");
+
+        Directory.CreateDirectory(userDataFolder);
+        Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userDataFolder);
     }
 
     // Avalonia configuration, don't remove; also used by visual designer.

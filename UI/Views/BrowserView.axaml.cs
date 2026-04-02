@@ -20,6 +20,9 @@ public partial class BrowserView : UserControl
     private bool _webViewReady;
     private bool _eventsWired;
     private int _navigationAttempt;
+    private bool _initialNavigateQueued;
+    private bool _steamAutoRetryUsed;
+    private string _lastNavigatedUrl = string.Empty;
 
     public BrowserView()
     {
@@ -56,13 +59,28 @@ public partial class BrowserView : UserControl
 
             _webViewReady = true;
             ShowEmbeddedBrowser();
-            NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);
+            if (!_initialNavigateQueued)
+            {
+                _initialNavigateQueued = true;
+                _ = QueueInitialNavigationAsync();
+            }
         }
         catch (Exception ex)
         {
             _webViewReady = false;
             ShowFallback($"Embedded browser initialization failed: {ex.Message}");
         }
+    }
+
+    private async Task QueueInitialNavigationAsync()
+    {
+        // WebView2 starts asynchronously; navigating immediately on Loaded can be ignored.
+        await Task.Delay(350);
+
+        if (!_webViewReady)
+            return;
+
+        NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);
     }
 
     private async void OnNavigationCompleted(object? sender, WebViewUrlLoadedEventArg e)
@@ -125,6 +143,11 @@ public partial class BrowserView : UserControl
         }
 
         var url = NormalizeUrl(rawUrl);
+        if (!string.Equals(url, _lastNavigatedUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            _steamAutoRetryUsed = false;
+            _lastNavigatedUrl = url;
+        }
 
         if (_vm is not null)
         {
@@ -153,7 +176,7 @@ public partial class BrowserView : UserControl
 
     private async Task StartNavigationWatchdogAsync(int attempt, string url)
     {
-        await Task.Delay(TimeSpan.FromSeconds(8));
+        await Task.Delay(TimeSpan.FromSeconds(12));
 
         if (_vm is null)
             return;
@@ -164,8 +187,23 @@ public partial class BrowserView : UserControl
         if (!_vm.IsLoading)
             return;
 
+        if (!_steamAutoRetryUsed && IsSteamWorkshopUrl(url))
+        {
+            _steamAutoRetryUsed = true;
+            await Dispatcher.UIThread.InvokeAsync(() => NavigateTo(url));
+            return;
+        }
+
         _vm.IsLoading = false;
         ShowFallback($"Embedded browser timed out while loading {url}. This is usually caused by WebView runtime/driver incompatibility.");
+    }
+
+    private static bool IsSteamWorkshopUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+
+        return uri.Host.Contains("steamcommunity.com", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeUrl(string value)

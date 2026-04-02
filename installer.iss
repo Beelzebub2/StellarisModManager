@@ -11,6 +11,22 @@
   #define SetupOutputDir "Output\\Installer"
 #endif
 
+#ifndef SetupOutputBase
+  #define SetupOutputBase "StellarisModManager-Setup"
+#endif
+
+#ifndef SetupIconPath
+  #define SetupIconPath "Output\\InstallerAssets\\setup-icon.ico"
+#endif
+
+#ifndef WizardImagePath
+  #define WizardImagePath "Output\\InstallerAssets\\wizard-banner.bmp"
+#endif
+
+#ifndef WizardSmallImagePath
+  #define WizardSmallImagePath "Output\\InstallerAssets\\wizard-banner-small.bmp"
+#endif
+
 [Setup]
 AppId={{F8A45C0A-7C66-4C03-A9ED-8A2E2D0F04D3}
 AppName={#MyAppName}
@@ -20,10 +36,26 @@ DefaultDirName={autopf}\\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir={#SetupOutputDir}
-OutputBaseFilename=StellarisModManager-Setup
+OutputBaseFilename={#SetupOutputBase}
 Compression=lzma2
 SolidCompression=yes
+#ifdef EnableDarkWizardStyle
+WizardStyle=modern dynamic windows11
+#else
 WizardStyle=modern
+#endif
+SetupIconFile={#SetupIconPath}
+WizardImageFile={#WizardImagePath}
+WizardImageBackColor=$F0F0F0
+WizardSmallImageFile={#WizardSmallImagePath}
+WizardSmallImageBackColor=$F0F0F0
+#ifdef EnableDarkWizardStyle
+WizardImageFileDynamicDark={#WizardImagePath}
+WizardImageBackColorDynamicDark=$202020
+WizardSmallImageFileDynamicDark={#WizardSmallImagePath}
+WizardSmallImageBackColorDynamicDark=$202020
+#endif
+WizardImageStretch=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\\{#MyAppExeName}
