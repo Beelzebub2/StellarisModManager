@@ -6,11 +6,14 @@ pushd "%~dp0"
 set "CONFIG=%~1"
 if "%CONFIG%"=="" set "CONFIG=Release"
 
+set "APP_VERSION=%~2"
+if "%APP_VERSION%"=="" set "APP_VERSION=1.0.0"
+
 call "build.bat" "%CONFIG%"
 if errorlevel 1 exit /b %errorlevel%
 
 set "ASSETSDIR=Output\InstallerAssets"
-set "BANNER_SOURCE=C:\Users\ricar\Downloads\banner.jpg"
+set "BANNER_SOURCE=%CD%\UI\Assets\splash-art.png"
 set "ICON_SOURCE=%CD%\UI\Assets\icon.jpg"
 set "SETUP_ICON=%CD%\%ASSETSDIR%\setup-icon.ico"
 set "WIZARD_IMAGE=%CD%\%ASSETSDIR%\wizard-banner.bmp"
@@ -71,9 +74,9 @@ if errorlevel 1 (
 )
 
 for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "BUILDSTAMP=%%I"
-set "SETUP_BASENAME=StellarisModManager-Setup-%BUILDSTAMP%"
+set "SETUP_BASENAME=StellarisModManager-Setup-v%APP_VERSION%-%BUILDSTAMP%"
 
-"%ISCC_EXE%" /Qp "/DSourceDir=Output\\StellarisModManager" "/DSetupOutputDir=Output\\Installer" "/DSetupOutputBase=%SETUP_BASENAME%" "/DSetupIconPath=%SETUP_ICON%" "/DWizardImagePath=%WIZARD_IMAGE%" "/DWizardSmallImagePath=%WIZARD_SMALL_IMAGE%" %ISCC_DARK_DEFINE% "installer.iss"
+"%ISCC_EXE%" /Qp "/DSourceDir=Output\\StellarisModManager" "/DSetupOutputDir=Output\\Installer" "/DSetupOutputBase=%SETUP_BASENAME%" "/DMyAppVersion=%APP_VERSION%" "/DSetupIconPath=%SETUP_ICON%" "/DWizardImagePath=%WIZARD_IMAGE%" "/DWizardSmallImagePath=%WIZARD_SMALL_IMAGE%" %ISCC_DARK_DEFINE% "installer.iss"
 if errorlevel 1 (
     popd
     exit /b %errorlevel%

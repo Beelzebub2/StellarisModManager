@@ -42,7 +42,12 @@ public class WorkshopModInfo
     public string Title { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
     public string? PreviewImageUrl { get; set; }
+    public long TimeCreated { get; set; }
     public long TimeUpdated { get; set; }
+    public long TotalSubscribers { get; set; }
+    public long FavoritedCount { get; set; }
+    public long ViewCount { get; set; }
+    public double PopularityScore { get; set; }
     public List<string> Tags { get; set; } = new();
 }
 
@@ -381,7 +386,12 @@ public class WorkshopDownloader
                 Title = item.TryGetProperty("title", out var title) ? title.GetString() ?? modId : modId,
                 Description = item.TryGetProperty("description", out var desc) ? desc.GetString() ?? string.Empty : string.Empty,
                 PreviewImageUrl = item.TryGetProperty("preview_url", out var preview) ? preview.GetString() : null,
+                TimeCreated = item.TryGetProperty("time_created", out var created) ? created.GetInt64() : 0,
                 TimeUpdated = item.TryGetProperty("time_updated", out var updated) ? updated.GetInt64() : 0,
+                TotalSubscribers = TryReadLong(item, "subscriptions", "lifetime_subscriptions", "num_subscriptions"),
+                FavoritedCount = TryReadLong(item, "favorited", "lifetime_favorited"),
+                ViewCount = TryReadLong(item, "views", "lifetime_playtime"),
+                PopularityScore = TryReadDouble(item, "score", "weighted_vote_score"),
             };
 
             // Tags array: [{"tag": "Utilities"}, ...]
@@ -405,6 +415,57 @@ public class WorkshopDownloader
             Log.Warning(ex, "Failed to parse Steam API response for mod {Id}", modId);
             return null;
         }
+    }
+
+    private static long TryReadLong(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var property in propertyNames)
+        {
+            if (!element.TryGetProperty(property, out var value))
+                continue;
+
+            try
+            {
+                if (value.ValueKind == JsonValueKind.Number)
+                    return value.GetInt64();
+
+                if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), out var parsed))
+                    return parsed;
+            }
+            catch
+            {
+                // Ignore malformed values and continue through fallbacks.
+            }
+        }
+
+        return 0;
+    }
+
+    private static double TryReadDouble(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var property in propertyNames)
+        {
+            if (!element.TryGetProperty(property, out var value))
+                continue;
+
+            try
+            {
+                if (value.ValueKind == JsonValueKind.Number)
+                    return value.GetDouble();
+
+                if (value.ValueKind == JsonValueKind.String &&
+                    double.TryParse(value.GetString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+            catch
+            {
+                // Ignore malformed values and continue through fallbacks.
+            }
+        }
+
+        return 0;
     }
 
     private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> RunSteamCmdCommandAttemptAsync(

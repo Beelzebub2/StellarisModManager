@@ -20,12 +20,19 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class VersionBrowserViewModel : ViewModelBase
 {
-    private const string CacheSchemaVersion = "2";
+    private const string CacheSchemaVersion = "4";
     private const int DefaultFetchLimit = 64;
     private const int ScanMoreStep = 32;
+    private const int MetadataResolveConcurrency = 8;
+    private const int SearchBackgroundPageLimit = 40;
+    private const int SearchCacheFlushBatchSize = 48;
+    private const int MaxCachedCardsPerQuery = 1500;
     private static readonly Regex AnyVersionRegex = new(@"\b\d+\.\d+(?:\.\d+)?\b", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly IReadOnlyList<string> RelevanceBrowseSorts = new[] { "trend", "totaluniquesubscribers" };
+    private static readonly IReadOnlyList<string> MostSubscribedBrowseSorts = new[] { "totaluniquesubscribers", "trend" };
+    private static readonly IReadOnlyList<string> MostPopularBrowseSorts = new[] { "trend", "totaluniquesubscribers" };
     private static readonly string ThumbnailCacheDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "StellarisModManager",
@@ -48,13 +55,17 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private readonly Dictionary<string, CachedVersionResult> _versionResultCache = new(StringComparer.OrdinalIgnoreCase);
 
     private bool _loadedOnce;
+    private int _releaseCutoffExcludedCount;
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _thumbnailWarmCts;
+    private CancellationTokenSource? _searchDebounceCts;
 
     public ObservableCollection<VersionDropdownItem> VersionItems { get; } = new();
+    public ObservableCollection<VersionSortModeItem> SortModes { get; } = new();
     public ObservableCollection<VersionModCard> DisplayedMods { get; } = new();
 
     [ObservableProperty] private VersionDropdownItem? _selectedVersion;
+    [ObservableProperty] private VersionSortModeItem? _selectedSortMode;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private bool _showOlderVersions;
     [ObservableProperty] private int _fetchLimit = DefaultFetchLimit;
@@ -64,9 +75,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
     [ObservableProperty] private bool _hasNoMods;
     [ObservableProperty] private string _statusText = "Select a Stellaris version to load workshop mods.";
 
-    public bool ShowNoModsState => !IsLoading && HasNoMods;
+    public bool ShowNoModsState => !IsLoading && HasNoMods && DisplayedModCount == 0;
     public bool ShowFilteredEmptyState => !IsLoading && !HasNoMods && DisplayedModCount == 0;
-    public bool HasResults => !IsLoading && DisplayedModCount > 0;
+    public bool HasResults => DisplayedModCount > 0;
+    public bool ShowLoadingState => IsLoading && DisplayedModCount == 0;
     public bool CanScanMore => !IsLoading && !IsScanningMore;
 
     public event EventHandler<string>? InstallModRequested;
@@ -77,6 +89,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         _downloader = downloader;
         _settings = settings;
         _detector = detector;
+        BuildSortModes();
         Directory.CreateDirectory(ThumbnailCacheDir);
         Directory.CreateDirectory(ResultCacheDir);
         InitializeCaches();
@@ -205,12 +218,29 @@ public partial class VersionBrowserViewModel : ViewModelBase
     partial void OnSelectedVersionChanged(VersionDropdownItem? value)
     {
         if (_loadedOnce)
-            _ = RefreshFromWorkshopAsync();
+            _ = RefreshFromWorkshopAsync(ignoreCache: !string.IsNullOrWhiteSpace(SearchText));
     }
 
     partial void OnSearchTextChanged(string value)
     {
+        if (!_loadedOnce)
+        {
+            ApplyFilter();
+            return;
+        }
+
+        // Immediately show cached/local matches while remote search continues.
         ApplyFilter();
+
+        QueueSearchRefresh();
+    }
+
+    partial void OnSelectedSortModeChanged(VersionSortModeItem? value)
+    {
+        ApplyFilter();
+
+        if (_loadedOnce)
+            QueueSearchRefresh();
     }
 
     partial void OnShowOlderVersionsChanged(bool value)
@@ -219,11 +249,45 @@ public partial class VersionBrowserViewModel : ViewModelBase
             return;
 
         BuildVersionDropdown();
-        _ = RefreshFromWorkshopAsync();
+        _ = RefreshFromWorkshopAsync(ignoreCache: !string.IsNullOrWhiteSpace(SearchText));
+    }
+
+    private void QueueSearchRefresh()
+    {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _searchDebounceCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+
+        _ = DebouncedSearchRefreshAsync(cts);
+    }
+
+    private async Task DebouncedSearchRefreshAsync(CancellationTokenSource cts)
+    {
+        try
+        {
+            await Task.Delay(350, cts.Token);
+            if (cts.IsCancellationRequested)
+                return;
+
+            await RefreshFromWorkshopAsync(ignoreCache: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore canceled search refreshes while user is typing.
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchDebounceCts, cts))
+                _searchDebounceCts = null;
+
+            cts.Dispose();
+        }
     }
 
     partial void OnIsLoadingChanged(bool value)
     {
+        OnPropertyChanged(nameof(ShowLoadingState));
         OnPropertyChanged(nameof(ShowNoModsState));
         OnPropertyChanged(nameof(ShowFilteredEmptyState));
         OnPropertyChanged(nameof(HasResults));
@@ -243,6 +307,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     partial void OnDisplayedModCountChanged(int value)
     {
+        OnPropertyChanged(nameof(ShowLoadingState));
+        OnPropertyChanged(nameof(ShowNoModsState));
         OnPropertyChanged(nameof(ShowFilteredEmptyState));
         OnPropertyChanged(nameof(HasResults));
     }
@@ -331,6 +397,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(versionQuery))
             return;
 
+        _releaseCutoffExcludedCount = 0;
+
+        var searchText = SearchText.Trim();
+        var hasSearchText = !string.IsNullOrWhiteSpace(searchText);
+        var cacheQueryKey = hasSearchText ? searchText : null;
+
         var targetCount = Math.Max(FetchLimit, 1);
 
         var refreshCts = new CancellationTokenSource();
@@ -343,11 +415,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         try
         {
-            await TryAppendCachedCardsAsync(versionQuery, targetCount, cancellationToken);
+            if (!hasSearchText)
+                await TryAppendCachedCardsAsync(versionQuery, targetCount, cancellationToken, cacheQueryKey);
 
             if (_fetchedMods.Count < targetCount)
             {
-                var searchQueries = GetVersionSearchQueries(versionQuery);
+                var searchQueries = GetWorkshopSearchQueries(versionQuery, searchText);
                 var ids = await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken, targetCount);
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -366,15 +439,24 @@ public partial class VersionBrowserViewModel : ViewModelBase
                         ApplyModStateToCards();
                         ApplyFilter();
                         QueueThumbnailWarm(appended);
-                        await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods.ToList(), cancellationToken);
+                        await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods, cancellationToken, cacheQueryKey);
                     }
                 }
             }
 
             HasNoMods = _fetchedMods.Count == 0;
-            StatusText = HasNoMods
-                ? $"No workshop mods found for {versionQuery}."
-                : $"Loaded {_fetchedMods.Count} mods for {versionQuery}.";
+            if (hasSearchText)
+            {
+                StatusText = WithReleaseCutoffHint(HasNoMods
+                    ? $"No mods found for '{searchText}' in {versionQuery}."
+                    : $"Loaded {_fetchedMods.Count} mods for '{searchText}' in {versionQuery}.", versionQuery);
+            }
+            else
+            {
+                StatusText = WithReleaseCutoffHint(HasNoMods
+                    ? $"No workshop mods found for {versionQuery}."
+                    : $"Loaded {_fetchedMods.Count} mods for {versionQuery}.", versionQuery);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -394,9 +476,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
     }
 
-    private async Task TryAppendCachedCardsAsync(string versionQuery, int targetCount, CancellationToken cancellationToken)
+    private async Task TryAppendCachedCardsAsync(
+        string versionQuery,
+        int targetCount,
+        CancellationToken cancellationToken,
+        string? searchText)
     {
-        var cachedCards = await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
+        var cachedCards = await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken, searchText);
         if (cachedCards is null || cachedCards.Count == 0)
             return;
 
@@ -409,17 +495,17 @@ public partial class VersionBrowserViewModel : ViewModelBase
         QueueThumbnailWarm(appended);
     }
 
-    private List<VersionModCard> AppendCards(IEnumerable<VersionModCard> candidates, int targetCount)
+    private List<VersionModCard> AppendCards(IEnumerable<VersionModCard> candidates, int? targetCount)
     {
         var appended = new List<VersionModCard>();
-        if (_fetchedMods.Count >= targetCount)
+        if (targetCount.HasValue && _fetchedMods.Count >= targetCount.Value)
             return appended;
 
         var knownIds = new HashSet<string>(_fetchedMods.Select(m => m.WorkshopId), StringComparer.Ordinal);
 
         foreach (var card in candidates)
         {
-            if (_fetchedMods.Count >= targetCount)
+            if (targetCount.HasValue && _fetchedMods.Count >= targetCount.Value)
                 break;
 
             if (string.IsNullOrWhiteSpace(card.WorkshopId))
@@ -456,7 +542,6 @@ public partial class VersionBrowserViewModel : ViewModelBase
             string.Equals(currentSelection, firstVersion, StringComparison.OrdinalIgnoreCase);
 
         var preserveCurrentSelection = _loadedOnce && hasCurrentSelection && !isFallbackFirstSelection;
-
         if (preserveCurrentSelection)
         {
             SelectedVersion = VersionItems.FirstOrDefault(v => v.Version == currentSelection)
@@ -475,6 +560,15 @@ public partial class VersionBrowserViewModel : ViewModelBase
             if (!ReferenceEquals(SelectedVersion, targetSelection))
                 SelectedVersion = targetSelection;
         }, DispatcherPriority.Background);
+    }
+
+    private void BuildSortModes()
+    {
+        SortModes.Clear();
+        SortModes.Add(new VersionSortModeItem(VersionSortMode.Relevance, "Relevance"));
+        SortModes.Add(new VersionSortModeItem(VersionSortMode.MostSubscribed, "Most Subscribed"));
+        SortModes.Add(new VersionSortModeItem(VersionSortMode.MostPopular, "Most Popular"));
+        SelectedSortMode = SortModes.FirstOrDefault();
     }
 
     private VersionDropdownItem? ResolvePreferredVersionItem(IReadOnlyList<string> preferredVersionCandidates)
@@ -547,17 +641,25 @@ public partial class VersionBrowserViewModel : ViewModelBase
         previous?.Dispose();
 
         var cancellationToken = refreshCts.Token;
+        var searchText = SearchText.Trim();
+        var hasSearchText = !string.IsNullOrWhiteSpace(searchText);
+        var cacheQueryKey = hasSearchText ? searchText : null;
+        var hadExistingResults = _fetchedMods.Count > 0 || DisplayedMods.Count > 0;
+        _releaseCutoffExcludedCount = 0;
 
         IsLoading = true;
-        StatusText = $"Searching Workshop for {versionQuery}...";
+        StatusText = hasSearchText
+            ? $"Searching Workshop for '{searchText}' in {versionQuery}..."
+            : $"Searching Workshop for {versionQuery}...";
 
         try
         {
-            var searchQueries = GetVersionSearchQueries(versionQuery);
+            var searchQueries = GetWorkshopSearchQueries(versionQuery, searchText);
 
-            var cachedCards = ignoreCache
-                ? null
-                : await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
+            var allowCacheSeed = hasSearchText || !ignoreCache;
+            var cachedCards = allowCacheSeed
+                ? await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken, cacheQueryKey)
+                : null;
 
             if (cachedCards is not null)
             {
@@ -565,13 +667,21 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 _fetchedMods.AddRange(cachedCards);
 
                 HasNoMods = _fetchedMods.Count == 0;
-                StatusText = HasNoMods
+                StatusText = WithReleaseCutoffHint(HasNoMods
                     ? $"No workshop mods found for {versionQuery}."
-                    : $"Loaded {_fetchedMods.Count} mods for {versionQuery} (cached).";
+                    : $"Loaded {_fetchedMods.Count} mods for {versionQuery} (cached).", versionQuery);
 
                 ApplyModStateToCards();
                 ApplyFilter();
                 QueueThumbnailWarm(_fetchedMods.ToList());
+
+                if (!hasSearchText)
+                    return;
+            }
+
+            if (hasSearchText)
+            {
+                await EnrichSearchResultsInBackgroundAsync(versionQuery, searchText, searchQueries, cancellationToken);
                 return;
             }
 
@@ -581,15 +691,25 @@ public partial class VersionBrowserViewModel : ViewModelBase
             var cards = await ResolveWorkshopCardsAsync(versionQuery, ids, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            await SaveCachedVersionCardsAsync(versionQuery, cards, cancellationToken);
+            if (!hasSearchText)
+                await SaveCachedVersionCardsAsync(versionQuery, cards, cancellationToken, cacheQueryKey);
 
             _fetchedMods.Clear();
             _fetchedMods.AddRange(cards);
 
             HasNoMods = _fetchedMods.Count == 0;
-            StatusText = HasNoMods
-                ? $"No workshop mods found for {versionQuery}."
-                : $"Loaded {_fetchedMods.Count} mods for {versionQuery}.";
+            if (hasSearchText)
+            {
+                StatusText = WithReleaseCutoffHint(HasNoMods
+                    ? $"No mods found for '{searchText}' in {versionQuery}."
+                    : $"Loaded {_fetchedMods.Count} mods for '{searchText}' in {versionQuery}.", versionQuery);
+            }
+            else
+            {
+                StatusText = WithReleaseCutoffHint(HasNoMods
+                    ? $"No workshop mods found for {versionQuery}."
+                    : $"Loaded {_fetchedMods.Count} mods for {versionQuery}.", versionQuery);
+            }
 
             ApplyModStateToCards();
             ApplyFilter();
@@ -601,10 +721,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            _fetchedMods.Clear();
-            DisplayedMods.Clear();
-            DisplayedModCount = 0;
-            HasNoMods = true;
+            if (!hadExistingResults)
+            {
+                _fetchedMods.Clear();
+                DisplayedMods.Clear();
+                DisplayedModCount = 0;
+                HasNoMods = true;
+            }
+
             StatusText = $"Workshop search failed: {ex.Message}";
         }
         finally
@@ -617,6 +741,111 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
             refreshCts.Dispose();
         }
+    }
+
+    private async Task EnrichSearchResultsInBackgroundAsync(
+        string versionQuery,
+        string searchText,
+        IReadOnlyList<string> searchQueries,
+        CancellationToken cancellationToken)
+    {
+        await AppendSearchMatchesAsync(versionQuery, searchText, searchQueries, cancellationToken);
+
+        HasNoMods = _fetchedMods.Count == 0;
+        StatusText = WithReleaseCutoffHint(DisplayedModCount == 0
+            ? $"No mods found for '{searchText}' in {versionQuery}."
+            : $"Loaded {DisplayedModCount} mods for '{searchText}' in {versionQuery}.", versionQuery);
+    }
+
+    private async Task AppendSearchMatchesAsync(
+        string versionQuery,
+        string searchText,
+        IReadOnlyList<string> searchQueries,
+        CancellationToken cancellationToken)
+    {
+        var knownIds = new HashSet<string>(_fetchedMods.Select(m => m.WorkshopId), StringComparer.Ordinal);
+        var appendedSinceCacheSave = 0;
+        var emptyPageStreak = 0;
+
+        for (var page = 1; page <= SearchBackgroundPageLimit; page++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var pageIds = await FetchCandidateWorkshopIdsForPageAsync(searchQueries, cancellationToken, page, knownIds);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (pageIds.Count == 0)
+            {
+                emptyPageStreak++;
+                if (emptyPageStreak >= 3)
+                    break;
+
+                continue;
+            }
+
+            emptyPageStreak = 0;
+
+            foreach (var chunk in pageIds.Chunk(24))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var cards = await ResolveWorkshopCardsAsync(versionQuery, chunk.ToList(), cancellationToken, maxCount: null);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var appended = AppendCards(cards, targetCount: null);
+                if (appended.Count == 0)
+                    continue;
+
+                appendedSinceCacheSave += appended.Count;
+                ApplyModStateToCards();
+                ApplyFilter();
+                QueueThumbnailWarm(appended);
+
+                if (appendedSinceCacheSave >= SearchCacheFlushBatchSize)
+                {
+                    await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods, cancellationToken, searchText);
+                    appendedSinceCacheSave = 0;
+                }
+
+                StatusText = WithReleaseCutoffHint(
+                    $"Searching '{searchText}' in {versionQuery}... {DisplayedModCount} match(es), scanned page {page}/{SearchBackgroundPageLimit}",
+                    versionQuery);
+            }
+        }
+
+        await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods, cancellationToken, searchText);
+    }
+
+    private async Task<List<string>> FetchCandidateWorkshopIdsForPageAsync(
+        IReadOnlyList<string> searchQueries,
+        CancellationToken cancellationToken,
+        int page,
+        HashSet<string> knownIds)
+    {
+        var found = new List<string>();
+
+        foreach (var query in searchQueries)
+        {
+            foreach (var sort in GetWorkshopBrowseSorts())
+            {
+                var url = BuildWorkshopBrowseUrl(query, sort, page);
+                var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
+
+                foreach (Match match in WorkshopIdRegex.Matches(html))
+                {
+                    var id = match.Groups["id"].Value;
+                    if (string.IsNullOrWhiteSpace(id))
+                        continue;
+
+                    if (!knownIds.Add(id))
+                        continue;
+
+                    found.Add(id);
+                }
+            }
+        }
+
+        return found;
     }
 
     private void QueueThumbnailWarm(IReadOnlyList<VersionModCard> cards)
@@ -651,7 +880,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         foreach (var query in searchQueries)
         {
-            foreach (var sort in new[] { "trend", "totaluniquesubscribers" })
+            foreach (var sort in GetWorkshopBrowseSorts())
             {
                 for (var page = 1; page <= 6; page++)
                 {
@@ -680,6 +909,16 @@ public partial class VersionBrowserViewModel : ViewModelBase
         return ordered;
     }
 
+    private IReadOnlyList<string> GetWorkshopBrowseSorts()
+    {
+        return SelectedSortMode?.Mode switch
+        {
+            VersionSortMode.MostSubscribed => MostSubscribedBrowseSorts,
+            VersionSortMode.MostPopular => MostPopularBrowseSorts,
+            _ => RelevanceBrowseSorts,
+        };
+    }
+
     private async Task<List<VersionModCard>> ResolveWorkshopCardsAsync(
         string versionQuery,
         List<string> ids,
@@ -689,9 +928,11 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (ids.Count == 0)
             return new List<VersionModCard>();
 
-        var targetCount = Math.Max(maxCount ?? FetchLimit, 1);
-        var topIds = ids.Take(Math.Max(targetCount * 2, targetCount)).ToList();
-        var semaphore = new SemaphoreSlim(4);
+        var targetCount = maxCount is null ? int.MaxValue : Math.Max(maxCount.Value, 1);
+        var topIds = maxCount is null
+            ? ids
+            : ids.Take(Math.Max(targetCount * 2, targetCount)).ToList();
+        var semaphore = new SemaphoreSlim(MetadataResolveConcurrency);
 
         var tasks = topIds.Select(async (id, index) =>
         {
@@ -708,6 +949,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
                     Name = name,
                     PreviewImageUrl = previewImageUrl,
                     GameVersionBadge = versionQuery,
+                    PublishedAtUnixSeconds = info?.TimeCreated ?? 0,
+                    UpdatedAtUnixSeconds = info?.TimeUpdated ?? 0,
+                    TotalSubscribers = info?.TotalSubscribers ?? 0,
+                    PopularitySignal = ComputePopularitySignal(info),
                     ActionState = GetEffectiveState(id)
                 };
 
@@ -720,23 +965,38 @@ public partial class VersionBrowserViewModel : ViewModelBase
         });
 
         var cards = await Task.WhenAll(tasks);
-        return cards
+        var releaseCutoffExcludedInBatch = 0;
+
+        var filtered = cards
             .OrderBy(c => c.Index)
             .Select(c => c.Card)
-            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c.Name))
-            .Take(targetCount)
+            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, out var excludedByReleaseCutoff)
+                ? true
+                : CountReleaseCutoffExclusion(ref releaseCutoffExcludedInBatch, excludedByReleaseCutoff))
+            .Take(maxCount ?? int.MaxValue)
             .ToList();
+
+        _releaseCutoffExcludedCount += releaseCutoffExcludedInBatch;
+        return filtered;
     }
 
-    private async Task<List<VersionModCard>?> TryLoadCachedVersionCardsAsync(string versionQuery, CancellationToken cancellationToken)
+    private async Task<List<VersionModCard>?> TryLoadCachedVersionCardsAsync(
+        string versionQuery,
+        CancellationToken cancellationToken,
+        string? searchText = null)
     {
-        if (_versionResultCache.TryGetValue(versionQuery, out var memoryCached))
+        var cacheKey = BuildResultCacheKey(versionQuery, searchText);
+        if (_versionResultCache.TryGetValue(cacheKey, out var memoryCached))
         {
             if (DateTimeOffset.UtcNow - memoryCached.CachedAtUtc <= ResultCacheTtl)
-                return await BuildCardsFromCachedEntriesAsync(versionQuery, memoryCached.Mods, cancellationToken);
+                return await BuildCardsFromCachedEntriesAsync(
+                    versionQuery,
+                    memoryCached.Mods,
+                    cancellationToken,
+                    includeAll: !string.IsNullOrWhiteSpace(searchText));
         }
 
-        var cachePath = GetResultCachePath(versionQuery);
+        var cachePath = GetResultCachePath(versionQuery, searchText);
         if (!File.Exists(cachePath))
             return null;
 
@@ -750,35 +1010,66 @@ public partial class VersionBrowserViewModel : ViewModelBase
             if (DateTimeOffset.UtcNow - diskCached.CachedAtUtc > ResultCacheTtl)
                 return null;
 
-            _versionResultCache[versionQuery] = diskCached;
-            return await BuildCardsFromCachedEntriesAsync(versionQuery, diskCached.Mods, cancellationToken);
+            _versionResultCache[cacheKey] = diskCached;
+            return await BuildCardsFromCachedEntriesAsync(
+                versionQuery,
+                diskCached.Mods,
+                cancellationToken,
+                includeAll: !string.IsNullOrWhiteSpace(searchText));
         }
         catch
         {
+            try
+            {
+                File.Delete(cachePath);
+            }
+            catch
+            {
+                // Best-effort cleanup for malformed cache files.
+            }
+
             return null;
         }
     }
 
-    private async Task SaveCachedVersionCardsAsync(string versionQuery, List<VersionModCard> cards, CancellationToken cancellationToken)
+    private async Task SaveCachedVersionCardsAsync(
+        string versionQuery,
+        IEnumerable<VersionModCard> cards,
+        CancellationToken cancellationToken,
+        string? searchText = null)
     {
+        var cappedCards = cards.Take(MaxCachedCardsPerQuery).ToList();
         var cached = new CachedVersionResult
         {
             CachedAtUtc = DateTimeOffset.UtcNow,
-            Mods = cards.Select(c => new CachedVersionModEntry
+            Mods = cappedCards.Select(c => new CachedVersionModEntry
             {
                 WorkshopId = c.WorkshopId,
                 Name = c.Name,
-                PreviewImageUrl = c.PreviewImageUrl
+                PreviewImageUrl = c.PreviewImageUrl,
+                PublishedAtUnixSeconds = c.PublishedAtUnixSeconds,
+                UpdatedAtUnixSeconds = c.UpdatedAtUnixSeconds,
+                TotalSubscribers = c.TotalSubscribers,
+                PopularitySignal = c.PopularitySignal
             }).ToList()
         };
 
-        _versionResultCache[versionQuery] = cached;
+        var cacheKey = BuildResultCacheKey(versionQuery, searchText);
+        _versionResultCache[cacheKey] = cached;
 
         try
         {
-            var cachePath = GetResultCachePath(versionQuery);
+            var cachePath = GetResultCachePath(versionQuery, searchText);
             var json = JsonSerializer.Serialize(cached);
-            await File.WriteAllTextAsync(cachePath, json, cancellationToken);
+
+            // Write through temp file first to reduce chances of truncated cache files.
+            var tempPath = cachePath + ".tmp";
+            await File.WriteAllTextAsync(tempPath, json, CancellationToken.None);
+
+            if (File.Exists(cachePath))
+                File.Replace(tempPath, cachePath, null, true);
+            else
+                File.Move(tempPath, cachePath);
         }
         catch
         {
@@ -789,12 +1080,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private async Task<List<VersionModCard>> BuildCardsFromCachedEntriesAsync(
         string versionQuery,
         List<CachedVersionModEntry> mods,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeAll = false)
     {
         if (mods.Count == 0)
             return new List<VersionModCard>();
 
-        var limited = mods.Take(Math.Max(FetchLimit, 1)).ToList();
+        var limited = includeAll ? mods : mods.Take(Math.Max(FetchLimit, 1)).ToList();
         var cards = limited
             .Select((item, index) => new IndexedCard(index, new VersionModCard
             {
@@ -802,12 +1094,27 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
                 PreviewImageUrl = item.PreviewImageUrl,
                 GameVersionBadge = versionQuery,
+                PublishedAtUnixSeconds = item.PublishedAtUnixSeconds,
+                UpdatedAtUnixSeconds = item.UpdatedAtUnixSeconds,
+                TotalSubscribers = item.TotalSubscribers,
+                PopularitySignal = item.PopularitySignal,
                 ActionState = GetEffectiveState(item.WorkshopId)
             }))
             .ToList();
 
         await Task.CompletedTask;
-        return cards.OrderBy(c => c.Index).Select(c => c.Card).ToList();
+        var releaseCutoffExcludedInBatch = 0;
+
+        var filtered = cards
+            .OrderBy(c => c.Index)
+            .Select(c => c.Card)
+            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, out var excludedByReleaseCutoff)
+                ? true
+                : CountReleaseCutoffExclusion(ref releaseCutoffExcludedInBatch, excludedByReleaseCutoff))
+            .ToList();
+
+        _releaseCutoffExcludedCount += releaseCutoffExcludedInBatch;
+        return filtered;
     }
 
     private async Task WarmCardThumbnailsAsync(IReadOnlyList<VersionModCard> cards, CancellationToken cancellationToken)
@@ -864,10 +1171,89 @@ public partial class VersionBrowserViewModel : ViewModelBase
             filtered = filtered.Where(m => m.Name.ToLowerInvariant().Contains(lower));
         }
 
+        filtered = OrderFilteredMods(filtered, SearchText);
+
         foreach (var mod in filtered)
             DisplayedMods.Add(mod);
 
         DisplayedModCount = DisplayedMods.Count;
+    }
+
+    private IEnumerable<VersionModCard> OrderFilteredMods(IEnumerable<VersionModCard> mods, string searchText)
+    {
+        var mode = SelectedSortMode?.Mode ?? VersionSortMode.Relevance;
+        var trimmedSearch = searchText.Trim();
+        var hasSearch = !string.IsNullOrWhiteSpace(trimmedSearch);
+
+        return mode switch
+        {
+            VersionSortMode.MostSubscribed => mods
+                .OrderByDescending(m => m.TotalSubscribers)
+                .ThenByDescending(m => m.PopularitySignal)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.WorkshopId, StringComparer.Ordinal),
+            VersionSortMode.MostPopular => mods
+                .OrderByDescending(m => m.PopularitySignal)
+                .ThenByDescending(m => m.TotalSubscribers)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.WorkshopId, StringComparer.Ordinal),
+            _ when hasSearch => mods
+                .OrderByDescending(m => ComputeRelevanceScore(m.Name, trimmedSearch))
+                .ThenByDescending(m => m.PopularitySignal)
+                .ThenByDescending(m => m.TotalSubscribers)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.WorkshopId, StringComparer.Ordinal),
+            _ => mods
+                .OrderByDescending(m => m.PopularitySignal)
+                .ThenByDescending(m => m.TotalSubscribers)
+                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(m => m.WorkshopId, StringComparer.Ordinal)
+        };
+    }
+
+    private static int ComputeRelevanceScore(string name, string search)
+    {
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(search))
+            return 0;
+
+        var nameLower = name.ToLowerInvariant();
+        var searchLower = search.ToLowerInvariant();
+        if (nameLower == searchLower)
+            return 400;
+
+        if (nameLower.StartsWith(searchLower, StringComparison.Ordinal))
+            return 300;
+
+        var tokenScore = searchLower
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Count(token => nameLower.Contains(token, StringComparison.Ordinal));
+
+        if (tokenScore > 0)
+            return 200 + tokenScore;
+
+        return nameLower.Contains(searchLower, StringComparison.Ordinal) ? 100 : 0;
+    }
+
+    private static double ComputePopularitySignal(WorkshopModInfo? info)
+    {
+        if (info is null)
+            return 0;
+
+        var signal = 0d;
+
+        if (info.PopularityScore > 0)
+            signal += info.PopularityScore * 1000d;
+
+        if (info.FavoritedCount > 0)
+            signal += Math.Log10(info.FavoritedCount + 1) * 120d;
+
+        if (info.ViewCount > 0)
+            signal += Math.Log10(info.ViewCount + 1) * 80d;
+
+        if (info.TotalSubscribers > 0)
+            signal += Math.Log10(info.TotalSubscribers + 1) * 60d;
+
+        return signal;
     }
 
     private void ApplyModStateToCards()
@@ -979,11 +1365,32 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     private static string GetResultCachePath(string versionQuery)
     {
-        var safeName = string.Join("_", versionQuery.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_'));
+        var cacheKey = BuildResultCacheKey(versionQuery, null);
+        var safeName = string.Join("_", cacheKey.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_'));
         if (string.IsNullOrWhiteSpace(safeName))
             safeName = "unknown";
 
         return Path.Combine(ResultCacheDir, $"{safeName}.json");
+    }
+
+    private static string GetResultCachePath(string versionQuery, string? searchText)
+    {
+        var cacheKey = BuildResultCacheKey(versionQuery, searchText);
+        var safeName = string.Join("_", cacheKey.Select(ch => char.IsLetterOrDigit(ch) ? ch : '_'));
+        if (string.IsNullOrWhiteSpace(safeName))
+            safeName = "unknown";
+
+        return Path.Combine(ResultCacheDir, $"{safeName}.json");
+    }
+
+    private static string BuildResultCacheKey(string versionQuery, string? searchText)
+    {
+        var version = (versionQuery ?? string.Empty).Trim();
+        var search = (searchText ?? string.Empty).Trim().ToLowerInvariant();
+
+        return string.IsNullOrWhiteSpace(search)
+            ? version
+            : $"{version}__q__{search}";
     }
 
     private static string BuildWorkshopBrowseUrl(string versionQuery, string sort, int page)
@@ -1014,10 +1421,69 @@ public partial class VersionBrowserViewModel : ViewModelBase
         return queries;
     }
 
-    private static bool ShouldIncludeForSelectedVersion(string versionQuery, string modName)
+    private static IReadOnlyList<string> GetWorkshopSearchQueries(string versionQuery, string? modNameSearch)
     {
-        if (string.IsNullOrWhiteSpace(versionQuery) || string.IsNullOrWhiteSpace(modName))
+        var name = modNameSearch?.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            return GetVersionSearchQueries(versionQuery);
+
+        var queries = new List<string>();
+        var versionToken = ExtractVersionToken(versionQuery) ?? versionQuery.Trim();
+
+        // Run name-only first so exact-title searches are not crowded out by broader version tokens.
+        queries.Add(name);
+
+        if (!string.IsNullOrWhiteSpace(versionToken))
+            queries.Add($"{name} {versionToken}");
+
+        var normalizedVersion = StellarisVersions.Normalize(versionToken);
+        if (!string.IsNullOrWhiteSpace(normalizedVersion) &&
+            !string.Equals(normalizedVersion, versionToken, StringComparison.OrdinalIgnoreCase))
+        {
+            queries.Add($"{name} {normalizedVersion}");
+        }
+
+        return queries
+            .Where(q => !string.IsNullOrWhiteSpace(q))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool CountReleaseCutoffExclusion(ref int accumulator, bool excludedByReleaseCutoff)
+    {
+        if (excludedByReleaseCutoff)
+            accumulator++;
+
+        return false;
+    }
+
+    private string WithReleaseCutoffHint(string status, string versionQuery)
+    {
+        if (_releaseCutoffExcludedCount <= 0)
+            return status;
+
+        if (!StellarisVersions.TryGetReleaseDateUtc(versionQuery, out var releaseDateUtc))
+            return status;
+
+        return $"{status} Release cutoff hid {_releaseCutoffExcludedCount} older mod(s) (before {releaseDateUtc:MMM d, yyyy}).";
+    }
+
+    private static bool ShouldIncludeForSelectedVersion(
+        string versionQuery,
+        VersionModCard modCard,
+        out bool excludedByReleaseCutoff)
+    {
+        excludedByReleaseCutoff = false;
+
+        if (string.IsNullOrWhiteSpace(versionQuery) || modCard is null)
             return true;
+
+        var modName = modCard.Name;
+        if (string.IsNullOrWhiteSpace(modName))
+            return true;
+
+        if (modCard.TotalSubscribers <= 0)
+            return false;
 
         var selectedToken = ExtractVersionToken(versionQuery);
         if (string.IsNullOrWhiteSpace(selectedToken))
@@ -1029,6 +1495,25 @@ public partial class VersionBrowserViewModel : ViewModelBase
             var patchRegex = new Regex($@"\b{Regex.Escape(selectedToken)}\.\d+\b", RegexOptions.IgnoreCase);
             if (patchRegex.IsMatch(modName))
                 return false;
+        }
+
+        // Keep mods visible if they were updated after the selected version release date,
+        // even when the original upload date is older.
+        if (StellarisVersions.TryGetReleaseDateUtc(versionQuery, out var releaseDateUtc))
+        {
+            var activityUnixSeconds = modCard.UpdatedAtUnixSeconds > 0
+                ? modCard.UpdatedAtUnixSeconds
+                : modCard.PublishedAtUnixSeconds;
+
+            if (activityUnixSeconds > 0)
+            {
+                var lastActivityUtc = DateTimeOffset.FromUnixTimeSeconds(activityUnixSeconds);
+                if (lastActivityUtc < releaseDateUtc)
+                {
+                    excludedByReleaseCutoff = true;
+                    return false;
+                }
+            }
         }
 
         return true;
@@ -1110,6 +1595,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
         public string WorkshopId { get; set; } = "";
         public string Name { get; set; } = "";
         public string? PreviewImageUrl { get; set; }
+        public long PublishedAtUnixSeconds { get; set; }
+        public long UpdatedAtUnixSeconds { get; set; }
+        public long TotalSubscribers { get; set; }
+        public double PopularitySignal { get; set; }
     }
 
     private sealed class VersionComparer : IComparer<string>
@@ -1151,6 +1640,27 @@ public partial class VersionBrowserViewModel : ViewModelBase
     }
 }
 
+public enum VersionSortMode
+{
+    Relevance,
+    MostSubscribed,
+    MostPopular
+}
+
+public sealed class VersionSortModeItem
+{
+    public VersionSortModeItem(VersionSortMode mode, string displayName)
+    {
+        Mode = mode;
+        DisplayName = displayName;
+    }
+
+    public VersionSortMode Mode { get; }
+    public string DisplayName { get; }
+
+    public override string ToString() => DisplayName;
+}
+
 public sealed class VersionDropdownItem
 {
     public string Version { get; init; } = "";
@@ -1170,6 +1680,10 @@ public sealed partial class VersionModCard : ObservableObject
     public string Name { get; init; } = "";
     public string GameVersionBadge { get; init; } = "Unknown";
     public string? PreviewImageUrl { get; init; }
+    public long PublishedAtUnixSeconds { get; init; }
+    public long UpdatedAtUnixSeconds { get; init; }
+    public long TotalSubscribers { get; init; }
+    public double PopularitySignal { get; init; }
 
     public Bitmap? ThumbnailImage
     {

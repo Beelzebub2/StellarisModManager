@@ -1,6 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using Serilog;
 
@@ -32,7 +35,15 @@ public class GameDetector
     /// </summary>
     public string? DetectGamePath()
     {
-        // 1. Try Windows registry (Steam uninstall entry)
+        // 1. Try Steam VDF libraries first (libraryfolders.vdf + appmanifest_281990.acf).
+        var vdfPath = TrySteamVdfDetect();
+        if (vdfPath is not null)
+        {
+            _log.Information("Detected Stellaris via Steam VDF: {Path}", vdfPath);
+            return vdfPath;
+        }
+
+        // 2. Try Windows registry (Steam uninstall entry)
         var regPath = TryRegistryDetect();
         if (regPath is not null)
         {
@@ -40,7 +51,7 @@ public class GameDetector
             return regPath;
         }
 
-        // 2. Try STEAM_PATH environment variable
+        // 3. Try STEAM_PATH environment variable
         var steamEnv = Environment.GetEnvironmentVariable("STEAM_PATH");
         if (!string.IsNullOrWhiteSpace(steamEnv))
         {
@@ -52,7 +63,7 @@ public class GameDetector
             }
         }
 
-        // 3. Try common well-known paths
+        // 4. Try common well-known paths
         foreach (var path in CommonSteamPaths)
         {
             if (IsValidGamePath(path))
@@ -194,6 +205,161 @@ public class GameDetector
         }
 
         return null;
+    }
+
+    private string? TrySteamVdfDetect()
+    {
+        foreach (var steamRoot in GetSteamRootCandidates())
+        {
+            try
+            {
+                foreach (var libraryPath in GetSteamLibraryPaths(steamRoot))
+                {
+                    var directPath = Path.Combine(libraryPath, "steamapps", "common", "Stellaris");
+                    if (IsValidGamePath(directPath))
+                        return directPath;
+
+                    var manifestPath = Path.Combine(libraryPath, "steamapps", $"appmanifest_{StellarisAppId}.acf");
+                    if (!File.Exists(manifestPath))
+                        continue;
+
+                    var installDir = ReadAcfValue(manifestPath, "installdir");
+                    if (string.IsNullOrWhiteSpace(installDir))
+                        continue;
+
+                    var manifestResolvedPath = Path.Combine(libraryPath, "steamapps", "common", installDir);
+                    if (IsValidGamePath(manifestResolvedPath))
+                        return manifestResolvedPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug(ex, "Steam VDF detection failed for Steam root {SteamRoot}", steamRoot);
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> GetSteamRootCandidates()
+    {
+        var roots = new List<string>();
+
+        static void AddIfValid(List<string> target, string? candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+                return;
+
+            try
+            {
+                var full = Path.GetFullPath(candidate);
+                if (Directory.Exists(full))
+                    target.Add(full);
+            }
+            catch
+            {
+                // Ignore invalid paths.
+            }
+        }
+
+        AddIfValid(roots, Environment.GetEnvironmentVariable("STEAM_PATH"));
+
+        try
+        {
+            using var keyCu = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam");
+            AddIfValid(roots, keyCu?.GetValue("SteamPath") as string);
+            AddIfValid(roots, keyCu?.GetValue("InstallPath") as string);
+        }
+        catch
+        {
+            // Ignore registry failures.
+        }
+
+        try
+        {
+            using var keyLm = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Valve\Steam");
+            AddIfValid(roots, keyLm?.GetValue("InstallPath") as string);
+        }
+        catch
+        {
+            // Ignore registry failures.
+        }
+
+        AddIfValid(roots, @"C:\Program Files (x86)\Steam");
+        AddIfValid(roots, @"C:\Program Files\Steam");
+        AddIfValid(roots, @"D:\Steam");
+
+        return roots.Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> GetSteamLibraryPaths(string steamRoot)
+    {
+        var results = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void AddLibrary(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            var normalized = raw.Replace("\\\\", "\\").Trim();
+            if (string.IsNullOrWhiteSpace(normalized))
+                return;
+
+            try
+            {
+                var full = Path.GetFullPath(normalized);
+                if (Directory.Exists(full))
+                    results.Add(full);
+            }
+            catch
+            {
+                // Ignore invalid paths.
+            }
+        }
+
+        AddLibrary(steamRoot);
+
+        var libraryVdf = Path.Combine(steamRoot, "steamapps", "libraryfolders.vdf");
+        if (!File.Exists(libraryVdf))
+            return results;
+
+        string content;
+        try
+        {
+            content = File.ReadAllText(libraryVdf);
+        }
+        catch
+        {
+            return results;
+        }
+
+        // Newer Steam format stores libraries as: "path" "D:\\SteamLibrary"
+        foreach (Match match in Regex.Matches(content, "\"path\"\\s+\"(?<path>[^\"]+)\"", RegexOptions.IgnoreCase))
+            AddLibrary(match.Groups["path"].Value);
+
+        // Older format can store numbered keys directly as paths.
+        foreach (Match match in Regex.Matches(content, "^\\s*\"\\d+\"\\s+\"(?<path>[^\"]+)\"", RegexOptions.Multiline))
+            AddLibrary(match.Groups["path"].Value);
+
+        return results;
+    }
+
+    private static string? ReadAcfValue(string acfPath, string key)
+    {
+        try
+        {
+            var content = File.ReadAllText(acfPath);
+            var pattern = $"\\\"{Regex.Escape(key)}\\\"\\s+\\\"(?<value>[^\\\"]+)\\\"";
+            var match = Regex.Match(content, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return null;
+
+            return match.Groups["value"].Value.Replace("\\\\", "\\").Trim();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static bool IsValidGamePath(string path)

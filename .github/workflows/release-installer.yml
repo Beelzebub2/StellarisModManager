@@ -1,0 +1,86 @@
+name: Build Installer And Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version (example: 1.2.0)
+        required: true
+        type: string
+        default: 1.0.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve Release Version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ github.event.inputs.version }}"
+          }
+          else {
+            $tag = "${{ github.ref_name }}"
+            if ($tag.StartsWith("v")) {
+              $version = $tag.Substring(1)
+            }
+            else {
+              $version = $tag
+            }
+          }
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "Release version is empty."
+          }
+
+          Write-Host "Using release version: $version"
+          "value=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Installer
+        shell: cmd
+        run: build-installer.bat Release ${{ steps.version.outputs.value }}
+
+      - name: Locate Installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path "Output/Installer" -Filter "*.exe" |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+
+          if (-not $installer) {
+            throw "No installer was produced in Output/Installer."
+          }
+
+          Write-Host "Installer: $($installer.FullName)"
+          "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.value }}
+          name: v${{ steps.version.outputs.value }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.installer.outputs.path }}

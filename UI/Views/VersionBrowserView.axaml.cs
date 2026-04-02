@@ -175,6 +175,7 @@ public partial class VersionBrowserView : UserControl
         try
         {
             _modDetailsWebView = new NativeWebView();
+            _modDetailsWebView.NavigationCompleted += OnModBrowserNavigationCompleted;
             ModBrowserHost.Content = _modDetailsWebView;
             ModBrowserFallbackPanel.IsVisible = false;
             return true;
@@ -186,5 +187,60 @@ public partial class VersionBrowserView : UserControl
             ModBrowserFallbackPanel.IsVisible = true;
             return false;
         }
+    }
+
+    private async void OnModBrowserNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess || _modDetailsWebView is null)
+            return;
+
+        try
+        {
+            await EnsureInAppNavigationBehaviorAsync(_modDetailsWebView);
+        }
+        catch
+        {
+            // Best-effort script injection only.
+        }
+    }
+
+    private static async Task EnsureInAppNavigationBehaviorAsync(NativeWebView webView)
+    {
+        const string script = """
+(() => {
+    if (window.__smmInAppNavigationInstalled) {
+        return;
+    }
+    window.__smmInAppNavigationInstalled = true;
+
+    const normalizeAnchors = () => {
+        const anchors = document.querySelectorAll('a[target]');
+        for (const anchor of anchors) {
+            const target = (anchor.getAttribute('target') || '').toLowerCase();
+            if (target === '_blank') {
+                anchor.setAttribute('target', '_self');
+            }
+        }
+    };
+
+    normalizeAnchors();
+    if (document.documentElement) {
+        const observer = new MutationObserver(() => normalizeAnchors());
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    const originalOpen = window.open;
+    window.open = (url, ...args) => {
+        if (typeof url === 'string' && url.length > 0) {
+            window.location.href = url;
+            return null;
+        }
+
+        return originalOpen ? originalOpen.call(window, url, ...args) : null;
+    };
+})();
+""";
+
+        await webView.InvokeScript(script);
     }
 }

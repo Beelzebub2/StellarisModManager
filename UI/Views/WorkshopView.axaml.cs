@@ -128,6 +128,9 @@ public partial class WorkshopView : UserControl
 
         try
         {
+            if (_webView is not null)
+                await EnsureInAppNavigationBehaviorAsync(_webView);
+
             var script = OverlayInjector.BuildInjectionScript();
             if (_webView is not null)
                 await _webView.InvokeScript(script);
@@ -451,6 +454,46 @@ public partial class WorkshopView : UserControl
 
         await _webView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
         await _webView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
+    }
+
+    private static async Task EnsureInAppNavigationBehaviorAsync(NativeWebView webView)
+    {
+        const string script = """
+(() => {
+    if (window.__smmInAppNavigationInstalled) {
+        return;
+    }
+    window.__smmInAppNavigationInstalled = true;
+
+    const normalizeAnchors = () => {
+        const anchors = document.querySelectorAll('a[target]');
+        for (const anchor of anchors) {
+            const target = (anchor.getAttribute('target') || '').toLowerCase();
+            if (target === '_blank') {
+                anchor.setAttribute('target', '_self');
+            }
+        }
+    };
+
+    normalizeAnchors();
+    if (document.documentElement) {
+        const observer = new MutationObserver(() => normalizeAnchors());
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    const originalOpen = window.open;
+    window.open = (url, ...args) => {
+        if (typeof url === 'string' && url.length > 0) {
+            window.location.href = url;
+            return null;
+        }
+
+        return originalOpen ? originalOpen.call(window, url, ...args) : null;
+    };
+})();
+""";
+
+        await webView.InvokeScript(script);
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

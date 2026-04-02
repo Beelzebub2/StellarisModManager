@@ -51,75 +51,94 @@
     <Grid RowDefinitions="Auto,*" Margin="16">
 
         <!-- Row 0: Toolbar -->
-        <Grid Grid.Row="0" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="0,0,0,12">
+        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,12">
+            <WrapPanel Orientation="Horizontal" ItemHeight="36" VerticalAlignment="Center">
+                <ComboBox ItemsSource="{Binding VersionItems}"
+                          SelectedItem="{Binding SelectedVersion}"
+                          MinWidth="210"
+                          MaxWidth="260"
+                          Background="{DynamicResource Theme.SurfaceBg}"
+                          BorderBrush="{DynamicResource Theme.Border}"
+                          CornerRadius="8"
+                          Padding="10,8"
+                          Margin="0,0,8,0">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:VersionDropdownItem">
+                            <TextBlock Text="{Binding DropdownText}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
 
-            <!-- Col 0: Version ComboBox -->
-            <ComboBox Grid.Column="0"
-                      ItemsSource="{Binding VersionItems}"
-                      SelectedItem="{Binding SelectedVersion}"
-                      MinWidth="240"
-                      Background="{DynamicResource Theme.SurfaceBg}"
-                      BorderBrush="{DynamicResource Theme.Border}"
-                      CornerRadius="8"
-                      Padding="10,8">
-                <ComboBox.ItemTemplate>
-                    <DataTemplate x:DataType="vm:VersionDropdownItem">
-                        <TextBlock Text="{Binding DropdownText}" />
-                    </DataTemplate>
-                </ComboBox.ItemTemplate>
-            </ComboBox>
-
-            <!-- Col 1: Mod count -->
-            <TextBlock Grid.Column="1"
-                       Text="{Binding DisplayedModCount, StringFormat='{}{0} mods'}"
-                       Foreground="{DynamicResource Theme.TextMuted}"
-                       FontSize="12"
-                       VerticalAlignment="Center"
-                       Margin="12,0,0,0" />
-
-            <TextBlock Grid.Column="1"
-                       Text="{Binding StatusText}"
-                       Foreground="{DynamicResource Theme.TextMuted}"
-                       FontSize="11"
-                       VerticalAlignment="Center"
-                       Margin="12,18,0,0" />
-
-            <!-- Col 2: Show older versions checkbox -->
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="16,0,0,0">
-                <CheckBox IsChecked="{Binding ShowOlderVersions}" />
-                <TextBlock Text="Show older versions"
+                <TextBlock Text="{Binding DisplayedModCount, StringFormat='{}{0} mods'}"
                            Foreground="{DynamicResource Theme.TextMuted}"
                            FontSize="12"
-                           VerticalAlignment="Center" />
-            </StackPanel>
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0" />
 
-            <!-- Col 4: Search box -->
-            <TextBox Grid.Column="4"
-                     Text="{Binding SearchText}"
-                     Watermark="Search mods..."
-                     MinWidth="200"
-                     Background="{DynamicResource Theme.SurfaceBg}"
-                     BorderBrush="{DynamicResource Theme.Border}"
-                     CornerRadius="8"
-                     Padding="10,8" />
+                <CheckBox IsChecked="{Binding ShowOlderVersions}"
+                          Content="Show older versions"
+                          Foreground="{DynamicResource Theme.TextMuted}"
+                          VerticalAlignment="Center"
+                          Margin="0,0,8,0" />
 
-            <Button Grid.Column="5"
-                    Margin="10,0,0,0"
-                    Background="{DynamicResource Theme.SurfaceBg}"
-                    BorderBrush="{DynamicResource Theme.Border}"
-                    BorderThickness="1"
-                    CornerRadius="8"
-                    Padding="10,8"
-                    Command="{Binding ScanMoreCommand}"
-                    IsEnabled="{Binding CanScanMore}">
-                <TextBlock Text="Scan More (+32)" FontSize="12" FontWeight="SemiBold" />
-            </Button>
-        </Grid>
+                <StackPanel Orientation="Horizontal"
+                            Spacing="6"
+                            VerticalAlignment="Center"
+                            Margin="0,0,8,0">
+                    <TextBlock Text="Sort"
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="12"
+                               VerticalAlignment="Center" />
+                    <ComboBox ItemsSource="{Binding SortModes}"
+                              SelectedItem="{Binding SelectedSortMode}"
+                              MinWidth="160"
+                              MaxWidth="210"
+                              Background="{DynamicResource Theme.SurfaceBg}"
+                              BorderBrush="{DynamicResource Theme.Border}"
+                              CornerRadius="8"
+                              Padding="10,6">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:VersionSortModeItem">
+                                <TextBlock Text="{Binding DisplayName}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+
+                <TextBox Text="{Binding SearchText}"
+                         Watermark="Search mods..."
+                         Width="230"
+                         MinWidth="180"
+                         Background="{DynamicResource Theme.SurfaceBg}"
+                         BorderBrush="{DynamicResource Theme.Border}"
+                         CornerRadius="8"
+                         Padding="10,8"
+                         Margin="0,0,8,0" />
+
+                <Button Background="{DynamicResource Theme.SurfaceBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10,8"
+                        Command="{Binding ScanMoreCommand}"
+                        IsEnabled="{Binding CanScanMore}">
+                    <TextBlock Text="Scan More (+32)" FontSize="12" FontWeight="SemiBold" />
+                </Button>
+            </WrapPanel>
+
+            <TextBlock Text="{Binding StatusText}"
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="11"
+                       IsVisible="{Binding !ShowLoadingState}"
+                       MaxLines="1"
+                       TextTrimming="CharacterEllipsis"
+                       TextWrapping="Wrap" />
+        </StackPanel>
 
         <Grid Grid.Row="1">
             <Grid x:Name="ResultsContentPanel">
                 <!-- Loading indicator -->
-                <StackPanel IsVisible="{Binding IsLoading}"
+                <StackPanel IsVisible="{Binding ShowLoadingState}"
                             HorizontalAlignment="Center"
                             VerticalAlignment="Center"
                             Spacing="12">
@@ -130,6 +149,9 @@
                     <TextBlock Text="{Binding StatusText}"
                                Foreground="{DynamicResource Theme.TextMuted}"
                                FontSize="13"
+                               MaxWidth="560"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
                                HorizontalAlignment="Center" />
                 </StackPanel>
 

@@ -1,5 +1,7 @@
 #define MyAppName "Stellaris Mod Manager"
-#define MyAppVersion "1.0.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "StellarisModManager"
 #define MyAppExeName "StellarisModManager.exe"
 
