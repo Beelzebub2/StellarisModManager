@@ -197,8 +197,7 @@
                     Background="{DynamicResource Theme.PanelBg}"
                     BorderBrush="{DynamicResource Theme.Border}"
                     BorderThickness="1"
-                    CornerRadius="12"
-                    ClipToBounds="True">
+                    CornerRadius="12">
                 <ContentControl Content="{Binding ActiveView}">
                     <ContentControl.DataTemplates>
                         <DataTemplate DataType="vm:BrowserViewModel">

@@ -20,7 +20,6 @@ public partial class BrowserView : UserControl
     private bool _webViewReady;
     private bool _eventsWired;
     private int _navigationAttempt;
-    private bool _initialNavigateQueued;
     private bool _steamAutoRetryUsed;
     private string _lastNavigatedUrl = string.Empty;
 
@@ -39,13 +38,6 @@ public partial class BrowserView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _vm = DataContext as BrowserViewModel;
-        _ = DeferInitWebViewAsync();
-    }
-
-    private async Task DeferInitWebViewAsync()
-    {
-        // Give the shell time to render before paying WebView2 cold-start cost.
-        await Task.Delay(250);
         TryInitWebView();
     }
 
@@ -61,16 +53,12 @@ public partial class BrowserView : UserControl
             {
                 WebView.NavigationCompleted += OnNavigationCompleted;
                 WebView.WebMessageReceived += OnWebMessageReceived;
+                WebView.WebViewCreated += OnWebViewCreated;
                 _eventsWired = true;
             }
 
             _webViewReady = true;
             ShowEmbeddedBrowser();
-            if (!_initialNavigateQueued)
-            {
-                _initialNavigateQueued = true;
-                _ = QueueInitialNavigationAsync();
-            }
         }
         catch (Exception ex)
         {
@@ -79,15 +67,9 @@ public partial class BrowserView : UserControl
         }
     }
 
-    private async Task QueueInitialNavigationAsync()
+    private void OnWebViewCreated(object? sender, WebViewCreatedEventArgs e)
     {
-        // WebView2 starts asynchronously; navigating immediately on Loaded can be ignored.
-        await Task.Delay(350);
-
-        if (!_webViewReady)
-            return;
-
-        NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl);
+        Dispatcher.UIThread.Post(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
     }
 
     private async void OnNavigationCompleted(object? sender, WebViewUrlLoadedEventArg e)
