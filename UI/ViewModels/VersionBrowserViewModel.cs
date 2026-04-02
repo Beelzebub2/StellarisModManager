@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using StellarisModManager.Core.Services;
@@ -20,6 +21,7 @@ namespace StellarisModManager.UI.ViewModels;
 public partial class VersionBrowserViewModel : ViewModelBase
 {
     private const string CacheSchemaVersion = "2";
+    private static readonly Regex AnyVersionRegex = new(@"\b\d+\.\d+(?:\.\d+)?\b", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly string ThumbnailCacheDir = Path.Combine(
@@ -36,6 +38,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private static readonly TimeSpan ResultCacheTtl = TimeSpan.FromMinutes(30);
 
     private readonly WorkshopDownloader _downloader;
+    private readonly AppSettings _settings;
+    private readonly GameDetector _detector;
     private readonly List<VersionModCard> _fetchedMods = new();
     private readonly Dictionary<string, string> _modStates = new(StringComparer.Ordinal);
     private readonly HashSet<string> _installedWorkshopIds = new(StringComparer.Ordinal);
@@ -43,6 +47,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     private bool _loadedOnce;
     private CancellationTokenSource? _refreshCts;
+    private CancellationTokenSource? _thumbnailWarmCts;
 
     public ObservableCollection<VersionDropdownItem> VersionItems { get; } = new();
     public ObservableCollection<VersionModCard> DisplayedMods { get; } = new();
@@ -62,12 +67,55 @@ public partial class VersionBrowserViewModel : ViewModelBase
     public event EventHandler<string>? InstallModRequested;
     public event EventHandler<string>? UninstallModRequested;
 
-    public VersionBrowserViewModel(WorkshopDownloader downloader)
+    public VersionBrowserViewModel(WorkshopDownloader downloader, AppSettings settings, GameDetector detector)
     {
         _downloader = downloader;
+        _settings = settings;
+        _detector = detector;
         Directory.CreateDirectory(ThumbnailCacheDir);
         Directory.CreateDirectory(ResultCacheDir);
         InitializeCaches();
+    }
+
+    private static IReadOnlyList<string> ResolvePreferredVersionCandidates(AppSettings settings, GameDetector detector)
+    {
+        var result = new List<string>();
+
+        var gamePath = settings.GamePath;
+        if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+            return result;
+
+        try
+        {
+            var detected = detector.DetectGameVersion(gamePath);
+            if (string.IsNullOrWhiteSpace(detected))
+                return result;
+
+            var exact = detected.Trim();
+            var match = AnyVersionRegex.Match(exact);
+            if (match.Success)
+            {
+                var extracted = match.Value;
+                if (!string.IsNullOrWhiteSpace(extracted))
+                    result.Add(extracted);
+            }
+
+            var normalized = StellarisVersions.Normalize(exact);
+            if (!string.IsNullOrWhiteSpace(normalized) &&
+                !result.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            {
+                result.Add(normalized);
+            }
+
+            if (result.Count == 0 && !string.IsNullOrWhiteSpace(exact))
+                result.Add(exact);
+
+            return result;
+        }
+        catch
+        {
+            return result;
+        }
     }
 
     private static void InitializeCaches()
@@ -229,15 +277,40 @@ public partial class VersionBrowserViewModel : ViewModelBase
             });
         }
 
-        if (!string.IsNullOrWhiteSpace(currentSelection))
+        var preserveCurrentSelection = _loadedOnce && !string.IsNullOrWhiteSpace(currentSelection);
+
+        if (preserveCurrentSelection)
         {
             SelectedVersion = VersionItems.FirstOrDefault(v => v.Version == currentSelection)
                 ?? VersionItems.FirstOrDefault();
         }
         else
         {
-            SelectedVersion = VersionItems.FirstOrDefault();
+            var preferredCandidates = ResolvePreferredVersionCandidates(_settings, _detector);
+            SelectedVersion = ResolvePreferredVersionItem(preferredCandidates) ?? VersionItems.FirstOrDefault();
         }
+    }
+
+    private VersionDropdownItem? ResolvePreferredVersionItem(IReadOnlyList<string> preferredVersionCandidates)
+    {
+        foreach (var candidate in preferredVersionCandidates)
+        {
+            var exact = VersionItems.FirstOrDefault(v =>
+                string.Equals(v.Version, candidate, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null)
+                return exact;
+
+            // If we only have major.minor, prefer newest patch variant (e.g. 4.2.4 over 4.2).
+            if (Regex.IsMatch(candidate, @"^\d+\.\d+$"))
+            {
+                var patch = VersionItems.FirstOrDefault(v =>
+                    v.Version.StartsWith(candidate + ".", StringComparison.OrdinalIgnoreCase));
+                if (patch is not null)
+                    return patch;
+            }
+        }
+
+        return null;
     }
 
     private async Task RefreshFromWorkshopAsync()
@@ -265,6 +338,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         try
         {
+            var searchQueries = GetVersionSearchQueries(versionQuery);
+
             var cachedCards = await TryLoadCachedVersionCardsAsync(versionQuery, cancellationToken);
             if (cachedCards is not null)
             {
@@ -278,10 +353,11 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
                 ApplyModStateToCards();
                 ApplyFilter();
+                QueueThumbnailWarm(_fetchedMods.ToList());
                 return;
             }
 
-            var ids = await FetchCandidateWorkshopIdsAsync(versionQuery, cancellationToken);
+            var ids = await FetchCandidateWorkshopIdsAsync(searchQueries, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var cards = await ResolveWorkshopCardsAsync(versionQuery, ids, cancellationToken);
@@ -299,6 +375,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
             ApplyModStateToCards();
             ApplyFilter();
+            QueueThumbnailWarm(_fetchedMods.ToList());
         }
         catch (OperationCanceledException)
         {
@@ -317,36 +394,61 @@ public partial class VersionBrowserViewModel : ViewModelBase
             if (ReferenceEquals(_refreshCts, refreshCts))
             {
                 IsLoading = false;
-                refreshCts.Dispose();
+                _refreshCts = null;
             }
+
+            refreshCts.Dispose();
         }
     }
 
-    private async Task<List<string>> FetchCandidateWorkshopIdsAsync(string versionQuery, CancellationToken cancellationToken)
+    private void QueueThumbnailWarm(IReadOnlyList<VersionModCard> cards)
+    {
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _thumbnailWarmCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+
+        _ = WarmCardThumbnailsAsync(cards, cts.Token)
+            .ContinueWith(_ =>
+            {
+                if (ReferenceEquals(_thumbnailWarmCts, cts))
+                    _thumbnailWarmCts = null;
+
+                cts.Dispose();
+            }, TaskScheduler.Default);
+    }
+
+    private async Task<List<string>> FetchCandidateWorkshopIdsAsync(IReadOnlyList<string> searchQueries, CancellationToken cancellationToken)
     {
         var dedupe = new HashSet<string>(StringComparer.Ordinal);
         var ordered = new List<string>();
 
-        foreach (var sort in new[] { "trend", "totaluniquesubscribers" })
+        foreach (var query in searchQueries)
         {
-            for (var page = 1; page <= 2; page++)
+            foreach (var sort in new[] { "trend", "totaluniquesubscribers" })
             {
-                var url = BuildWorkshopBrowseUrl(versionQuery, sort, page);
-                var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
-
-                foreach (Match match in WorkshopIdRegex.Matches(html))
+                for (var page = 1; page <= 2; page++)
                 {
-                    var id = match.Groups["id"].Value;
-                    if (string.IsNullOrWhiteSpace(id))
-                        continue;
+                    var url = BuildWorkshopBrowseUrl(query, sort, page);
+                    var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
 
-                    if (dedupe.Add(id))
-                        ordered.Add(id);
+                    foreach (Match match in WorkshopIdRegex.Matches(html))
+                    {
+                        var id = match.Groups["id"].Value;
+                        if (string.IsNullOrWhiteSpace(id))
+                            continue;
 
-                    if (ordered.Count >= 60)
-                        return ordered;
+                        if (dedupe.Add(id))
+                            ordered.Add(id);
+
+                        if (ordered.Count >= 60)
+                            return ordered;
+                    }
                 }
             }
+
+            if (ordered.Count >= 24)
+                return ordered;
         }
 
         return ordered;
@@ -360,8 +462,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (ids.Count == 0)
             return new List<VersionModCard>();
 
-        var topIds = ids.Take(24).ToList();
-        var semaphore = new SemaphoreSlim(2);
+        var topIds = ids.Take(32).ToList();
+        var semaphore = new SemaphoreSlim(4);
 
         var tasks = topIds.Select(async (id, index) =>
         {
@@ -372,14 +474,11 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 var name = string.IsNullOrWhiteSpace(info?.Title) ? $"Workshop {id}" : info.Title;
                 var previewImageUrl = NormalizePreviewUrl(info?.PreviewImageUrl);
 
-                var thumbnailImage = await LoadThumbnailBitmapAsync(id, previewImageUrl, cancellationToken);
-
                 var card = new VersionModCard
                 {
                     WorkshopId = id,
                     Name = name,
                     PreviewImageUrl = previewImageUrl,
-                    ThumbnailImage = thumbnailImage,
                     GameVersionBadge = versionQuery,
                     ActionState = GetEffectiveState(id)
                 };
@@ -462,35 +561,63 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (mods.Count == 0)
             return new List<VersionModCard>();
 
-        var limited = mods.Take(24).ToList();
-        var semaphore = new SemaphoreSlim(2);
-        var tasks = limited.Select(async (item, index) =>
-        {
-            await semaphore.WaitAsync(cancellationToken);
-            try
+        var limited = mods.Take(32).ToList();
+        var cards = limited
+            .Select((item, index) => new IndexedCard(index, new VersionModCard
             {
-                var thumbnailImage = await LoadThumbnailBitmapAsync(item.WorkshopId, item.PreviewImageUrl, cancellationToken);
+                WorkshopId = item.WorkshopId,
+                Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
+                PreviewImageUrl = item.PreviewImageUrl,
+                GameVersionBadge = versionQuery,
+                ActionState = GetEffectiveState(item.WorkshopId)
+            }))
+            .ToList();
 
-                var card = new VersionModCard
-                {
-                    WorkshopId = item.WorkshopId,
-                    Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
-                    PreviewImageUrl = item.PreviewImageUrl,
-                    ThumbnailImage = thumbnailImage,
-                    GameVersionBadge = versionQuery,
-                    ActionState = GetEffectiveState(item.WorkshopId)
-                };
-
-                return new IndexedCard(index, card);
-            }
-            finally
-            {
-                semaphore.Release();
-            }
-        });
-
-        var cards = await Task.WhenAll(tasks);
+        await Task.CompletedTask;
         return cards.OrderBy(c => c.Index).Select(c => c.Card).ToList();
+    }
+
+    private async Task WarmCardThumbnailsAsync(IReadOnlyList<VersionModCard> cards, CancellationToken cancellationToken)
+    {
+        var semaphore = new SemaphoreSlim(2);
+
+        var tasks = cards
+            .Where(c => !string.IsNullOrWhiteSpace(c.PreviewImageUrl))
+            .Select(async card =>
+            {
+                await semaphore.WaitAsync(cancellationToken);
+                try
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        return;
+
+                    var bitmap = await LoadThumbnailBitmapAsync(card.WorkshopId, card.PreviewImageUrl, cancellationToken);
+                    if (bitmap is null || cancellationToken.IsCancellationRequested)
+                        return;
+
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        card.ThumbnailImage = bitmap;
+                    });
+                }
+                catch (OperationCanceledException)
+                {
+                    // Ignore canceled thumbnail work.
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+        try
+        {
+            await Task.WhenAll(tasks);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignore canceled thumbnail work.
+        }
     }
 
     private void ApplyFilter()
@@ -630,6 +757,23 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         var query = WebUtility.UrlEncode(versionQuery);
         return $"https://steamcommunity.com/workshop/browse/?appid=281990&searchtext={query}&childpublishedfileid=0&browsesort={sort}&section=readytouseitems&actualsort={sort}&days=-1&p={page}";
+    }
+
+    private static IReadOnlyList<string> GetVersionSearchQueries(string versionQuery)
+    {
+        var queries = new List<string>();
+
+        if (!string.IsNullOrWhiteSpace(versionQuery))
+            queries.Add(versionQuery.Trim());
+
+        var normalized = StellarisVersions.Normalize(versionQuery);
+        if (!string.IsNullOrWhiteSpace(normalized) &&
+            !queries.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            queries.Add(normalized);
+        }
+
+        return queries;
     }
 
     private static List<string> GetVersionQueries(bool includeOlder)

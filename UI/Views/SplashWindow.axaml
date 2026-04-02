@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="StellarisModManager.UI.Views.SplashWindow"
+        Width="980"
+        Height="560"
+        CanResize="False"
+        ShowInTaskbar="False"
+        SystemDecorations="None"
+        WindowStartupLocation="CenterScreen"
+        Background="Transparent"
+        TransparencyLevelHint="Transparent"
+        Topmost="True">
+
+    <Border CornerRadius="14"
+            ClipToBounds="True"
+            BorderThickness="1"
+            BorderBrush="#22000000"
+            Background="#FF0B0D10">
+        <Grid>
+            <Image x:Name="SplashImage"
+                   Stretch="UniformToFill" />
+
+            <Border Background="#66000000"
+                    VerticalAlignment="Bottom"
+                    Height="42">
+                <TextBlock Text="Loading Stellaris Mod Manager..."
+                           Foreground="#E6E9EF"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           FontSize="13"
+                           FontWeight="SemiBold" />
+            </Border>
+        </Grid>
+    </Border>
+
+</Window>

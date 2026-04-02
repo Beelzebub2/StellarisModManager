@@ -28,6 +28,10 @@
             <Setter Property="Padding" Value="8,4" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
         </Style>
+        <Style Selector="Button.mod-action:pointerover">
+            <Setter Property="Background" Value="#2E8B57" />
+            <Setter Property="Foreground" Value="White" />
+        </Style>
         <Style Selector="Button.mod-action.installed">
             <Setter Property="Background" Value="#E3B341" />
             <Setter Property="Foreground" Value="#1A1A1A" />

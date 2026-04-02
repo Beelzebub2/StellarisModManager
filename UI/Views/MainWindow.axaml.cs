@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using System.IO;
+using System.Threading.Tasks;
 using StellarisModManager.Core.Services;
 using StellarisModManager.UI.ViewModels;
 
@@ -19,7 +20,19 @@ public partial class MainWindow : Window
         var installer = new ModInstaller();
         var updateChecker = new ModUpdateChecker();
 
-        DataContext = new MainViewModel(db, settings, downloader, installer, updateChecker);
+        var vm = new MainViewModel(db, settings, downloader, installer, updateChecker)
+        {
+            RequestRestartConfirmationAsync = ShowRestartConfirmationAsync,
+        };
+
+        DataContext = vm;
+    }
+
+    private async Task<(bool proceed, bool skipPrompt)> ShowRestartConfirmationAsync()
+    {
+        var prompt = new RestartGamePromptWindow();
+        var result = await prompt.ShowDialog<(bool proceed, bool skipPrompt)?>(this);
+        return result ?? (false, false);
     }
 
     private void TrySetWindowIcon()

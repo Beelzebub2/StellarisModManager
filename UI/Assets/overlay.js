@@ -116,7 +116,7 @@
 
         btn.textContent = '\u2713 Installed';
         btn.title = 'This mod is installed';
-        btn.style.background = 'linear-gradient(135deg, #4caf6f, #2e8b57)';
+        btn.style.background = 'linear-gradient(135deg, #e2be67, #c2932c)';
     }
 
     function updateButtonVisual(btn) {
@@ -164,7 +164,7 @@
 
         applyInstallVisual(btn);
         if (hovered) {
-            btn.style.background = 'linear-gradient(135deg, #66b3ff, #4a9eff)';
+            btn.style.background = 'linear-gradient(135deg, #6bd58d, #3ea769)';
         }
     }
 

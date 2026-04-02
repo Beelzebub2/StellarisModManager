@@ -21,6 +21,7 @@ public partial class SettingsViewModel : ViewModelBase
     private readonly ModDatabase _db;
     private readonly StellarisLauncherSyncService _launcherSync = new();
     private readonly Queue<string> _developerLogLines = new();
+    private bool _isRefreshingRuntimePreference;
 
     [ObservableProperty] private string _gamePath = "";
     [ObservableProperty] private string _modsPath = "";
@@ -32,6 +33,7 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private bool _hasUnsavedChanges = false;
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _developerMode = false;
+    [ObservableProperty] private bool _warnBeforeRestartGame = true;
     [ObservableProperty] private string _developerLogText = "";
 
     public ObservableCollection<string> PaletteOptions { get; } = new();
@@ -52,6 +54,7 @@ public partial class SettingsViewModel : ViewModelBase
         SteamCmdDownloadPath = settings.SteamCmdDownloadPath ?? "";
         AutoDetectGame = settings.AutoDetectGame;
         DeveloperMode = settings.DeveloperMode;
+        WarnBeforeRestartGame = settings.WarnBeforeRestartGame;
         SelectedPalette = string.IsNullOrWhiteSpace(settings.ThemePalette)
             ? "Obsidian Ember"
             : settings.ThemePalette;
@@ -86,7 +89,27 @@ public partial class SettingsViewModel : ViewModelBase
     partial void OnSteamCmdDownloadPathChanged(string value) => HasUnsavedChanges = true;
     partial void OnAutoDetectGameChanged(bool value) => HasUnsavedChanges = true;
     partial void OnDeveloperModeChanged(bool value) => HasUnsavedChanges = true;
+    partial void OnWarnBeforeRestartGameChanged(bool value)
+    {
+        if (_isRefreshingRuntimePreference)
+            return;
+
+        HasUnsavedChanges = true;
+    }
     partial void OnSelectedPaletteChanged(string value) => HasUnsavedChanges = true;
+
+    public void RefreshRestartWarningPreference()
+    {
+        _isRefreshingRuntimePreference = true;
+        try
+        {
+            WarnBeforeRestartGame = _settings.WarnBeforeRestartGame;
+        }
+        finally
+        {
+            _isRefreshingRuntimePreference = false;
+        }
+    }
 
     [RelayCommand]
     private void ClearDeveloperLogs()
@@ -249,6 +272,7 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.SteamCmdDownloadPath = string.IsNullOrWhiteSpace(SteamCmdDownloadPath) ? null : SteamCmdDownloadPath;
         _settings.AutoDetectGame = AutoDetectGame;
         _settings.DeveloperMode = DeveloperMode;
+        _settings.WarnBeforeRestartGame = WarnBeforeRestartGame;
         _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
             ? "Obsidian Ember"
             : SelectedPalette;

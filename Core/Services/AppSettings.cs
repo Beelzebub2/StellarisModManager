@@ -33,6 +33,7 @@ public class AppSettings
     public string? SteamCmdDownloadPath { get; set; }
     public bool AutoDetectGame { get; set; } = true;
     public bool DeveloperMode { get; set; }
+    public bool WarnBeforeRestartGame { get; set; } = true;
     public string ThemePalette { get; set; } = "Obsidian Ember";
 
     // -------------------------------------------------------------------------

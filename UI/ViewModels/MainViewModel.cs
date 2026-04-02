@@ -18,6 +18,7 @@ public partial class MainViewModel : ViewModelBase
     private readonly WorkshopDownloader _downloader;
     private readonly ModInstaller _installer;
     private readonly StellarisLauncherSyncService _launcherSync = new();
+    private readonly DispatcherTimer _gameStateTimer = new() { Interval = TimeSpan.FromSeconds(2) };
 
     private readonly object _installQueueLock = new();
     private readonly Queue<string> _installQueue = new();
@@ -49,6 +50,10 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] private int _downloadProgress = 0;
     [ObservableProperty] private bool _isDownloading = false;
     [ObservableProperty] private string _queueProgressText = "";
+    [ObservableProperty] private bool _isGameRunning;
+
+    public string LaunchGameButtonText => IsGameRunning ? "Restart Game" : "Start Game";
+    public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
 
     // App version
     public string AppVersion => "v1.0.0";
@@ -68,7 +73,11 @@ public partial class MainViewModel : ViewModelBase
         WorkshopViewModel = new WorkshopViewModel();
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader, db);
-        VersionBrowserViewModel = new VersionBrowserViewModel(downloader);
+        VersionBrowserViewModel = new VersionBrowserViewModel(downloader, settings, new Core.Services.GameDetector());
+
+        _gameStateTimer.Tick += (_, _) => RefreshGameRunningState();
+        RefreshGameRunningState();
+        _gameStateTimer.Start();
 
         // Wire workshop install requests to download + install flow
         WorkshopViewModel.InstallModRequested += (_, workshopId) =>
@@ -154,7 +163,172 @@ public partial class MainViewModel : ViewModelBase
         }
 
         StatusMessage = "Ready";
+        RefreshGameRunningState();
         _ = TryWarmUpSteamCmdAsync(settings);
+    }
+
+    partial void OnIsGameRunningChanged(bool value)
+    {
+        OnPropertyChanged(nameof(LaunchGameButtonText));
+    }
+
+    private void RefreshGameRunningState()
+    {
+        IsGameRunning = IsStellarisRunning(_settings.GamePath);
+    }
+
+    private static bool IsStellarisRunning(string? gamePath)
+    {
+        var running = GetRunningStellarisProcesses(gamePath);
+        foreach (var process in running)
+            process.Dispose();
+
+        return running.Count > 0;
+    }
+
+    private static List<Process> GetRunningStellarisProcesses(string? gamePath)
+    {
+        var matches = new List<Process>();
+        var expectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrWhiteSpace(gamePath))
+        {
+            expectedPaths.Add(Path.GetFullPath(Path.Combine(gamePath, "stellaris.exe")));
+            expectedPaths.Add(Path.GetFullPath(Path.Combine(gamePath, "Stellaris.exe")));
+        }
+
+        foreach (var process in Process.GetProcessesByName("stellaris"))
+        {
+            var include = expectedPaths.Count == 0;
+
+            if (!include)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName;
+                    if (!string.IsNullOrWhiteSpace(path))
+                        include = expectedPaths.Contains(Path.GetFullPath(path));
+                    else
+                        include = true;
+                }
+                catch
+                {
+                    include = true;
+                }
+            }
+
+            if (include)
+                matches.Add(process);
+            else
+                process.Dispose();
+        }
+
+        return matches;
+    }
+
+    private static bool SafeHasExited(Process process)
+    {
+        try
+        {
+            return process.HasExited;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private async Task<bool> EnsureReadyForLaunchAsync(string gamePath)
+    {
+        RefreshGameRunningState();
+        if (!IsGameRunning)
+            return true;
+
+        if (_settings.WarnBeforeRestartGame)
+        {
+            if (RequestRestartConfirmationAsync is null)
+            {
+                StatusMessage = "Stellaris is already running. Close it before launching again.";
+                return false;
+            }
+
+            var (proceed, skipPrompt) = await RequestRestartConfirmationAsync();
+            if (!proceed)
+            {
+                StatusMessage = "Restart canceled.";
+                return false;
+            }
+
+            if (skipPrompt)
+            {
+                _settings.WarnBeforeRestartGame = false;
+                _settings.Save();
+                SettingsViewModel.RefreshRestartWarningPreference();
+            }
+        }
+
+        var runningProcesses = GetRunningStellarisProcesses(gamePath);
+        if (runningProcesses.Count == 0)
+        {
+            RefreshGameRunningState();
+            return true;
+        }
+
+        try
+        {
+            StatusMessage = "Closing running Stellaris process...";
+
+            foreach (var process in runningProcesses)
+            {
+                try
+                {
+                    if (!SafeHasExited(process) && process.MainWindowHandle != IntPtr.Zero)
+                        process.CloseMainWindow();
+                }
+                catch
+                {
+                    // Best-effort graceful close before hard kill.
+                }
+            }
+
+            var closeDeadline = DateTime.UtcNow.AddSeconds(8);
+            while (DateTime.UtcNow < closeDeadline)
+            {
+                if (runningProcesses.All(SafeHasExited))
+                    break;
+
+                await Task.Delay(250);
+            }
+
+            foreach (var process in runningProcesses)
+            {
+                try
+                {
+                    if (!SafeHasExited(process))
+                        process.Kill(true);
+                }
+                catch
+                {
+                    // Process may already be gone or inaccessible.
+                }
+            }
+
+            await Task.Delay(700);
+            var stillRunning = runningProcesses.Any(p => !SafeHasExited(p));
+            if (stillRunning)
+            {
+                StatusMessage = "Could not close running Stellaris process. Please close it manually.";
+                return false;
+            }
+
+            RefreshGameRunningState();
+            return true;
+        }
+        finally
+        {
+            foreach (var process in runningProcesses)
+                process.Dispose();
+        }
     }
 
     private async Task TryWarmUpSteamCmdAsync(AppSettings settings)
@@ -535,6 +709,12 @@ public partial class MainViewModel : ViewModelBase
             return;
         }
 
+        var wasRunning = IsStellarisRunning(gamePath);
+        IsGameRunning = wasRunning;
+
+        if (!await EnsureReadyForLaunchAsync(gamePath))
+            return;
+
         var modsPath = _settings.ModsPath ?? new Core.Services.GameDetector().GetDefaultModsPath();
 
         try
@@ -582,7 +762,15 @@ public partial class MainViewModel : ViewModelBase
                 UseShellExecute = true,
             });
 
-            StatusMessage = "Launching Stellaris directly (launcher bypass enabled)...";
+            StatusMessage = wasRunning
+                ? "Restarting Stellaris directly (launcher bypass enabled)..."
+                : "Launching Stellaris directly (launcher bypass enabled)...";
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1200);
+                RunOnUiThread(RefreshGameRunningState);
+            });
         }
         catch (Exception ex)
         {

@@ -156,7 +156,7 @@
                             <Button Classes="nav-btn" Command="{Binding LaunchGameCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <TextBlock Classes="icon-glyph" Text="&#xE768;" />
-                                    <TextBlock Text="Start Game" />
+                                    <TextBlock Text="{Binding LaunchGameButtonText}" />
                                 </StackPanel>
                             </Button>
 

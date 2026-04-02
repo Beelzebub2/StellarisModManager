@@ -51,7 +51,12 @@ public partial class WorkshopView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         _vm = DataContext as WorkshopViewModel;
-        ShowFallback("Embedded browser is in safe mode. Click 'Retry In App' to initialize it if needed.");
+
+        var initialUrl = NormalizeUrl(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl);
+        if (AddressInput.Text != initialUrl)
+            AddressInput.Text = initialUrl;
+
+        NavigateTo(initialUrl);
     }
 
     private void TryInitWebView()

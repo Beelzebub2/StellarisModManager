@@ -1,0 +1,61 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        x:Class="StellarisModManager.UI.Views.RestartGamePromptWindow"
+        Title="Restart Stellaris"
+        Width="520"
+        SizeToContent="Height"
+        CanResize="False"
+        ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Theme.AppBg}">
+
+    <Border Margin="12"
+            Padding="14"
+            Background="{DynamicResource Theme.PanelBg}"
+            BorderBrush="{DynamicResource Theme.Border}"
+            BorderThickness="1"
+            CornerRadius="12">
+        <StackPanel Spacing="12">
+            <TextBlock Text="Stellaris is already running."
+                       Foreground="{DynamicResource Theme.TextPrimary}"
+                       FontSize="18"
+                       FontWeight="SemiBold" />
+
+            <TextBlock Text="Did you save your current game? Restarting will close the running game process first."
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource Theme.TextMuted}"
+                       FontSize="13" />
+
+            <CheckBox x:Name="SkipPromptCheckBox"
+                      Content="Don't ask me again next time"
+                      Foreground="{DynamicResource Theme.TextPrimary}" />
+
+            <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,6,0,0">
+                <Button Grid.Column="1"
+                        Margin="0,0,8,0"
+                        Background="{DynamicResource Theme.SurfaceBg}"
+                        BorderBrush="{DynamicResource Theme.Border}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="12,8"
+                        Foreground="{DynamicResource Theme.TextPrimary}"
+                        Content="Cancel"
+                        Click="CancelButton_Click" />
+
+                <Button Grid.Column="2"
+                        Background="#C93C37"
+                        BorderThickness="0"
+                        CornerRadius="8"
+                        Padding="12,8"
+                        Foreground="White"
+                        FontWeight="SemiBold"
+                        Content="Restart Game"
+                        Click="RestartButton_Click" />
+            </Grid>
+        </StackPanel>
+    </Border>
+
+</Window>
