@@ -53,7 +53,10 @@ public partial class BrowserView : UserControl
             }
 
             ShowEmbeddedBrowser();
-            _ = Dispatcher.UIThread.InvokeAsync(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
+
+            // If adapter is already alive (e.g., after re-attach), navigate immediately.
+            if (_isNativeEngineReady)
+                _ = Dispatcher.UIThread.InvokeAsync(() => NavigateTo(_vm?.CurrentUrl ?? BrowserViewModel.HomeUrl));
         }
         catch (Exception ex)
         {
@@ -145,6 +148,9 @@ public partial class BrowserView : UserControl
             _vm.IsLoading = true;
         }
 
+        if (!_isNativeEngineReady)
+            return;
+
         var attempt = ++_navigationAttempt;
         _ = StartNavigationWatchdogAsync(attempt, url);
 
@@ -154,7 +160,6 @@ public partial class BrowserView : UserControl
         try
         {
             WebView.Navigate(new Uri(url));
-            _isNativeEngineReady = true;
             ShowEmbeddedBrowser();
         }
         catch (Exception ex)

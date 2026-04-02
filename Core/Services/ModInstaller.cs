@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
 using StellarisModManager.Core.Models;
@@ -51,6 +52,11 @@ public class ModInstaller
     {
         var targetDir = System.IO.Path.Combine(modsPath, workshopId);
         Directory.CreateDirectory(modsPath);
+
+        // Always start from a clean target to prevent stale files from older versions.
+        if (Directory.Exists(targetDir))
+            await Task.Run(() => DeleteDirectoryRobust(targetDir));
+
         Directory.CreateDirectory(targetDir);
 
         _log.Information("Installing mod {Id} from {Src} to {Dst}", workshopId, downloadedPath, targetDir);
@@ -145,10 +151,10 @@ public class ModInstaller
         await Task.Run(() =>
         {
             if (Directory.Exists(mod.InstalledPath))
-                Directory.Delete(mod.InstalledPath, recursive: true);
+                DeleteDirectoryRobust(mod.InstalledPath);
 
             if (File.Exists(mod.DescriptorPath))
-                File.Delete(mod.DescriptorPath);
+                DeleteFileRobust(mod.DescriptorPath);
         });
     }
 
@@ -193,5 +199,106 @@ public class ModInstaller
             return f;
 
         return null;
+    }
+
+    private static void DeleteDirectoryRobust(string path)
+    {
+        if (!Directory.Exists(path))
+            return;
+
+        Exception? lastException = null;
+
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            try
+            {
+                NormalizeAttributesRecursive(path);
+                Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                lastException = ex;
+                Thread.Sleep(TimeSpan.FromMilliseconds(120 * attempt));
+            }
+        }
+
+        // Fallback: move to a temp quarantine and try deleting there.
+        var quarantineRoot = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "StellarisModManager", "DeleteQueue");
+        Directory.CreateDirectory(quarantineRoot);
+        var quarantinePath = System.IO.Path.Combine(quarantineRoot, Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.Move(path, quarantinePath);
+            NormalizeAttributesRecursive(quarantinePath);
+            Directory.Delete(quarantinePath, recursive: true);
+            return;
+        }
+        catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+        {
+            throw lastException ?? ex;
+        }
+    }
+
+    private static void DeleteFileRobust(string path)
+    {
+        if (!File.Exists(path))
+            return;
+
+        Exception? lastException = null;
+
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            try
+            {
+                File.SetAttributes(path, FileAttributes.Normal);
+                File.Delete(path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                lastException = ex;
+                Thread.Sleep(TimeSpan.FromMilliseconds(120 * attempt));
+            }
+        }
+
+        throw lastException ?? new IOException($"Failed to delete file '{path}'.");
+    }
+
+    private static void NormalizeAttributesRecursive(string directory)
+    {
+        foreach (var subDir in Directory.GetDirectories(directory, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                File.SetAttributes(subDir, FileAttributes.Normal);
+            }
+            catch
+            {
+                // Best-effort normalization only.
+            }
+        }
+
+        foreach (var file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+            catch
+            {
+                // Best-effort normalization only.
+            }
+        }
+
+        try
+        {
+            File.SetAttributes(directory, FileAttributes.Normal);
+        }
+        catch
+        {
+            // Best-effort normalization only.
+        }
     }
 }

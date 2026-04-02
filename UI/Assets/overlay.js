@@ -1,6 +1,15 @@
 (function () {
     'use strict';
 
+    if (window.__smmOverlayInitialized) {
+        if (typeof window.__smmOverlayRescan === 'function') {
+            window.__smmOverlayRescan();
+        }
+        return;
+    }
+
+    window.__smmOverlayInitialized = true;
+
     function postToHost(payload) {
         if (typeof window.invokeCSharpAction === 'function') {
             window.invokeCSharpAction(payload);
@@ -77,9 +86,18 @@
     }
 
     function scanItems() {
-        // Workshop item selectors (Steam Workshop uses different classes)
-        document.querySelectorAll('.workshopItem, .workshop_item_link, [data-publishedfileid]').forEach(addInstallButton);
+        // Prefer top-level workshop card containers to avoid duplicate buttons on nested nodes.
+        const cards = document.querySelectorAll('.workshopItem, .workshop_item_link');
+        if (cards.length > 0) {
+            cards.forEach(addInstallButton);
+            return;
+        }
+
+        // Fallback selector for pages that only expose published-file nodes.
+        document.querySelectorAll('[data-publishedfileid]').forEach(addInstallButton);
     }
+
+    window.__smmOverlayRescan = scanItems;
 
     // Initial scan
     scanItems();

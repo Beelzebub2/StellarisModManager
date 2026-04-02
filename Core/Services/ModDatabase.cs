@@ -146,10 +146,95 @@ public class ModDatabase
     public async Task<Mod> AddModAsync(Mod mod)
     {
         await using var ctx = _contextFactory();
-        mod.InstalledAt = DateTime.UtcNow;
-        ctx.Mods.Add(mod);
+        var existing = await ctx.Mods
+            .FirstOrDefaultAsync(m => m.SteamWorkshopId == mod.SteamWorkshopId);
+
+        if (existing is null)
+        {
+            mod.InstalledAt = DateTime.UtcNow;
+            ctx.Mods.Add(mod);
+            await ctx.SaveChangesAsync();
+            return mod;
+        }
+
+        // Preserve user state while refreshing installed metadata/content.
+        existing.Name = mod.Name;
+        existing.Version = mod.Version;
+        existing.InstalledPath = mod.InstalledPath;
+        existing.DescriptorPath = mod.DescriptorPath;
+        existing.ThumbnailUrl = mod.ThumbnailUrl;
+        existing.Description = mod.Description;
+        existing.GameVersion = mod.GameVersion;
+        existing.Tags = mod.Tags;
+        existing.LastUpdatedAt = DateTime.UtcNow;
+
         await ctx.SaveChangesAsync();
-        return mod;
+        return existing;
+    }
+
+    /// <summary>
+    /// Removes duplicated workshop-id entries, preserving the newest record and
+    /// remapping profile entries to it.
+    /// </summary>
+    public async Task<int> NormalizeDuplicateWorkshopModsAsync()
+    {
+        await using var ctx = _contextFactory();
+
+        var duplicates = await ctx.Mods
+            .GroupBy(m => m.SteamWorkshopId)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToListAsync();
+
+        if (duplicates.Count == 0)
+            return 0;
+
+        var removedCount = 0;
+
+        foreach (var workshopId in duplicates)
+        {
+            var records = await ctx.Mods
+                .Where(m => m.SteamWorkshopId == workshopId)
+                .OrderByDescending(m => m.LastUpdatedAt ?? m.InstalledAt)
+                .ThenByDescending(m => m.Id)
+                .ToListAsync();
+
+            var keeper = records[0];
+            var extras = records.Skip(1).ToList();
+
+            foreach (var extra in extras)
+            {
+                var extraEntries = await ctx.ProfileEntries
+                    .Where(e => e.ModId == extra.Id)
+                    .ToListAsync();
+
+                foreach (var entry in extraEntries)
+                {
+                    var alreadyExists = await ctx.ProfileEntries.AnyAsync(e =>
+                        e.ProfileId == entry.ProfileId &&
+                        e.ModId == keeper.Id);
+
+                    if (!alreadyExists)
+                    {
+                        ctx.ProfileEntries.Add(new ModProfileEntry
+                        {
+                            ProfileId = entry.ProfileId,
+                            ModId = keeper.Id,
+                            IsEnabled = entry.IsEnabled,
+                            LoadOrder = entry.LoadOrder
+                        });
+                    }
+                }
+
+                ctx.Mods.Remove(extra);
+                removedCount++;
+            }
+        }
+
+        if (removedCount > 0)
+            await ctx.SaveChangesAsync();
+
+        return removedCount;
     }
 
     public async Task UpdateModAsync(Mod mod)

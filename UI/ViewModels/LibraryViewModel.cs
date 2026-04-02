@@ -300,7 +300,7 @@ public partial class LibraryViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Uninstall failed: {ex.Message}";
+            StatusMessage = $"Uninstall failed: {ex.Message}. Close Stellaris/Paradox Launcher or cloud sync tools and retry.";
         }
     }
 
@@ -393,6 +393,8 @@ public partial class LibraryViewModel : ViewModelBase
         Mods.Clear();
         FilteredMods.Clear();
 
+        var duplicatesRemoved = await _db.NormalizeDuplicateWorkshopModsAsync();
+
         var mods = await _db.GetAllModsAsync();
         foreach (var mod in mods)
         {
@@ -410,6 +412,9 @@ public partial class LibraryViewModel : ViewModelBase
 
         ApplyFilter();
         _ = Task.Run(SyncLauncherStateAsync);
+
+        if (duplicatesRemoved > 0)
+            StatusMessage = $"Detected and merged {duplicatesRemoved} duplicate mod record(s).";
     }
 
     // Called when a new mod is installed
