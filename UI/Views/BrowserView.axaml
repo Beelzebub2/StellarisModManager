@@ -42,8 +42,8 @@
     <Grid RowDefinitions="Auto,*,Auto">
 
         <Border Grid.Row="0" Margin="12,12,12,0"
-            Background="{DynamicResource Theme.PanelBg}"
-            BorderBrush="{DynamicResource Theme.Border}"
+                Background="{DynamicResource Theme.PanelBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
                 CornerRadius="12"
                 Padding="10">
@@ -84,8 +84,8 @@
         </Border>
 
         <Border Grid.Row="1" Margin="12"
-            Background="{DynamicResource Theme.AppBg}"
-            BorderBrush="{DynamicResource Theme.Border}"
+                Background="{DynamicResource Theme.AppBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
                 CornerRadius="12"
                 ClipToBounds="True">
@@ -94,7 +94,7 @@
 
                 <Border x:Name="FallbackPanel"
                         IsVisible="False"
-                    Background="{DynamicResource Theme.AppBg}">
+                        Background="{DynamicResource Theme.AppBg}">
                     <ScrollViewer>
                         <StackPanel HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
@@ -120,19 +120,19 @@
                                     <StackPanel Orientation="Horizontal" Spacing="8">
                                         <Button x:Name="RetryInAppButton" Classes="primary-btn" Content="Retry In App" Click="RetryInAppButton_Click" />
                                         <Button x:Name="InstallRuntimeButton"
-                                            Background="{DynamicResource Theme.SurfaceBg}"
-                                            BorderBrush="{DynamicResource Theme.Border}"
+                                                Background="{DynamicResource Theme.SurfaceBg}"
+                                                BorderBrush="{DynamicResource Theme.Border}"
                                                 BorderThickness="1"
-                                            Foreground="{DynamicResource Theme.TextPrimary}"
+                                                Foreground="{DynamicResource Theme.TextPrimary}"
                                                 CornerRadius="8"
                                                 Padding="12,8"
                                                 Content="Install WebView2 Runtime"
                                                 Click="InstallRuntimeButton_Click" />
                                         <Button x:Name="OpenSteamButton"
-                                            Background="{DynamicResource Theme.SurfaceBg}"
-                                            BorderBrush="{DynamicResource Theme.Border}"
+                                                Background="{DynamicResource Theme.SurfaceBg}"
+                                                BorderBrush="{DynamicResource Theme.Border}"
                                                 BorderThickness="1"
-                                            Foreground="{DynamicResource Theme.TextPrimary}"
+                                                Foreground="{DynamicResource Theme.TextPrimary}"
                                                 CornerRadius="8"
                                                 Padding="12,8"
                                                 Content="Open In Default Browser"
@@ -171,7 +171,7 @@
 
                                     <TextBlock x:Name="InstallStatusText"
                                                IsVisible="False"
-                                                              Foreground="{DynamicResource Theme.Success}"
+                                               Foreground="{DynamicResource Theme.Success}"
                                                FontSize="12" />
                                 </StackPanel>
                             </Border>
@@ -182,8 +182,8 @@
         </Border>
 
         <Border Grid.Row="2" Margin="12,0,12,12"
-            Background="{DynamicResource Theme.SurfaceBg}"
-            BorderBrush="{DynamicResource Theme.Border}"
+                Background="{DynamicResource Theme.SurfaceBg}"
+                BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
                 CornerRadius="10"
                 Padding="10,6">
