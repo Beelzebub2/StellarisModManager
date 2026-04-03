@@ -13,7 +13,7 @@ call "build.bat" "%CONFIG%" "%APP_VERSION%"
 if errorlevel 1 exit /b %errorlevel%
 
 set "ASSETSDIR=Output\InstallerAssets"
-set "BANNER_SOURCE=C:\Users\ricar\Downloads\banner.jpg"
+set "BANNER_SOURCE=%CD%\UI\Assets\banner.jpg"
 set "ICON_SOURCE=%CD%\UI\Assets\icon.jpg"
 set "SETUP_ICON=%CD%\%ASSETSDIR%\setup-icon.ico"
 set "WIZARD_IMAGE=%CD%\%ASSETSDIR%\wizard-banner.png"

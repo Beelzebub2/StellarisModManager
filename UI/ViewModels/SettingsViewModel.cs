@@ -30,6 +30,8 @@ public partial class SettingsViewModel : ViewModelBase
     private bool _isRefreshingRuntimePreference;
     private AppReleaseInfo? _availableAppRelease;
 
+    public event EventHandler<AppReleaseInfo>? UpdateAvailableNotificationRequested;
+
     [ObservableProperty] private string _gamePath = "";
     [ObservableProperty] private string _modsPath = "";
     [ObservableProperty] private string _steamCmdPath = "";
@@ -542,6 +544,11 @@ public partial class SettingsViewModel : ViewModelBase
                     ? $"Critical update available from {result.Release.Source}."
                     : $"Update available from {result.Release.Source}.";
                 StatusMessage = result.Message;
+
+                if (!manual)
+                {
+                    UpdateAvailableNotificationRequested?.Invoke(this, result.Release);
+                }
             }
             else
             {
@@ -606,9 +613,6 @@ public partial class SettingsViewModel : ViewModelBase
         if (!AutoCheckAppUpdates)
             return;
 
-        if (!ShouldRunAutomaticUpdateCheck())
-            return;
-
         await Task.Delay(1200);
         await CheckForAppUpdatesCoreAsync(false);
     }
@@ -663,8 +667,15 @@ public partial class SettingsViewModel : ViewModelBase
 
         Directory.CreateDirectory(tempRoot);
 
-        var updaterExe = Path.Combine(tempRoot, Path.GetFileName(updaterSourcePath));
-        File.Copy(updaterSourcePath, updaterExe, true);
+        // Copy everything matching StellarisModManager.Updater.*
+        var prefix = "StellarisModManager.Updater.";
+        foreach (var file in Directory.GetFiles(appDir, $"{prefix}*"))
+        {
+            var fileName = Path.GetFileName(file);
+            File.Copy(file, Path.Combine(tempRoot, fileName), true);
+        }
+
+        var updaterExe = Path.Combine(tempRoot, "StellarisModManager.Updater.exe");
 
         var startupSignalPath = Path.Combine(tempRoot, "updater-started.signal");
         if (File.Exists(startupSignalPath))

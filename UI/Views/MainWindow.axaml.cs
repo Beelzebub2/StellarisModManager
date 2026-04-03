@@ -23,9 +23,17 @@ public partial class MainWindow : Window
         var vm = new MainViewModel(db, settings, downloader, installer, updateChecker)
         {
             RequestRestartConfirmationAsync = ShowRestartConfirmationAsync,
+            RequestUpdatePromptAsync = ShowUpdatePromptAsync,
         };
 
         DataContext = vm;
+    }
+
+    private async Task<(bool goToSettings, bool skipVersion)> ShowUpdatePromptAsync(string versionMsg)
+    {
+        var prompt = new UpdateAvailablePromptWindow(versionMsg);
+        var result = await prompt.ShowDialog<(bool goToSettings, bool skipVersion)?>(this);
+        return result ?? (false, false);
     }
 
     private async Task<(bool proceed, bool skipPrompt)> ShowRestartConfirmationAsync()

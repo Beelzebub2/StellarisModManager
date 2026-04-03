@@ -54,6 +54,7 @@ public partial class MainViewModel : ViewModelBase
 
     public string LaunchGameButtonText => IsGameRunning ? "Restart Game" : "Start Game";
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
+    public Func<string, Task<(bool goToSettings, bool skipVersion)>>? RequestUpdatePromptAsync { get; set; }
 
     // App version
     public string AppVersion => AppVersionInfo.GetDisplayVersion();
@@ -74,6 +75,20 @@ public partial class MainViewModel : ViewModelBase
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
         SettingsViewModel = new SettingsViewModel(settings, new Core.Services.GameDetector(), downloader, db);
         VersionBrowserViewModel = new VersionBrowserViewModel(downloader, settings, new Core.Services.GameDetector());
+
+        SettingsViewModel.UpdateAvailableNotificationRequested += async (_, versionInfo) =>
+        {
+            if (RequestUpdatePromptAsync is null) return;
+            var (goToSettings, skipVersion) = await RequestUpdatePromptAsync($"Version {versionInfo.Version} is available.");
+            if (skipVersion)
+            {
+                SettingsViewModel.SkipAppUpdateCommand.Execute(null);
+            }
+            if (goToSettings)
+            {
+                ActiveView = SettingsViewModel;
+            }
+        };
 
         LibraryViewModel.OpenWorkshopInAppRequested += (_, url) => OpenWorkshopUrlInApp(url);
 
