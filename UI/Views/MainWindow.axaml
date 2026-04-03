@@ -64,6 +64,19 @@
             <Setter Property="CornerRadius" Value="8" />
             <Setter Property="Padding" Value="8,7" />
         </Style>
+        <Style Selector="Button.queue-cancel-btn">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="Foreground" Value="{DynamicResource Theme.TextMuted}" />
+            <Setter Property="Padding" Value="4,0" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="MinWidth" Value="18" />
+        </Style>
+        <Style Selector="Button.queue-cancel-btn:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource Theme.Danger}" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="*,Auto" Background="{DynamicResource Theme.AppBg}">
@@ -161,17 +174,18 @@
                     </StackPanel>
 
                     <Border Grid.Row="2" Classes="queue-panel">
-                        <StackPanel Spacing="10">
+                        <StackPanel Spacing="9">
+                            <TextBlock Text="Install Queue"
+                                       Foreground="{DynamicResource Theme.Accent}"
+                                       FontSize="13"
+                                       FontWeight="SemiBold"
+                                       Margin="0,1,0,0" />
+
                             <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
-                                <StackPanel Spacing="2">
-                                    <TextBlock Text="Install Queue"
-                                               Foreground="{DynamicResource Theme.TextPrimary}"
-                                               FontSize="13"
-                                               FontWeight="SemiBold" />
-                                    <TextBlock Text="{Binding InstallQueueSummaryText}"
-                                               Foreground="{DynamicResource Theme.TextMuted}"
-                                               FontSize="11" />
-                                </StackPanel>
+                                <TextBlock Text="{Binding InstallQueueSummaryText}"
+                                           Foreground="{DynamicResource Theme.TextMuted}"
+                                           FontSize="11"
+                                           VerticalAlignment="Center" />
 
                                 <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
                                     <TextBlock Text="{Binding DownloadProgress, StringFormat='{}{0}%'}"
@@ -208,7 +222,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="vm:InstallQueueItemViewModel">
                                             <Border Classes="queue-item" Margin="0,0,0,6">
-                                                <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                                                <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto,Auto">
                                                     <TextBlock Grid.Row="0"
                                                                Grid.Column="0"
                                                                Text="{Binding DisplayName}"
@@ -224,8 +238,22 @@
                                                                FontSize="11"
                                                                HorizontalAlignment="Right" />
 
+                                                    <Button Grid.Row="0"
+                                                            Grid.Column="2"
+                                                            Margin="6,0,0,0"
+                                                            Classes="queue-cancel-btn"
+                                                            Command="{Binding CancelCommand}"
+                                                            IsVisible="{Binding CanCancel}"
+                                                            IsEnabled="{Binding CanCancel}">
+                                                        <TextBlock Classes="icon-glyph"
+                                                                   Text="&#xE711;"
+                                                                   FontSize="10"
+                                                                   HorizontalAlignment="Center"
+                                                                   VerticalAlignment="Center" />
+                                                    </Button>
+
                                                     <TextBlock Grid.Row="1"
-                                                               Grid.ColumnSpan="2"
+                                                               Grid.ColumnSpan="3"
                                                                Text="{Binding Stage}"
                                                                Foreground="{DynamicResource Theme.Accent}"
                                                                FontSize="10"
@@ -233,7 +261,7 @@
                                                                TextTrimming="CharacterEllipsis" />
 
                                                     <ProgressBar Grid.Row="2"
-                                                                 Grid.ColumnSpan="2"
+                                                                 Grid.ColumnSpan="3"
                                                                  Minimum="0"
                                                                  Maximum="100"
                                                                  Height="5"

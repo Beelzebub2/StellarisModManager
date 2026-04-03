@@ -276,9 +276,22 @@ public class WorkshopDownloader
         };
 
         var outputLines = new List<string>();
+        Process? process = null;
         try
         {
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            using var cancelRegistration = ct.Register(() =>
+            {
+                try
+                {
+                    if (process is not null && !process.HasExited)
+                        process.Kill(true);
+                }
+                catch
+                {
+                    // Best-effort cancellation.
+                }
+            });
 
             process.OutputDataReceived += (_, e) =>
             {
@@ -333,11 +346,18 @@ public class WorkshopDownloader
         }
         catch (OperationCanceledException)
         {
+            if (ct.IsCancellationRequested)
+                ShutdownSteamCmdSessionCore();
+
             return (false, null, "Download cancelled.");
         }
         catch (Exception ex)
         {
             return (false, null, $"SteamKit2 backend failed: {ex.Message}");
+        }
+        finally
+        {
+            process?.Dispose();
         }
 
         var depotMetadataDir = Path.Combine(steamKitRoot, ".DepotDownloader");
@@ -1183,10 +1203,23 @@ public class WorkshopDownloader
         var errors = new List<string>();
         var sawSuccessfulDownload = false;
         var sawBootstrapUpdateActivity = false;
+        Process? process = null;
 
         try
         {
-            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            using var cancelRegistration = ct.Register(() =>
+            {
+                try
+                {
+                    if (process is not null && !process.HasExited)
+                        process.Kill(true);
+                }
+                catch
+                {
+                    // Best-effort cancellation.
+                }
+            });
 
             process.OutputDataReceived += (_, e) =>
             {
@@ -1292,6 +1325,10 @@ public class WorkshopDownloader
         {
             _log.Error(ex, "Exception in direct SteamCMD fallback for mod {Id}", modId);
             return (false, null, ex.Message);
+        }
+        finally
+        {
+            process?.Dispose();
         }
     }
 

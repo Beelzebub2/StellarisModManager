@@ -16,7 +16,8 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class MainViewModel : ViewModelBase
 {
-    private const int MaxConcurrentInstalls = 3;
+    private const int MaxConcurrentInstalls = 2;
+    private static readonly TimeSpan ProgressUiUpdateThrottle = TimeSpan.FromMilliseconds(120);
     private const string DefaultStellarisyncBaseUrl = "https://stellarisync.rrmtools.uk";
     private static readonly HttpClient ServiceStatusHttp = new() { Timeout = TimeSpan.FromSeconds(4) };
 
@@ -36,11 +37,23 @@ public partial class MainViewModel : ViewModelBase
     private readonly Dictionary<string, string> _overlayModStates = new(StringComparer.Ordinal);
     private readonly ObservableCollection<InstallQueueItemViewModel> _installQueueItems = new();
     private readonly Dictionary<string, InstallQueueItemViewModel> _installQueueItemsById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CancellationTokenSource> _installCtsByModId = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _cancelRequestedInstallIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTime> _lastProgressUiUpdateByModId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _lastProgressPercentByModId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _lastProgressStageByModId = new(StringComparer.Ordinal);
 
     private int _serviceStatusRefreshGate;
 
     private int _installQueueTotal;
     private int _installQueueCompleted;
+
+    private enum InstallRunResult
+    {
+        Success,
+        Failed,
+        Cancelled,
+    }
 
     // Currently active view model (Workshop, Library, or Settings)
     [ObservableProperty] private ViewModelBase _activeView = null!;
@@ -429,6 +442,7 @@ public partial class MainViewModel : ViewModelBase
             item.Stage = "Queued";
             item.Progress = 0;
             item.IsActive = false;
+            item.CanCancel = true;
         });
 
         RunOnUiThread(() =>
@@ -455,6 +469,7 @@ public partial class MainViewModel : ViewModelBase
                 _activeInstallIds.Add(workshopId);
                 _activeProgressByModId[workshopId] = 0;
                 _overlayModStates[workshopId] = "installing";
+                _installCtsByModId[workshopId] = new CancellationTokenSource();
                 toStart.Add(workshopId);
             }
         }
@@ -464,23 +479,34 @@ public partial class MainViewModel : ViewModelBase
 
         foreach (var workshopId in toStart)
         {
+            CancellationToken token;
+            lock (_installStateLock)
+            {
+                token = _installCtsByModId.TryGetValue(workshopId, out var cts)
+                    ? cts.Token
+                    : CancellationToken.None;
+            }
+
             UpsertInstallQueueItem(workshopId, item =>
             {
                 item.Stage = "Starting";
                 item.IsActive = true;
+                item.CanCancel = true;
             });
-            _ = ProcessInstallRequestAsync(workshopId);
+            _ = ProcessInstallRequestAsync(workshopId, token);
         }
 
         UpdateInstallUiFromState();
         UpdateWorkshopOverlayState();
     }
 
-    private async Task ProcessInstallRequestAsync(string workshopId)
+    private async Task ProcessInstallRequestAsync(string workshopId, CancellationToken cancellationToken)
     {
         RunOnUiThread(() => StatusMessage = $"Starting mod {workshopId}...");
 
-        var success = await InstallSingleModAsync(workshopId);
+        var result = await InstallSingleModAsync(workshopId, cancellationToken);
+        var success = result == InstallRunResult.Success;
+        var cancelled = result == InstallRunResult.Cancelled;
 
         var finishedBatch = false;
         lock (_installStateLock)
@@ -489,8 +515,17 @@ public partial class MainViewModel : ViewModelBase
             _queuedOrInstallingIds.Remove(workshopId);
             _activeInstallIds.Remove(workshopId);
             _activeProgressByModId.Remove(workshopId);
+            _lastProgressUiUpdateByModId.Remove(workshopId);
+            _lastProgressPercentByModId.Remove(workshopId);
+            _lastProgressStageByModId.Remove(workshopId);
+            _cancelRequestedInstallIds.Remove(workshopId);
 
-            if (!success)
+            if (_installCtsByModId.Remove(workshopId, out var cts))
+            {
+                cts.Dispose();
+            }
+
+            if (!success && !cancelled)
                 _overlayModStates[workshopId] = "error";
 
             finishedBatch =
@@ -499,10 +534,10 @@ public partial class MainViewModel : ViewModelBase
                 _pendingInstallQueue.Count == 0;
         }
 
-        if (!success)
+        if (!success && !cancelled)
             UpdateWorkshopOverlayState();
 
-        MarkQueueItemFinished(workshopId, success);
+        MarkQueueItemFinished(workshopId, result);
 
         StartPendingInstalls();
         UpdateInstallUiFromState();
@@ -537,8 +572,11 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private async Task<bool> InstallSingleModAsync(string workshopId)
+    private async Task<InstallRunResult> InstallSingleModAsync(string workshopId, CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return InstallRunResult.Cancelled;
+
         if (LibraryViewModel.GetInstalledWorkshopIds().Contains(workshopId, StringComparer.Ordinal))
         {
             SetOverlayModState(workshopId, "installed");
@@ -546,9 +584,10 @@ public partial class MainViewModel : ViewModelBase
             {
                 item.Stage = "Already installed";
                 item.Progress = 100;
+                item.CanCancel = false;
             });
             RunOnUiThread(() => StatusMessage = $"Skipped {workshopId}: already installed");
-            return true;
+            return InstallRunResult.Success;
         }
 
         var selectedRuntime = _settings.WorkshopDownloadRuntime;
@@ -562,13 +601,14 @@ public partial class MainViewModel : ViewModelBase
             {
                 item.Stage = "SteamCMD missing";
                 item.IsActive = false;
+                item.CanCancel = false;
             });
             RunOnUiThread(() =>
             {
                 StatusMessage = "SteamCMD runtime selected, but steamcmd.exe is not configured. Please go to Settings.";
                 ActiveView = SettingsViewModel;
             });
-            return false;
+            return InstallRunResult.Failed;
         }
 
         var modsPath = _settings.ModsPath ?? new Core.Services.GameDetector().GetDefaultModsPath();
@@ -579,7 +619,21 @@ public partial class MainViewModel : ViewModelBase
             workshopId,
             _settings.SteamCmdPath,
             downloadPath,
-            selectedRuntime);
+            selectedRuntime,
+            cancellationToken);
+
+        if (cancellationToken.IsCancellationRequested)
+        {
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Cancelled";
+                item.IsActive = false;
+                item.CanCancel = false;
+            });
+            RunOnUiThread(() => StatusMessage = $"Cancelled mod {workshopId}");
+            SetOverlayModState(workshopId, "not-installed");
+            return InstallRunResult.Cancelled;
+        }
 
         if (downloadedPath is null)
         {
@@ -589,13 +643,15 @@ public partial class MainViewModel : ViewModelBase
             {
                 item.Stage = "Download failed";
                 item.IsActive = false;
+                item.CanCancel = false;
             });
             RunOnUiThread(() => StatusMessage = $"Download failed for mod {workshopId} using runtime {selectedRuntime}");
-            return false;
+            return InstallRunResult.Failed;
         }
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             _downloader.PublishDiagnostic($"[install:{workshopId}] Download step succeeded. downloadedPath='{downloadedPath}'");
             var modInfo = await _downloader.GetModInfoAsync(workshopId);
             var mod = await _installer.InstallModAsync(workshopId, downloadedPath, modsPath, modInfo);
@@ -609,7 +665,19 @@ public partial class MainViewModel : ViewModelBase
             _downloader.PublishDiagnostic($"[install:{workshopId}] Completed successfully as '{mod.Name}'.");
 
             RunOnUiThread(() => StatusMessage = $"Installed: {mod.Name}");
-            return true;
+            return InstallRunResult.Success;
+        }
+        catch (OperationCanceledException)
+        {
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Cancelled";
+                item.IsActive = false;
+                item.CanCancel = false;
+            });
+            SetOverlayModState(workshopId, "not-installed");
+            RunOnUiThread(() => StatusMessage = $"Cancelled mod {workshopId}");
+            return InstallRunResult.Cancelled;
         }
         catch (Exception ex)
         {
@@ -619,9 +687,10 @@ public partial class MainViewModel : ViewModelBase
             {
                 item.Stage = "Install failed";
                 item.IsActive = false;
+                item.CanCancel = false;
             });
             RunOnUiThread(() => StatusMessage = $"Install failed for {workshopId}: {ex.Message}");
-            return false;
+            return InstallRunResult.Failed;
         }
     }
 
@@ -630,6 +699,8 @@ public partial class MainViewModel : ViewModelBase
         var isQueueMode = false;
         var queueText = string.Empty;
         var overallPercent = 0;
+        var shouldRenderUi = true;
+        var compactStage = CompactInstallStage(statusMessage);
 
         lock (_installStateLock)
         {
@@ -643,7 +714,37 @@ public partial class MainViewModel : ViewModelBase
                 overallPercent = CalculateOverallProgressPercent_NoLock();
                 isQueueMode = true;
             }
+
+            if (!string.IsNullOrWhiteSpace(modId) && _cancelRequestedInstallIds.Contains(modId))
+            {
+                shouldRenderUi = false;
+            }
+            else if (!string.IsNullOrWhiteSpace(modId))
+            {
+                var now = DateTime.UtcNow;
+                _lastProgressUiUpdateByModId.TryGetValue(modId, out var lastUpdateUtc);
+                _lastProgressPercentByModId.TryGetValue(modId, out var lastPercent);
+                _lastProgressStageByModId.TryGetValue(modId, out var lastStage);
+
+                var stageChanged = !string.Equals(lastStage, compactStage, StringComparison.OrdinalIgnoreCase);
+                var progressChanged = progressPercent >= 0 && progressPercent != lastPercent;
+                var dueByTime = lastUpdateUtc == default || now - lastUpdateUtc >= ProgressUiUpdateThrottle;
+                var isTerminalProgress = progressPercent is >= 99 or 0;
+
+                shouldRenderUi = stageChanged || isTerminalProgress || (progressChanged && dueByTime) || dueByTime;
+
+                if (shouldRenderUi)
+                {
+                    _lastProgressUiUpdateByModId[modId] = now;
+                    if (progressPercent >= 0)
+                        _lastProgressPercentByModId[modId] = progressPercent;
+                    _lastProgressStageByModId[modId] = compactStage;
+                }
+            }
         }
+
+        if (!shouldRenderUi)
+            return;
 
         RunOnUiThread(() =>
         {
@@ -653,8 +754,9 @@ public partial class MainViewModel : ViewModelBase
             {
                 UpsertInstallQueueItem(modId, item =>
                 {
-                    item.Stage = CompactInstallStage(statusMessage);
+                    item.Stage = compactStage;
                     item.IsActive = true;
+                    item.CanCancel = true;
                     if (progressPercent >= 0)
                         item.Progress = Math.Clamp(progressPercent, 0, 100);
                 });
@@ -683,14 +785,26 @@ public partial class MainViewModel : ViewModelBase
         SetOverlayModState(workshopId, "uninstalling");
 
         var removed = await LibraryViewModel.UninstallByWorkshopIdAsync(workshopId);
-        StatusMessage = removed
-            ? $"Uninstalled mod {workshopId}"
-            : $"Mod {workshopId} is not installed";
+        var stillInstalled = LibraryViewModel
+            .GetInstalledWorkshopIds()
+            .Contains(workshopId, StringComparer.Ordinal);
 
         if (removed)
+        {
+            StatusMessage = $"Uninstalled mod {workshopId}";
             RemoveOverlayModState(workshopId);
+        }
         else
-            SetOverlayModState(workshopId, "installed");
+        {
+            StatusMessage = stillInstalled
+                ? $"Could not uninstall mod {workshopId}."
+                : $"Mod {workshopId} is not installed";
+
+            if (stillInstalled)
+                SetOverlayModState(workshopId, "installed");
+            else
+                SetOverlayModState(workshopId, "not-installed");
+        }
 
         UpdateWorkshopOverlayState();
     }
@@ -756,6 +870,96 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    private void CancelInstallRequest(string modId)
+    {
+        if (string.IsNullOrWhiteSpace(modId))
+            return;
+
+        var trimmed = modId.Trim();
+        var cancelledPending = false;
+        var cancellingActive = false;
+
+        lock (_installStateLock)
+        {
+            cancelledPending = RemovePendingInstall_NoLock(trimmed);
+            if (cancelledPending)
+            {
+                _queuedOrInstallingIds.Remove(trimmed);
+                _overlayModStates[trimmed] = "not-installed";
+                if (_installQueueTotal > 0)
+                    _installQueueTotal--;
+            }
+            else if (_activeInstallIds.Contains(trimmed))
+            {
+                cancellingActive = true;
+                _cancelRequestedInstallIds.Add(trimmed);
+                if (_installCtsByModId.TryGetValue(trimmed, out var cts) && !cts.IsCancellationRequested)
+                    cts.Cancel();
+            }
+        }
+
+        if (cancelledPending)
+        {
+            UpsertInstallQueueItem(trimmed, item =>
+            {
+                item.Stage = "Cancelled";
+                item.IsActive = false;
+                item.CanCancel = false;
+                item.Progress = 0;
+            });
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1400);
+                RunOnUiThread(() => RemoveInstallQueueItem(trimmed));
+            });
+
+            RunOnUiThread(() => StatusMessage = $"Cancelled queued mod {trimmed}");
+            StartPendingInstalls();
+            UpdateInstallUiFromState();
+            UpdateWorkshopOverlayState();
+            return;
+        }
+
+        if (cancellingActive)
+        {
+            UpsertInstallQueueItem(trimmed, item =>
+            {
+                item.Stage = "Cancelling...";
+                item.IsActive = true;
+                item.CanCancel = false;
+            });
+
+            RunOnUiThread(() => StatusMessage = $"Cancelling mod {trimmed}...");
+        }
+    }
+
+    private bool RemovePendingInstall_NoLock(string workshopId)
+    {
+        if (_pendingInstallQueue.Count == 0)
+            return false;
+
+        var removed = false;
+        var rebuilt = new Queue<string>(_pendingInstallQueue.Count);
+
+        while (_pendingInstallQueue.Count > 0)
+        {
+            var current = _pendingInstallQueue.Dequeue();
+            if (!removed && string.Equals(current, workshopId, StringComparison.Ordinal))
+            {
+                removed = true;
+                continue;
+            }
+
+            rebuilt.Enqueue(current);
+        }
+
+        while (rebuilt.Count > 0)
+            _pendingInstallQueue.Enqueue(rebuilt.Dequeue());
+
+        return removed;
+    }
+
     private void UpdateInstallUiFromState()
     {
         int total;
@@ -793,40 +997,65 @@ public partial class MainViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(modId))
             return;
 
-        RunOnUiThread(() =>
+        void Apply()
         {
             if (!_installQueueItemsById.TryGetValue(modId, out var item))
             {
-                item = new InstallQueueItemViewModel(modId);
+                item = new InstallQueueItemViewModel(modId, CancelInstallRequest);
                 _installQueueItemsById[modId] = item;
                 _installQueueItems.Add(item);
             }
 
             update(item);
-        });
+        }
+
+        if (Dispatcher.UIThread.CheckAccess())
+            Apply();
+        else
+            Dispatcher.UIThread.Post(Apply);
     }
 
-    private void MarkQueueItemFinished(string modId, bool success)
+    private void MarkQueueItemFinished(string modId, InstallRunResult result)
     {
         if (string.IsNullOrWhiteSpace(modId))
             return;
 
         UpsertInstallQueueItem(modId, item =>
         {
-            item.Stage = success ? "Installed" : "Failed";
-            item.Progress = success ? 100 : item.Progress;
+            item.Stage = result switch
+            {
+                InstallRunResult.Success => "Installed",
+                InstallRunResult.Cancelled => "Cancelled",
+                _ => "Failed",
+            };
+            item.Progress = result == InstallRunResult.Success ? 100 : item.Progress;
             item.IsActive = false;
+            item.CanCancel = false;
         });
 
         _ = Task.Run(async () =>
         {
-            await Task.Delay(success ? 1200 : 4000);
+            var delayMs = result switch
+            {
+                InstallRunResult.Success => 1200,
+                InstallRunResult.Cancelled => 1700,
+                _ => 4000,
+            };
+            await Task.Delay(delayMs);
             RunOnUiThread(() => RemoveInstallQueueItem(modId));
         });
     }
 
     private void RemoveInstallQueueItem(string modId)
     {
+        lock (_installStateLock)
+        {
+            _lastProgressUiUpdateByModId.Remove(modId);
+            _lastProgressPercentByModId.Remove(modId);
+            _lastProgressStageByModId.Remove(modId);
+            _cancelRequestedInstallIds.Remove(modId);
+        }
+
         if (!_installQueueItemsById.TryGetValue(modId, out var item))
             return;
 

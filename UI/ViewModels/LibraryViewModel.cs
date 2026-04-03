@@ -426,11 +426,10 @@ public partial class LibraryViewModel : ViewModelBase
         if (mod is null)
             return false;
 
-        await UninstallModCoreAsync(mod);
-        return true;
+        return await UninstallModCoreAsync(mod);
     }
 
-    private async Task UninstallModCoreAsync(ModViewModel mod)
+    private async Task<bool> UninstallModCoreAsync(ModViewModel mod)
     {
         StatusMessage = $"Uninstalling {mod.Name}...";
         try
@@ -442,10 +441,12 @@ public partial class LibraryViewModel : ViewModelBase
             await SaveProfileSnapshotIfActiveAsync();
             await SyncLauncherStateAsync();
             StatusMessage = $"{mod.Name} uninstalled";
+            return true;
         }
         catch (Exception ex)
         {
             StatusMessage = $"Uninstall failed: {ex.Message}. Close Stellaris/Paradox Launcher or cloud sync tools and retry.";
+            return false;
         }
     }
 

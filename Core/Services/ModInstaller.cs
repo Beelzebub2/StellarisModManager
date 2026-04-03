@@ -154,14 +154,34 @@ public class ModInstaller
     {
         _log.Information("Uninstalling mod {Name} ({Id})", mod.Name, mod.SteamWorkshopId);
 
-        await Task.Run(() =>
-        {
-            if (Directory.Exists(mod.InstalledPath))
-                DeleteDirectoryRobust(mod.InstalledPath);
+        string? detachedDirectory = null;
 
-            if (File.Exists(mod.DescriptorPath))
-                DeleteFileRobust(mod.DescriptorPath);
-        });
+        if (Directory.Exists(mod.InstalledPath))
+        {
+            detachedDirectory = TryDetachDirectoryForAsyncDeletion(mod.InstalledPath);
+
+            if (detachedDirectory is null)
+                await Task.Run(() => DeleteDirectoryRobust(mod.InstalledPath));
+        }
+
+        if (File.Exists(mod.DescriptorPath))
+            await Task.Run(() => DeleteFileRobust(mod.DescriptorPath));
+
+        if (!string.IsNullOrWhiteSpace(detachedDirectory))
+        {
+            var queuedPath = detachedDirectory;
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    DeleteDirectoryRobust(queuedPath);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "Background delete failed for detached mod directory {Path}", queuedPath);
+                }
+            });
+        }
     }
 
     /// <summary>
@@ -270,6 +290,37 @@ public class ModInstaller
         }
 
         throw lastException ?? new IOException($"Failed to delete file '{path}'.");
+    }
+
+    private static string? TryDetachDirectoryForAsyncDeletion(string path)
+    {
+        try
+        {
+            if (!Directory.Exists(path))
+                return null;
+
+            var parentDir = System.IO.Path.GetDirectoryName(path);
+            if (string.IsNullOrWhiteSpace(parentDir) || !Directory.Exists(parentDir))
+                return null;
+
+            var queueRoot = System.IO.Path.Combine(parentDir, ".smm-delete-queue");
+            Directory.CreateDirectory(queueRoot);
+
+            var sourceName = System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(sourceName))
+                sourceName = "mod";
+
+            var detachedPath = System.IO.Path.Combine(
+                queueRoot,
+                $"{sourceName}-{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}");
+
+            Directory.Move(path, detachedPath);
+            return detachedPath;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static void NormalizeAttributesRecursive(string directory)

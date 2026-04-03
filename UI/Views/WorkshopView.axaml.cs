@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Text.RegularExpressions;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
@@ -30,6 +31,7 @@ public partial class WorkshopView : UserControl
     private bool _steamAutoRetryUsed;
     private string _lastNavigatedUrl = string.Empty;
     private bool _isUnloaded;
+    private CancellationTokenSource? _overlayStateDebounceCts;
 
     public WorkshopView()
     {
@@ -42,6 +44,9 @@ public partial class WorkshopView : UserControl
     private void OnUnloaded(object? sender, RoutedEventArgs e)
     {
         _isUnloaded = true;
+        _overlayStateDebounceCts?.Cancel();
+        _overlayStateDebounceCts?.Dispose();
+        _overlayStateDebounceCts = null;
 
         if (_vm is not null)
         {
@@ -559,6 +564,41 @@ public partial class WorkshopView : UserControl
         }
     }
 
+    private void QueueOverlayStateApply()
+    {
+        var next = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _overlayStateDebounceCts, next);
+        previous?.Cancel();
+        previous?.Dispose();
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(140, next.Token);
+                if (next.IsCancellationRequested || _isUnloaded)
+                    return;
+
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    if (!next.IsCancellationRequested)
+                        await ApplyOverlayStateAsync();
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // Ignore debounced cancellation.
+            }
+            finally
+            {
+                if (ReferenceEquals(_overlayStateDebounceCts, next))
+                    _overlayStateDebounceCts = null;
+
+                next.Dispose();
+            }
+        });
+    }
+
     private static async Task EnsureInAppNavigationBehaviorAsync(NativeWebView webView)
     {
         const string script = """
@@ -568,19 +608,48 @@ public partial class WorkshopView : UserControl
     }
     window.__smmInAppNavigationInstalled = true;
 
-    const normalizeAnchors = () => {
-        const anchors = document.querySelectorAll('a[target]');
-        for (const anchor of anchors) {
-            const target = (anchor.getAttribute('target') || '').toLowerCase();
-            if (target === '_blank') {
-                anchor.setAttribute('target', '_self');
-            }
+    const normalizeAnchor = (anchor) => {
+        if (!anchor || typeof anchor.getAttribute !== 'function') {
+            return;
+        }
+
+        const target = (anchor.getAttribute('target') || '').toLowerCase();
+        if (target === '_blank') {
+            anchor.setAttribute('target', '_self');
         }
     };
 
-    normalizeAnchors();
+    const normalizeAnchorsWithin = (root) => {
+        if (!root) {
+            return;
+        }
+
+        if (root.nodeType === 1 && root.tagName && root.tagName.toLowerCase() === 'a') {
+            normalizeAnchor(root);
+        }
+
+        const queryRoot = root.querySelectorAll ? root : document;
+        const anchors = queryRoot.querySelectorAll ? queryRoot.querySelectorAll('a[target]') : [];
+        for (const anchor of anchors) {
+            normalizeAnchor(anchor);
+        }
+    };
+
+    normalizeAnchorsWithin(document);
     if (document.documentElement) {
-        const observer = new MutationObserver(() => normalizeAnchors());
+        const observer = new MutationObserver((records) => {
+            for (const record of records) {
+                if (!record.addedNodes) {
+                    continue;
+                }
+
+                for (const node of record.addedNodes) {
+                    if (node && node.nodeType === 1) {
+                        normalizeAnchorsWithin(node);
+                    }
+                }
+            }
+        });
         observer.observe(document.documentElement, { childList: true, subtree: true });
     }
 
@@ -605,7 +674,7 @@ public partial class WorkshopView : UserControl
             e.PropertyName != nameof(WorkshopViewModel.ModStatesJson))
             return;
 
-        _ = Dispatcher.UIThread.InvokeAsync(ApplyOverlayStateAsync);
+        QueueOverlayStateApply();
     }
 
     private static void OpenUrl(string url)

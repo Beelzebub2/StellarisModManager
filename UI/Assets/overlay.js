@@ -219,25 +219,78 @@
         updateButtonVisual(btn);
     }
 
-    function scanItems() {
-        // Prefer top-level workshop card containers to avoid duplicate buttons on nested nodes.
-        const cards = document.querySelectorAll('.workshopItem, .workshop_item_link');
+    function scanItemsWithin(root) {
+        if (!root) {
+            return;
+        }
+
+        if (root.matches && root.matches('.workshopItem, .workshop_item_link, [data-publishedfileid]')) {
+            addInstallButton(root);
+        }
+
+        const source = root.querySelectorAll ? root : document;
+        const cards = source.querySelectorAll('.workshopItem, .workshop_item_link');
         if (cards.length > 0) {
             cards.forEach(addInstallButton);
             return;
         }
 
-        // Fallback selector for pages that only expose published-file nodes.
-        document.querySelectorAll('[data-publishedfileid]').forEach(addInstallButton);
+        source.querySelectorAll('[data-publishedfileid]').forEach(addInstallButton);
     }
 
-    window.__smmOverlayRescan = scanItems;
+    let scanScheduled = false;
+    const pendingScanRoots = new Set();
+
+    function flushScheduledScan() {
+        scanScheduled = false;
+
+        if (pendingScanRoots.size === 0) {
+            scanItemsWithin(document);
+            return;
+        }
+
+        pendingScanRoots.forEach((root) => {
+            scanItemsWithin(root);
+        });
+        pendingScanRoots.clear();
+    }
+
+    function scheduleScan(root) {
+        if (root && root.nodeType === 1) {
+            pendingScanRoots.add(root);
+        }
+
+        if (scanScheduled) {
+            return;
+        }
+
+        scanScheduled = true;
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(flushScheduledScan);
+        } else {
+            setTimeout(flushScheduledScan, 16);
+        }
+    }
+
+    window.__smmOverlayRescan = () => scheduleScan(document);
 
     // Initial scan
-    scanItems();
+    scheduleScan(document);
 
     // Watch for dynamic content (infinite scroll etc.)
-    const observer = new MutationObserver(scanItems);
+    const observer = new MutationObserver((records) => {
+        for (const record of records) {
+            if (!record.addedNodes) {
+                continue;
+            }
+
+            for (const node of record.addedNodes) {
+                if (node && node.nodeType === 1) {
+                    scheduleScan(node);
+                }
+            }
+        }
+    });
     observer.observe(document.body, { childList: true, subtree: true });
 
     // Also handle single-item page (mod detail page)

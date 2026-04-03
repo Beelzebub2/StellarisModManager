@@ -52,7 +52,7 @@
                         Padding="12,8"
                         Foreground="White"
                         FontWeight="SemiBold"
-                        Content="Go to Settings"
+                        Content="Install"
                         Click="InstallButton_Click" />
             </Grid>
         </StackPanel>
