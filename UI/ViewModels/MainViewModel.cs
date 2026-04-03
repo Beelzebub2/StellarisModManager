@@ -1,8 +1,11 @@
 using System;
+using System.Collections.ObjectModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -14,6 +17,8 @@ namespace StellarisModManager.UI.ViewModels;
 public partial class MainViewModel : ViewModelBase
 {
     private const int MaxConcurrentInstalls = 3;
+    private const string DefaultStellarisyncBaseUrl = "https://stellarisync.rrmtools.uk";
+    private static readonly HttpClient ServiceStatusHttp = new() { Timeout = TimeSpan.FromSeconds(4) };
 
     private readonly AppSettings _settings;
     private readonly ModDatabase _db;
@@ -21,6 +26,7 @@ public partial class MainViewModel : ViewModelBase
     private readonly ModInstaller _installer;
     private readonly StellarisLauncherSyncService _launcherSync = new();
     private readonly DispatcherTimer _gameStateTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly DispatcherTimer _serviceStatusTimer = new() { Interval = TimeSpan.FromMinutes(2) };
 
     private readonly object _installStateLock = new();
     private readonly Queue<string> _pendingInstallQueue = new();
@@ -28,6 +34,10 @@ public partial class MainViewModel : ViewModelBase
     private readonly HashSet<string> _activeInstallIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _activeProgressByModId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _overlayModStates = new(StringComparer.Ordinal);
+    private readonly ObservableCollection<InstallQueueItemViewModel> _installQueueItems = new();
+    private readonly Dictionary<string, InstallQueueItemViewModel> _installQueueItemsById = new(StringComparer.Ordinal);
+
+    private int _serviceStatusRefreshGate;
 
     private int _installQueueTotal;
     private int _installQueueCompleted;
@@ -52,6 +62,12 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty] private bool _isDownloading = false;
     [ObservableProperty] private string _queueProgressText = "";
     [ObservableProperty] private bool _isGameRunning;
+    [ObservableProperty] private string _installQueueSummaryText = "Idle";
+    [ObservableProperty] private string _stellarisyncConnectionStatus = "Checking...";
+    [ObservableProperty] private bool _isStellarisyncOnline;
+
+    public ObservableCollection<InstallQueueItemViewModel> InstallQueueItems => _installQueueItems;
+    public bool HasInstallQueueItems => _installQueueItems.Count > 0;
 
     public string LaunchGameButtonText => IsGameRunning ? "Restart Game" : "Start Game";
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
@@ -71,6 +87,8 @@ public partial class MainViewModel : ViewModelBase
         _db = db;
         _downloader = downloader;
         _installer = installer;
+
+        _installQueueItems.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasInstallQueueItems));
 
         WorkshopViewModel = new WorkshopViewModel();
         LibraryViewModel = new LibraryViewModel(db, updateChecker, installer, downloader, settings);
@@ -96,6 +114,9 @@ public partial class MainViewModel : ViewModelBase
         _gameStateTimer.Tick += (_, _) => RefreshGameRunningState();
         RefreshGameRunningState();
         _gameStateTimer.Start();
+
+        _serviceStatusTimer.Tick += async (_, _) => await RefreshStellarisyncStatusAsync();
+        _serviceStatusTimer.Start();
 
         // Wire workshop install requests to download + install flow
         WorkshopViewModel.InstallModRequested += (_, workshopId) =>
@@ -182,6 +203,7 @@ public partial class MainViewModel : ViewModelBase
 
         StatusMessage = "Ready";
         RefreshGameRunningState();
+        _ = RefreshStellarisyncStatusAsync();
         _ = TryWarmUpSteamCmdAsync(settings);
     }
 
@@ -351,7 +373,7 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task TryWarmUpSteamCmdAsync(AppSettings settings)
     {
-        if (settings.WorkshopDownloadRuntime == WorkshopDownloadRuntime.SteamKit2)
+        if (settings.WorkshopDownloadRuntime != WorkshopDownloadRuntime.SteamCmd)
             return;
 
         if (string.IsNullOrWhiteSpace(settings.SteamCmdPath) ||
@@ -402,6 +424,13 @@ public partial class MainViewModel : ViewModelBase
             _overlayModStates[workshopId] = "queued";
         }
 
+        UpsertInstallQueueItem(workshopId, item =>
+        {
+            item.Stage = "Queued";
+            item.Progress = 0;
+            item.IsActive = false;
+        });
+
         RunOnUiThread(() =>
         {
             IsDownloading = true;
@@ -434,7 +463,14 @@ public partial class MainViewModel : ViewModelBase
             return;
 
         foreach (var workshopId in toStart)
+        {
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Starting";
+                item.IsActive = true;
+            });
             _ = ProcessInstallRequestAsync(workshopId);
+        }
 
         UpdateInstallUiFromState();
         UpdateWorkshopOverlayState();
@@ -465,6 +501,8 @@ public partial class MainViewModel : ViewModelBase
 
         if (!success)
             UpdateWorkshopOverlayState();
+
+        MarkQueueItemFinished(workshopId, success);
 
         StartPendingInstalls();
         UpdateInstallUiFromState();
@@ -504,6 +542,11 @@ public partial class MainViewModel : ViewModelBase
         if (LibraryViewModel.GetInstalledWorkshopIds().Contains(workshopId, StringComparer.Ordinal))
         {
             SetOverlayModState(workshopId, "installed");
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Already installed";
+                item.Progress = 100;
+            });
             RunOnUiThread(() => StatusMessage = $"Skipped {workshopId}: already installed");
             return true;
         }
@@ -515,6 +558,11 @@ public partial class MainViewModel : ViewModelBase
              !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath)))
         {
             SetOverlayModState(workshopId, "error");
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "SteamCMD missing";
+                item.IsActive = false;
+            });
             RunOnUiThread(() =>
             {
                 StatusMessage = "SteamCMD runtime selected, but steamcmd.exe is not configured. Please go to Settings.";
@@ -537,6 +585,11 @@ public partial class MainViewModel : ViewModelBase
         {
             _downloader.PublishDiagnostic($"[install:{workshopId}] Download step failed.");
             SetOverlayModState(workshopId, "error");
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Download failed";
+                item.IsActive = false;
+            });
             RunOnUiThread(() => StatusMessage = $"Download failed for mod {workshopId} using runtime {selectedRuntime}");
             return false;
         }
@@ -546,6 +599,7 @@ public partial class MainViewModel : ViewModelBase
             _downloader.PublishDiagnostic($"[install:{workshopId}] Download step succeeded. downloadedPath='{downloadedPath}'");
             var modInfo = await _downloader.GetModInfoAsync(workshopId);
             var mod = await _installer.InstallModAsync(workshopId, downloadedPath, modsPath, modInfo);
+            UpsertInstallQueueItem(workshopId, item => item.DisplayName = mod.Name);
             _downloader.PublishDiagnostic($"[install:{workshopId}] File install step succeeded. Registering in database...");
             await _db.AddModAsync(mod);
 
@@ -561,6 +615,11 @@ public partial class MainViewModel : ViewModelBase
         {
             _downloader.PublishDiagnostic($"[install:{workshopId}] Failed after download: {ex.Message}");
             SetOverlayModState(workshopId, "error");
+            UpsertInstallQueueItem(workshopId, item =>
+            {
+                item.Stage = "Install failed";
+                item.IsActive = false;
+            });
             RunOnUiThread(() => StatusMessage = $"Install failed for {workshopId}: {ex.Message}");
             return false;
         }
@@ -589,6 +648,17 @@ public partial class MainViewModel : ViewModelBase
         RunOnUiThread(() =>
         {
             IsDownloading = true;
+
+            if (!string.IsNullOrWhiteSpace(modId))
+            {
+                UpsertInstallQueueItem(modId, item =>
+                {
+                    item.Stage = CompactInstallStage(statusMessage);
+                    item.IsActive = true;
+                    if (progressPercent >= 0)
+                        item.Progress = Math.Clamp(progressPercent, 0, 100);
+                });
+            }
 
             if (isQueueMode)
             {
@@ -691,6 +761,7 @@ public partial class MainViewModel : ViewModelBase
         int total;
         int completed;
         int active;
+        int pending;
         int overallPercent;
         string queueText;
 
@@ -699,6 +770,7 @@ public partial class MainViewModel : ViewModelBase
             total = _installQueueTotal;
             completed = _installQueueCompleted;
             active = _activeInstallIds.Count;
+            pending = _pendingInstallQueue.Count;
             overallPercent = CalculateOverallProgressPercent_NoLock();
 
             var started = Math.Min(total, completed + active);
@@ -710,7 +782,117 @@ public partial class MainViewModel : ViewModelBase
             IsDownloading = total > 0 && (completed < total || active > 0);
             QueueProgressText = queueText;
             DownloadProgress = IsDownloading ? overallPercent : 0;
+            InstallQueueSummaryText = IsDownloading
+                ? $"{active} active  |  {pending} queued"
+                : "Idle";
         });
+    }
+
+    private void UpsertInstallQueueItem(string modId, Action<InstallQueueItemViewModel> update)
+    {
+        if (string.IsNullOrWhiteSpace(modId))
+            return;
+
+        RunOnUiThread(() =>
+        {
+            if (!_installQueueItemsById.TryGetValue(modId, out var item))
+            {
+                item = new InstallQueueItemViewModel(modId);
+                _installQueueItemsById[modId] = item;
+                _installQueueItems.Add(item);
+            }
+
+            update(item);
+        });
+    }
+
+    private void MarkQueueItemFinished(string modId, bool success)
+    {
+        if (string.IsNullOrWhiteSpace(modId))
+            return;
+
+        UpsertInstallQueueItem(modId, item =>
+        {
+            item.Stage = success ? "Installed" : "Failed";
+            item.Progress = success ? 100 : item.Progress;
+            item.IsActive = false;
+        });
+
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(success ? 1200 : 4000);
+            RunOnUiThread(() => RemoveInstallQueueItem(modId));
+        });
+    }
+
+    private void RemoveInstallQueueItem(string modId)
+    {
+        if (!_installQueueItemsById.TryGetValue(modId, out var item))
+            return;
+
+        _installQueueItemsById.Remove(modId);
+        _installQueueItems.Remove(item);
+    }
+
+    private static string CompactInstallStage(string statusMessage)
+    {
+        if (string.IsNullOrWhiteSpace(statusMessage))
+            return "Working";
+
+        if (statusMessage.Contains("queue", StringComparison.OrdinalIgnoreCase))
+            return "Queued";
+
+        if (statusMessage.Contains("download", StringComparison.OrdinalIgnoreCase))
+            return "Downloading";
+
+        if (statusMessage.Contains("metadata", StringComparison.OrdinalIgnoreCase) ||
+            statusMessage.Contains("manifest", StringComparison.OrdinalIgnoreCase))
+            return "Preparing metadata";
+
+        if (statusMessage.Contains("install", StringComparison.OrdinalIgnoreCase) ||
+            statusMessage.Contains("extract", StringComparison.OrdinalIgnoreCase))
+            return "Installing";
+
+        if (statusMessage.Contains("final", StringComparison.OrdinalIgnoreCase) ||
+            statusMessage.Contains("validat", StringComparison.OrdinalIgnoreCase))
+            return "Finalizing";
+
+        return statusMessage.Length > 36 ? statusMessage[..36] + "..." : statusMessage;
+    }
+
+    private async Task RefreshStellarisyncStatusAsync()
+    {
+        if (Interlocked.Exchange(ref _serviceStatusRefreshGate, 1) == 1)
+            return;
+
+        try
+        {
+            var baseUrl = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                baseUrl = DefaultStellarisyncBaseUrl;
+
+            using var request = new HttpRequestMessage(HttpMethod.Head, baseUrl);
+            using var response = await ServiceStatusHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+
+            var isOnline = (int)response.StatusCode < 500;
+            RunOnUiThread(() =>
+            {
+                IsStellarisyncOnline = isOnline;
+                StellarisyncConnectionStatus = isOnline ? "Stellarisync online" : "Stellarisync degraded";
+            });
+        }
+        catch
+        {
+            RunOnUiThread(() =>
+            {
+                IsStellarisyncOnline = false;
+                StellarisyncConnectionStatus = "Stellarisync offline";
+            });
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _serviceStatusRefreshGate, 0);
+        }
     }
 
     private int CalculateOverallProgressPercent_NoLock()

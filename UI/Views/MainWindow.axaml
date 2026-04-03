@@ -49,18 +49,33 @@
             <Setter Property="CornerRadius" Value="999" />
             <Setter Property="Padding" Value="10,4" />
         </Style>
+        <Style Selector="Border.queue-panel">
+            <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="10" />
+            <Setter Property="Margin" Value="4,8,4,8" />
+        </Style>
+        <Style Selector="Border.queue-item">
+            <Setter Property="Background" Value="{DynamicResource Theme.PanelBg}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="8,7" />
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="*,Auto" Background="{DynamicResource Theme.AppBg}">
 
-        <Grid Grid.Row="0" ColumnDefinitions="220,*" Margin="12">
+        <Grid Grid.Row="0" ColumnDefinitions="292,*" Margin="12">
             <Border Grid.Column="0"
                     Background="{DynamicResource Theme.PanelBg}"
                     BorderBrush="{DynamicResource Theme.Border}"
                     BorderThickness="1"
                     CornerRadius="12"
                     Padding="10">
-                <Grid RowDefinitions="Auto,*,Auto">
+                <Grid RowDefinitions="Auto,*,Auto,Auto">
                     <StackPanel Grid.Row="0" Margin="4,2,4,10">
                         <TextBlock Text="Navigation"
                                    FontSize="12"
@@ -145,7 +160,94 @@
                         </Grid>
                     </StackPanel>
 
-                    <Border Grid.Row="2"
+                    <Border Grid.Row="2" Classes="queue-panel">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="Install Queue"
+                                               Foreground="{DynamicResource Theme.TextPrimary}"
+                                               FontSize="13"
+                                               FontWeight="SemiBold" />
+                                    <TextBlock Text="{Binding InstallQueueSummaryText}"
+                                               Foreground="{DynamicResource Theme.TextMuted}"
+                                               FontSize="11" />
+                                </StackPanel>
+
+                                <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
+                                    <TextBlock Text="{Binding DownloadProgress, StringFormat='{}{0}%'}"
+                                               Foreground="{DynamicResource Theme.TextPrimary}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold" />
+                                </Border>
+                            </Grid>
+
+                            <ProgressBar Value="{Binding DownloadProgress}"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Height="7"
+                                         IsVisible="{Binding IsDownloading}" />
+
+                            <Border Background="{DynamicResource Theme.PanelBg}"
+                                    BorderBrush="{DynamicResource Theme.Border}"
+                                    BorderThickness="1"
+                                    CornerRadius="8"
+                                    Padding="10,9"
+                                    IsVisible="{Binding !HasInstallQueueItems}">
+                                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                    <TextBlock Classes="icon-glyph"
+                                               Foreground="{DynamicResource Theme.TextMuted}"
+                                               Text="&#xE8D7;" />
+                                    <TextBlock Text="No active installs"
+                                               Foreground="{DynamicResource Theme.TextMuted}"
+                                               FontSize="11" />
+                                </StackPanel>
+                            </Border>
+
+                            <ScrollViewer MaxHeight="240" IsVisible="{Binding HasInstallQueueItems}">
+                                <ItemsControl ItemsSource="{Binding InstallQueueItems}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:InstallQueueItemViewModel">
+                                            <Border Classes="queue-item" Margin="0,0,0,6">
+                                                <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto">
+                                                    <TextBlock Grid.Row="0"
+                                                               Grid.Column="0"
+                                                               Text="{Binding DisplayName}"
+                                                               Foreground="{DynamicResource Theme.TextPrimary}"
+                                                               FontSize="11"
+                                                               FontWeight="SemiBold"
+                                                               TextTrimming="CharacterEllipsis" />
+
+                                                    <TextBlock Grid.Row="0"
+                                                               Grid.Column="1"
+                                                               Text="{Binding Progress, StringFormat='{}{0}%'}"
+                                                               Foreground="{DynamicResource Theme.TextMuted}"
+                                                               FontSize="11"
+                                                               HorizontalAlignment="Right" />
+
+                                                    <TextBlock Grid.Row="1"
+                                                               Grid.ColumnSpan="2"
+                                                               Text="{Binding Stage}"
+                                                               Foreground="{DynamicResource Theme.Accent}"
+                                                               FontSize="10"
+                                                               Margin="0,4,0,2"
+                                                               TextTrimming="CharacterEllipsis" />
+
+                                                    <ProgressBar Grid.Row="2"
+                                                                 Grid.ColumnSpan="2"
+                                                                 Minimum="0"
+                                                                 Maximum="100"
+                                                                 Height="5"
+                                                                 Value="{Binding Progress}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Row="3"
                             Background="{DynamicResource Theme.SurfaceBg}"
                             BorderBrush="{DynamicResource Theme.Border}"
                             BorderThickness="1"
@@ -220,72 +322,42 @@
                 BorderBrush="{DynamicResource Theme.Border}"
                 BorderThickness="1"
                 CornerRadius="12"
-                Padding="14,10">
-            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                <StackPanel Grid.Column="0" Grid.RowSpan="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <Border Background="{DynamicResource Theme.PanelBg}"
-                            BorderBrush="{DynamicResource Theme.Border}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="8,6">
-                        <TextBlock Classes="icon-glyph"
-                                   Foreground="{DynamicResource Theme.Accent}"
-                                   Text="&#xE946;" />
-                    </Border>
+                Padding="12,7">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" VerticalAlignment="Center">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding StatusMessage}"
+                           Foreground="{DynamicResource Theme.TextMuted}"
+                           FontSize="11"
+                           TextTrimming="CharacterEllipsis"
+                           VerticalAlignment="Center" />
 
-                    <StackPanel Spacing="2">
-                        <TextBlock Text="Activity"
-                                   Foreground="{DynamicResource Theme.TextMuted}"
-                                   FontSize="11" />
-                        <TextBlock Text="{Binding StatusMessage}"
-                                   Foreground="{DynamicResource Theme.TextPrimary}"
-                                   FontSize="12"
-                                   FontWeight="SemiBold" />
-                    </StackPanel>
-                </StackPanel>
+                <Border Grid.Column="1" Classes="status-chip" Margin="8,0,0,0" IsVisible="{Binding IsDownloading}">
+                    <TextBlock Text="{Binding QueueProgressText, StringFormat='Queue {0}'}"
+                               Foreground="{DynamicResource Theme.TextPrimary}"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
+                </Border>
 
-                <StackPanel Grid.Column="1"
-                            Grid.Row="0"
-                            Orientation="Horizontal"
-                            Spacing="8"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Center">
-                    <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
-                        <TextBlock Text="{Binding QueueProgressText, StringFormat='Queue {0}'}"
-                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                <Border Grid.Column="2" Classes="status-chip" Margin="8,0,0,0">
+                    <Grid>
+                        <TextBlock Text="{Binding StellarisyncConnectionStatus}"
+                                   Foreground="{DynamicResource Theme.Success}"
                                    FontSize="11"
-                                   FontWeight="SemiBold" />
-                    </Border>
-
-                    <Border Classes="status-chip" IsVisible="{Binding IsDownloading}">
-                        <TextBlock Text="{Binding DownloadProgress, StringFormat='{}{0}%'}"
-                                   Foreground="{DynamicResource Theme.TextPrimary}"
+                                   FontWeight="SemiBold"
+                                   IsVisible="{Binding IsStellarisyncOnline}" />
+                        <TextBlock Text="{Binding StellarisyncConnectionStatus}"
+                                   Foreground="{DynamicResource Theme.Warning}"
                                    FontSize="11"
-                                   FontWeight="SemiBold" />
-                    </Border>
+                                   FontWeight="SemiBold"
+                                   IsVisible="{Binding !IsStellarisyncOnline}" />
+                    </Grid>
+                </Border>
 
-                    <Border Classes="status-chip-muted" IsVisible="{Binding !IsDownloading}">
-                        <TextBlock Text="Idle"
-                                   Foreground="{DynamicResource Theme.TextMuted}"
-                                   FontSize="11"
-                                   FontWeight="SemiBold" />
-                    </Border>
-                </StackPanel>
-
-                <Border Grid.Column="1"
-                        Grid.Row="1"
-                        Width="300"
-                        Margin="0,8,0,0"
-                        Background="{DynamicResource Theme.PanelBg}"
-                        BorderBrush="{DynamicResource Theme.Border}"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="8,6"
-                        IsVisible="{Binding IsDownloading}">
-                    <ProgressBar Value="{Binding DownloadProgress}"
-                                 Minimum="0"
-                                 Maximum="100"
-                                 Height="8" />
+                <Border Grid.Column="3" Classes="status-chip-muted" Margin="8,0,0,0">
+                    <TextBlock Text="{Binding AppVersion, StringFormat='v{0}'}"
+                               Foreground="{DynamicResource Theme.TextMuted}"
+                               FontSize="11"
+                               FontWeight="SemiBold" />
                 </Border>
             </Grid>
         </Border>

@@ -65,9 +65,13 @@ public class WorkshopDownloader
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
     private static readonly bool _allowConcurrentSteamCmdDownloads =
         !string.Equals(Environment.GetEnvironmentVariable("STEAMCMD_SERIAL_DOWNLOADS"), "1", StringComparison.OrdinalIgnoreCase);
+    private static readonly Regex DepotDownloaderPercentRegex = new(@"(?<pct>\d{1,3}\.\d{2})%", RegexOptions.Compiled);
 
     private const string SteamCmdZipUrl =
         "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
+
+    private const string DepotDownloaderReleasesApiUrl =
+        "https://api.github.com/repos/SteamRE/DepotDownloader/releases/latest";
 
     private const string StellarisAppId = "281990";
 
@@ -84,6 +88,8 @@ public class WorkshopDownloader
     private string? _steamCmdSessionWorkingDir;
     private string? _steamCmdSessionForceInstallDir;
     private bool _steamCmdForceDirectMode;
+    private readonly SemaphoreSlim _depotDownloaderInstallLock = new(1, 1);
+    private string? _cachedDepotDownloaderExePath;
 
     private sealed record SteamCmdSessionResult(bool Success, string? DownloadedPath, string? ErrorMessage);
 
@@ -218,8 +224,6 @@ public class WorkshopDownloader
         string downloadBasePath,
         CancellationToken ct)
     {
-        await Task.Yield();
-
         var steamKitVersion = typeof(SteamClient).Assembly.GetName().Version?.ToString() ?? "unknown";
         RaiseProgress(modId, "", -1, $"Using SteamKit2 runtime (v{steamKitVersion})...");
         RaiseLog($"SteamKit2 selected for mod {modId}. Download root: {downloadBasePath}");
@@ -227,7 +231,297 @@ public class WorkshopDownloader
         if (ct.IsCancellationRequested)
             return (false, null, "Download cancelled.");
 
-        return (false, null, $"SteamKit2 download path is still in progress in this build (v{steamKitVersion}).");
+        string appId;
+        try
+        {
+            appId = await TryDetectWorkshopAppIdAsync(modId, ct) ?? StellarisAppId;
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"Could not resolve workshop app id: {ex.Message}");
+        }
+
+        var depotDownloaderExe = await EnsureDepotDownloaderAsync(ct);
+        if (string.IsNullOrWhiteSpace(depotDownloaderExe) || !File.Exists(depotDownloaderExe))
+            return (false, null, "DepotDownloader executable is unavailable.");
+
+        var steamKitRoot = Path.Combine(downloadBasePath, "steamkit-workshop", appId, modId);
+        try
+        {
+            if (Directory.Exists(steamKitRoot))
+                Directory.Delete(steamKitRoot, recursive: true);
+        }
+        catch
+        {
+            // Best effort cleanup before download.
+        }
+
+        Directory.CreateDirectory(steamKitRoot);
+
+        var loginId = BuildDepotDownloaderLoginId(modId);
+        var args = $"-app {appId} -pubfile {modId} -dir \"{steamKitRoot}\" -validate -max-downloads 8 -loginid {loginId}";
+
+        RaiseLog($"SteamKit2 backend invoking DepotDownloader for mod {modId}, app {appId}");
+        RaiseProgress(modId, "", -1, "Starting SteamKit2 backend download...");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = depotDownloaderExe,
+            Arguments = args,
+            WorkingDirectory = Path.GetDirectoryName(depotDownloaderExe) ?? Environment.CurrentDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        var outputLines = new List<string>();
+        try
+        {
+            using var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+
+            process.OutputDataReceived += (_, e) =>
+            {
+                if (e.Data is null)
+                    return;
+
+                var line = e.Data.Trim();
+                if (line.Length == 0)
+                    return;
+
+                outputLines.Add(line);
+                RaiseLog($"[steamkit] {line}");
+
+                var pctMatch = DepotDownloaderPercentRegex.Match(line);
+                if (pctMatch.Success &&
+                    double.TryParse(pctMatch.Groups["pct"].Value, out var pctRaw))
+                {
+                    var pct = (int)Math.Round(Math.Clamp(pctRaw, 0d, 100d));
+                    RaiseProgress(modId, "", pct, $"Downloading via SteamKit2... {pct}%");
+                }
+                else if (line.Contains("Downloading", StringComparison.OrdinalIgnoreCase))
+                {
+                    RaiseProgress(modId, "", -1, "Downloading via SteamKit2...");
+                }
+            };
+
+            process.ErrorDataReceived += (_, e) =>
+            {
+                if (e.Data is null)
+                    return;
+
+                var line = e.Data.Trim();
+                if (line.Length == 0)
+                    return;
+
+                outputLines.Add($"ERR:{line}");
+                RaiseLog($"[steamkit stderr] {line}");
+            };
+
+            if (!process.Start())
+                return (false, null, "Failed to start DepotDownloader.");
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            await process.WaitForExitAsync(ct);
+
+            if (process.ExitCode != 0)
+            {
+                var tail = BuildOutputTail(outputLines, 8);
+                return (false, null, $"SteamKit2 backend exited with code {process.ExitCode}. {tail}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            return (false, null, "Download cancelled.");
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"SteamKit2 backend failed: {ex.Message}");
+        }
+
+        var depotMetadataDir = Path.Combine(steamKitRoot, ".DepotDownloader");
+        if (Directory.Exists(depotMetadataDir))
+        {
+            try
+            {
+                Directory.Delete(depotMetadataDir, recursive: true);
+            }
+            catch
+            {
+                // Non-fatal cleanup.
+            }
+        }
+
+        if (!Directory.Exists(steamKitRoot))
+            return (false, null, "SteamKit2 backend completed but output path does not exist.");
+
+        if (!ContainsAnyContent(steamKitRoot))
+            return (false, null, "SteamKit2 backend completed but no files were downloaded.");
+
+        RaiseProgress(modId, "", 100, "SteamKit2 download complete");
+        return (true, steamKitRoot, null);
+    }
+
+    private static bool ContainsAnyContent(string path)
+    {
+        try
+        {
+            using var dirs = Directory.EnumerateDirectories(path).GetEnumerator();
+            if (dirs.MoveNext())
+                return true;
+
+            using var files = Directory.EnumerateFiles(path).GetEnumerator();
+            return files.MoveNext();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static int BuildDepotDownloaderLoginId(string modId)
+    {
+        var baseHash = Math.Abs(modId.GetHashCode(StringComparison.Ordinal));
+        var timeSalt = (int)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() & 0x7FFF);
+        return Math.Max(1000, (baseHash ^ timeSalt) & 0x7FFFFFFF);
+    }
+
+    private static string BuildOutputTail(List<string> lines, int maxLines)
+    {
+        if (lines.Count == 0)
+            return string.Empty;
+
+        var start = Math.Max(0, lines.Count - maxLines);
+        return "Last output: " + string.Join(" || ", lines.GetRange(start, lines.Count - start));
+    }
+
+    private async Task<string> EnsureDepotDownloaderAsync(CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(_cachedDepotDownloaderExePath) && File.Exists(_cachedDepotDownloaderExePath))
+            return _cachedDepotDownloaderExePath;
+
+        var toolsRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "StellarisModManager",
+            "tools",
+            "DepotDownloader");
+
+        var existing = FindDepotDownloaderExe(toolsRoot);
+        if (!string.IsNullOrWhiteSpace(existing))
+        {
+            _cachedDepotDownloaderExePath = existing;
+            return existing;
+        }
+
+        await _depotDownloaderInstallLock.WaitAsync(ct);
+        try
+        {
+            existing = FindDepotDownloaderExe(toolsRoot);
+            if (!string.IsNullOrWhiteSpace(existing))
+            {
+                _cachedDepotDownloaderExePath = existing;
+                return existing;
+            }
+
+            Directory.CreateDirectory(toolsRoot);
+            RaiseLog("SteamKit2 backend: downloading DepotDownloader...");
+
+            var assetUrl = await GetDepotDownloaderAssetUrlAsync(ct);
+            if (string.IsNullOrWhiteSpace(assetUrl))
+                throw new InvalidOperationException("Could not locate a Windows x64 DepotDownloader release asset.");
+
+            var zipPath = Path.Combine(toolsRoot, "DepotDownloader.zip");
+            using (var request = new HttpRequestMessage(HttpMethod.Get, assetUrl))
+            {
+                request.Headers.UserAgent.ParseAdd("StellarisModManager/1.0");
+                request.Headers.Accept.ParseAdd("application/octet-stream");
+
+                using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                response.EnsureSuccessStatusCode();
+
+                await using var stream = await response.Content.ReadAsStreamAsync(ct);
+                await using var file = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+                await stream.CopyToAsync(file, ct);
+            }
+
+            foreach (var entry in Directory.EnumerateFileSystemEntries(toolsRoot))
+            {
+                var name = Path.GetFileName(entry);
+                if (string.Equals(name, "DepotDownloader.zip", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (Directory.Exists(entry))
+                    Directory.Delete(entry, recursive: true);
+                else
+                    File.Delete(entry);
+            }
+
+            ZipFile.ExtractToDirectory(zipPath, toolsRoot, overwriteFiles: true);
+            File.Delete(zipPath);
+
+            existing = FindDepotDownloaderExe(toolsRoot);
+            if (string.IsNullOrWhiteSpace(existing))
+                throw new FileNotFoundException("DepotDownloader.exe not found after extraction.");
+
+            _cachedDepotDownloaderExePath = existing;
+            RaiseLog($"SteamKit2 backend ready: {existing}");
+            return existing;
+        }
+        finally
+        {
+            _depotDownloaderInstallLock.Release();
+        }
+    }
+
+    private static string? FindDepotDownloaderExe(string root)
+    {
+        if (!Directory.Exists(root))
+            return null;
+
+        foreach (var file in Directory.EnumerateFiles(root, "DepotDownloader.exe", SearchOption.AllDirectories))
+            return file;
+
+        return null;
+    }
+
+    private async Task<string?> GetDepotDownloaderAssetUrlAsync(CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, DepotDownloaderReleasesApiUrl);
+        request.Headers.UserAgent.ParseAdd("StellarisModManager/1.0");
+        request.Headers.Accept.ParseAdd("application/vnd.github+json");
+
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+
+        if (!doc.RootElement.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array)
+            return null;
+
+        string? fallbackZip = null;
+        foreach (var asset in assets.EnumerateArray())
+        {
+            var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
+            var url = asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null;
+
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
+                continue;
+
+            if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            fallbackZip ??= url;
+
+            if (name.Contains("windows", StringComparison.OrdinalIgnoreCase) &&
+                (name.Contains("x64", StringComparison.OrdinalIgnoreCase) || name.Contains("win", StringComparison.OrdinalIgnoreCase)))
+            {
+                return url;
+            }
+        }
+
+        return fallbackZip;
     }
 
     private async Task<string?> DownloadModViaSteamCmdAsync(
