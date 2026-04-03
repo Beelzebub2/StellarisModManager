@@ -13,6 +13,8 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class MainViewModel : ViewModelBase
 {
+    private const int MaxConcurrentInstalls = 3;
+
     private readonly AppSettings _settings;
     private readonly ModDatabase _db;
     private readonly WorkshopDownloader _downloader;
@@ -20,16 +22,15 @@ public partial class MainViewModel : ViewModelBase
     private readonly StellarisLauncherSyncService _launcherSync = new();
     private readonly DispatcherTimer _gameStateTimer = new() { Interval = TimeSpan.FromSeconds(2) };
 
-    private readonly object _installQueueLock = new();
-    private readonly Queue<string> _installQueue = new();
+    private readonly object _installStateLock = new();
+    private readonly Queue<string> _pendingInstallQueue = new();
     private readonly HashSet<string> _queuedOrInstallingIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _activeInstallIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _activeProgressByModId = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _overlayModStates = new(StringComparer.Ordinal);
 
-    private bool _isInstallQueueRunning;
     private int _installQueueTotal;
     private int _installQueueCompleted;
-    private int _currentInstallQueueIndex;
-    private int _currentInstallPercent;
 
     // Currently active view model (Workshop, Library, or Settings)
     [ObservableProperty] private ViewModelBase _activeView = null!;
@@ -120,15 +121,15 @@ public partial class MainViewModel : ViewModelBase
         // Wire downloader progress to status bar
         downloader.ProgressChanged += (_, e) =>
         {
-            OnDownloadProgressChanged(e.StatusMessage, e.ProgressPercent);
+            OnDownloadProgressChanged(e.ModId, e.StatusMessage, e.ProgressPercent);
         };
 
         downloader.DownloadComplete += async (_, e) =>
         {
             var handledByQueue = false;
-            lock (_installQueueLock)
+            lock (_installStateLock)
             {
-                handledByQueue = _queuedOrInstallingIds.Contains(e.ModId) || _isInstallQueueRunning;
+                handledByQueue = _queuedOrInstallingIds.Contains(e.ModId);
             }
 
             if (handledByQueue)
@@ -370,10 +371,7 @@ public partial class MainViewModel : ViewModelBase
 
         workshopId = workshopId.Trim();
 
-        var startWorker = false;
-        var queueText = string.Empty;
-
-        lock (_installQueueLock)
+        lock (_installStateLock)
         {
             if (LibraryViewModel.GetInstalledWorkshopIds().Contains(workshopId, StringComparer.Ordinal))
             {
@@ -388,108 +386,114 @@ public partial class MainViewModel : ViewModelBase
                 return;
             }
 
-            _installQueue.Enqueue(workshopId);
+            if (_installQueueCompleted >= _installQueueTotal && _activeInstallIds.Count == 0 && _pendingInstallQueue.Count == 0)
+            {
+                _installQueueTotal = 0;
+                _installQueueCompleted = 0;
+                _activeProgressByModId.Clear();
+            }
+
+            _pendingInstallQueue.Enqueue(workshopId);
             _queuedOrInstallingIds.Add(workshopId);
             _installQueueTotal++;
             _overlayModStates[workshopId] = "queued";
-
-            queueText = _currentInstallQueueIndex > 0
-                ? $"{_currentInstallQueueIndex}/{_installQueueTotal}"
-                : $"0/{_installQueueTotal}";
-
-            if (!_isInstallQueueRunning)
-            {
-                _isInstallQueueRunning = true;
-                startWorker = true;
-            }
         }
 
         RunOnUiThread(() =>
         {
             IsDownloading = true;
-            QueueProgressText = queueText;
-            DownloadProgress = CalculateQueueOverallPercent();
             StatusMessage = $"Queued mod {workshopId}";
         });
 
         UpdateWorkshopOverlayState();
 
-        if (startWorker)
-            _ = ProcessInstallQueueAsync();
+        StartPendingInstalls();
+        UpdateInstallUiFromState();
     }
 
-    private async Task ProcessInstallQueueAsync()
+    private void StartPendingInstalls()
     {
-        while (true)
+        var toStart = new List<string>();
+
+        lock (_installStateLock)
         {
-            string workshopId;
-            int queueIndex;
-            int queueTotal;
-            int queueCompleted;
-
-            lock (_installQueueLock)
+            while (_pendingInstallQueue.Count > 0 && _activeInstallIds.Count < MaxConcurrentInstalls)
             {
-                if (_installQueue.Count == 0)
-                {
-                    _isInstallQueueRunning = false;
-                    _installQueueTotal = 0;
-                    _installQueueCompleted = 0;
-                    _currentInstallQueueIndex = 0;
-                    _currentInstallPercent = 0;
-                    break;
-                }
-
-                workshopId = _installQueue.Dequeue();
-                _currentInstallQueueIndex = _installQueueCompleted + 1;
-                _currentInstallPercent = 0;
+                var workshopId = _pendingInstallQueue.Dequeue();
+                _activeInstallIds.Add(workshopId);
+                _activeProgressByModId[workshopId] = 0;
                 _overlayModStates[workshopId] = "installing";
-
-                queueIndex = _currentInstallQueueIndex;
-                queueTotal = _installQueueTotal;
-                queueCompleted = _installQueueCompleted;
+                toStart.Add(workshopId);
             }
-
-            RunOnUiThread(() =>
-            {
-                IsDownloading = true;
-                QueueProgressText = $"{queueIndex}/{queueTotal}";
-                DownloadProgress = CalculateQueueOverallPercent(queueCompleted, queueTotal, 0);
-                StatusMessage = $"Starting mod {workshopId} ({QueueProgressText})";
-            });
-
-            UpdateWorkshopOverlayState();
-
-            var success = await InstallSingleModAsync(workshopId);
-
-            lock (_installQueueLock)
-            {
-                _installQueueCompleted++;
-                _queuedOrInstallingIds.Remove(workshopId);
-                _currentInstallPercent = 100;
-
-                if (!success)
-                    _overlayModStates[workshopId] = "error";
-            }
-
-            if (!success)
-                UpdateWorkshopOverlayState();
-
-            if (!success)
-                continue;
         }
 
-        RunOnUiThread(() =>
-        {
-            IsDownloading = false;
-            DownloadProgress = 0;
-            QueueProgressText = string.Empty;
+        if (toStart.Count == 0)
+            return;
 
-            if (StatusMessage.StartsWith("Installed", StringComparison.OrdinalIgnoreCase) ||
-                StatusMessage.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase))
+        foreach (var workshopId in toStart)
+            _ = ProcessInstallRequestAsync(workshopId);
+
+        UpdateInstallUiFromState();
+        UpdateWorkshopOverlayState();
+    }
+
+    private async Task ProcessInstallRequestAsync(string workshopId)
+    {
+        RunOnUiThread(() => StatusMessage = $"Starting mod {workshopId}...");
+
+        var success = await InstallSingleModAsync(workshopId);
+
+        var finishedBatch = false;
+        lock (_installStateLock)
+        {
+            _installQueueCompleted++;
+            _queuedOrInstallingIds.Remove(workshopId);
+            _activeInstallIds.Remove(workshopId);
+            _activeProgressByModId.Remove(workshopId);
+
+            if (!success)
+                _overlayModStates[workshopId] = "error";
+
+            finishedBatch =
+                _installQueueCompleted >= _installQueueTotal &&
+                _activeInstallIds.Count == 0 &&
+                _pendingInstallQueue.Count == 0;
+        }
+
+        if (!success)
+            UpdateWorkshopOverlayState();
+
+        StartPendingInstalls();
+        UpdateInstallUiFromState();
+
+        if (finishedBatch)
+        {
+            RunOnUiThread(() =>
             {
-                StatusMessage = "Install queue complete";
+                IsDownloading = false;
+                DownloadProgress = 100;
+                QueueProgressText = string.Empty;
+
+                if (StatusMessage.StartsWith("Installed", StringComparison.OrdinalIgnoreCase) ||
+                    StatusMessage.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase))
+                {
+                    StatusMessage = "Install queue complete";
+                }
+
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(600);
+                    RunOnUiThread(() => DownloadProgress = 0);
+                });
+            });
+
+            lock (_installStateLock)
+            {
+                _installQueueTotal = 0;
+                _installQueueCompleted = 0;
+                _activeProgressByModId.Clear();
             }
-        });
+        }
     }
 
     private async Task<bool> InstallSingleModAsync(string workshopId)
@@ -555,21 +559,22 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
-    private void OnDownloadProgressChanged(string statusMessage, int progressPercent)
+    private void OnDownloadProgressChanged(string modId, string statusMessage, int progressPercent)
     {
         var isQueueMode = false;
         var queueText = string.Empty;
         var overallPercent = 0;
 
-        lock (_installQueueLock)
+        lock (_installStateLock)
         {
-            if (_isInstallQueueRunning && _installQueueTotal > 0)
+            if (_installQueueTotal > 0 && !string.IsNullOrWhiteSpace(modId) && _queuedOrInstallingIds.Contains(modId))
             {
-                if (progressPercent >= 0)
-                    _currentInstallPercent = Math.Clamp(progressPercent, 0, 100);
+                if (_activeInstallIds.Contains(modId) && progressPercent >= 0)
+                    _activeProgressByModId[modId] = Math.Clamp(progressPercent, 0, 100);
 
-                queueText = $"{Math.Max(_currentInstallQueueIndex, 1)}/{_installQueueTotal}";
-                overallPercent = CalculateQueueOverallPercent();
+                var started = Math.Min(_installQueueTotal, _installQueueCompleted + _activeInstallIds.Count);
+                queueText = _installQueueTotal > 0 ? $"{started}/{_installQueueTotal}" : string.Empty;
+                overallPercent = CalculateOverallProgressPercent_NoLock();
                 isQueueMode = true;
             }
         }
@@ -616,7 +621,7 @@ public partial class MainViewModel : ViewModelBase
     private void UpdateWorkshopOverlayState()
     {
         Dictionary<string, string> snapshot;
-        lock (_installQueueLock)
+        lock (_installStateLock)
         {
             snapshot = new Dictionary<string, string>(_overlayModStates, StringComparer.Ordinal);
         }
@@ -655,7 +660,7 @@ public partial class MainViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(workshopId))
             return;
 
-        lock (_installQueueLock)
+        lock (_installStateLock)
         {
             _overlayModStates[workshopId] = state;
         }
@@ -668,26 +673,49 @@ public partial class MainViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(workshopId))
             return;
 
-        lock (_installQueueLock)
+        lock (_installStateLock)
         {
             _overlayModStates.Remove(workshopId);
         }
     }
 
-    private int CalculateQueueOverallPercent()
+    private void UpdateInstallUiFromState()
     {
-        lock (_installQueueLock)
+        int total;
+        int completed;
+        int active;
+        int overallPercent;
+        string queueText;
+
+        lock (_installStateLock)
         {
-            return CalculateQueueOverallPercent(_installQueueCompleted, _installQueueTotal, _currentInstallPercent);
+            total = _installQueueTotal;
+            completed = _installQueueCompleted;
+            active = _activeInstallIds.Count;
+            overallPercent = CalculateOverallProgressPercent_NoLock();
+
+            var started = Math.Min(total, completed + active);
+            queueText = total > 0 ? $"{started}/{total}" : string.Empty;
         }
+
+        RunOnUiThread(() =>
+        {
+            IsDownloading = total > 0 && (completed < total || active > 0);
+            QueueProgressText = queueText;
+            DownloadProgress = IsDownloading ? overallPercent : 0;
+        });
     }
 
-    private static int CalculateQueueOverallPercent(int completed, int total, int currentPercent)
+    private int CalculateOverallProgressPercent_NoLock()
     {
-        if (total <= 0)
+        if (_installQueueTotal <= 0)
             return 0;
 
-        var progress = (completed + (Math.Clamp(currentPercent, 0, 100) / 100.0)) / total;
+        var activeProgress = _activeProgressByModId.Values
+            .Select(v => Math.Clamp(v, 0, 100) / 100.0)
+            .Sum();
+
+        var progress = (_installQueueCompleted + activeProgress) / _installQueueTotal;
         return (int)Math.Round(progress * 100, MidpointRounding.AwayFromZero);
     }
 

@@ -62,6 +62,8 @@ public class WorkshopDownloader
 {
     private static readonly Serilog.ILogger _log = Log.ForContext<WorkshopDownloader>();
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    private static readonly bool _allowConcurrentSteamCmdDownloads =
+        !string.Equals(Environment.GetEnvironmentVariable("STEAMCMD_SERIAL_DOWNLOADS"), "1", StringComparison.OrdinalIgnoreCase);
 
     private const string SteamCmdZipUrl =
         "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip";
@@ -486,6 +488,20 @@ public class WorkshopDownloader
         string command,
         CancellationToken ct)
     {
+        if (_allowConcurrentSteamCmdDownloads)
+        {
+            RaiseProgress(modId, "", -1, "Starting SteamCMD...");
+            return await RunSteamCmdSingleAttemptAsync(
+                modId,
+                appId,
+                steamCmdPath,
+                steamCmdDir,
+                forceInstallDir,
+                downloadBasePath,
+                command,
+                ct);
+        }
+
         await _steamCmdSessionLock.WaitAsync(ct);
         try
         {
