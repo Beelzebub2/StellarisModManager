@@ -22,6 +22,8 @@ internal static class Program
             return;
         }
 
+        TryWriteStartupSignal(request.StartupSignalPath);
+
         try
         {
             AppUpdateStatusStore.Write("starting", "Updater started.", request.TargetVersion, false);
@@ -62,6 +64,25 @@ internal static class Program
         finally
         {
             ScheduleSelfDelete(request.CleanupRoot);
+        }
+    }
+
+    private static void TryWriteStartupSignal(string? startupSignalPath)
+    {
+        if (string.IsNullOrWhiteSpace(startupSignalPath))
+            return;
+
+        try
+        {
+            var dir = Path.GetDirectoryName(startupSignalPath);
+            if (!string.IsNullOrWhiteSpace(dir))
+                Directory.CreateDirectory(dir);
+
+            File.WriteAllText(startupSignalPath, DateTime.UtcNow.ToString("O"));
+        }
+        catch
+        {
+            // Best-effort signal file.
         }
     }
 
@@ -384,6 +405,7 @@ internal sealed class UpdateRequest
     public string DownloadUrl { get; init; } = string.Empty;
     public string ReleaseUrl { get; init; } = string.Empty;
     public string TargetVersion { get; init; } = string.Empty;
+    public string StartupSignalPath { get; init; } = string.Empty;
     public string CleanupRoot { get; init; } = string.Empty;
 
     public static UpdateRequest? Parse(string[] args)
@@ -405,6 +427,7 @@ internal sealed class UpdateRequest
             DownloadUrl = downloadUrl,
             ReleaseUrl = GetStringArg(args, "--release-url") ?? string.Empty,
             TargetVersion = GetStringArg(args, "--target-version") ?? string.Empty,
+            StartupSignalPath = GetStringArg(args, "--startup-signal") ?? string.Empty,
             CleanupRoot = GetStringArg(args, "--cleanup-root") ?? string.Empty,
         };
     }

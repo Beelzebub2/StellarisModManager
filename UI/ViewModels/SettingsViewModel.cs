@@ -368,7 +368,7 @@ public partial class SettingsViewModel : ViewModelBase
         {
             _appUpdateService.ClearSkippedVersion();
 
-            var started = StartBackgroundUpdater(_availableAppRelease);
+            var started = await StartBackgroundUpdaterAsync(_availableAppRelease);
             if (!started)
             {
                 IsApplyingAppUpdate = false;
@@ -641,7 +641,7 @@ public partial class SettingsViewModel : ViewModelBase
         LastAppUpdateCheckText = parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
-    private bool StartBackgroundUpdater(AppReleaseInfo release)
+    private async Task<bool> StartBackgroundUpdaterAsync(AppReleaseInfo release)
     {
         var currentExe = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
@@ -665,6 +665,19 @@ public partial class SettingsViewModel : ViewModelBase
 
         var updaterExe = Path.Combine(tempRoot, Path.GetFileName(updaterSourcePath));
         File.Copy(updaterSourcePath, updaterExe, true);
+
+        var startupSignalPath = Path.Combine(tempRoot, "updater-started.signal");
+        if (File.Exists(startupSignalPath))
+        {
+            try
+            {
+                File.Delete(startupSignalPath);
+            }
+            catch
+            {
+                // Best-effort cleanup of stale signal files.
+            }
+        }
 
         AppUpdateStatusStore.Write(new AppUpdateApplyStatus
         {
@@ -693,11 +706,57 @@ public partial class SettingsViewModel : ViewModelBase
         startInfo.ArgumentList.Add(release.ReleaseUrl);
         startInfo.ArgumentList.Add("--target-version");
         startInfo.ArgumentList.Add(release.Version);
+        startInfo.ArgumentList.Add("--startup-signal");
+        startInfo.ArgumentList.Add(startupSignalPath);
         startInfo.ArgumentList.Add("--cleanup-root");
         startInfo.ArgumentList.Add(tempRoot);
 
-        var process = Process.Start(startInfo);
-        return process is not null;
+        Process? process;
+        try
+        {
+            process = Process.Start(startInfo);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (process is null)
+            return false;
+
+        var started = await WaitForUpdaterStartupSignalAsync(process, startupSignalPath, TimeSpan.FromSeconds(6));
+        if (started)
+            return true;
+
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(true);
+        }
+        catch
+        {
+            // Best-effort process cleanup.
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> WaitForUpdaterStartupSignalAsync(Process process, string signalPath, TimeSpan timeout)
+    {
+        var startedAt = DateTime.UtcNow;
+
+        while (DateTime.UtcNow - startedAt < timeout)
+        {
+            if (File.Exists(signalPath))
+                return true;
+
+            if (process.HasExited)
+                return false;
+
+            await Task.Delay(120);
+        }
+
+        return File.Exists(signalPath);
     }
 
     private static void RequestApplicationShutdown()

@@ -114,16 +114,6 @@
                          CornerRadius="8"
                          Padding="10,8"
                          Margin="0,0,8,0" />
-
-                <Button Background="{DynamicResource Theme.SurfaceBg}"
-                        BorderBrush="{DynamicResource Theme.Border}"
-                        BorderThickness="1"
-                        CornerRadius="8"
-                        Padding="10,8"
-                        Command="{Binding ScanMoreCommand}"
-                        IsEnabled="{Binding CanScanMore}">
-                    <TextBlock Text="Scan More (+32)" FontSize="12" FontWeight="SemiBold" />
-                </Button>
             </WrapPanel>
 
             <TextBlock Text="{Binding StatusText}"

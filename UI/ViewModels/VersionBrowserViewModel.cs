@@ -1407,9 +1407,15 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (!string.IsNullOrWhiteSpace(selectedToken))
             queries.Add(selectedToken);
 
-        // Keep patch searches strict: 4.2.4 should not be broadened to 4.2.
-        if (Regex.IsMatch(selectedToken, @"^\d+\.\d+\.\d+$"))
-            return queries;
+        // For patch selections, also search the parent major.minor stream.
+        // This keeps exact-match priority while still surfacing recently-compatible mods.
+        var patchMatch = Regex.Match(selectedToken, @"^(?<major>\d+)\.(?<minor>\d+)\.\d+$");
+        if (patchMatch.Success)
+        {
+            var majorMinor = $"{patchMatch.Groups["major"].Value}.{patchMatch.Groups["minor"].Value}";
+            if (!queries.Contains(majorMinor, StringComparer.OrdinalIgnoreCase))
+                queries.Add(majorMinor);
+        }
 
         var normalized = StellarisVersions.Normalize(selectedToken);
         if (!string.IsNullOrWhiteSpace(normalized) &&
@@ -1435,6 +1441,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         if (!string.IsNullOrWhiteSpace(versionToken))
             queries.Add($"{name} {versionToken}");
+
+        var patchMatch = Regex.Match(versionToken, @"^(?<major>\d+)\.(?<minor>\d+)\.\d+$");
+        if (patchMatch.Success)
+        {
+            var majorMinor = $"{patchMatch.Groups["major"].Value}.{patchMatch.Groups["minor"].Value}";
+            queries.Add($"{name} {majorMinor}");
+        }
 
         var normalizedVersion = StellarisVersions.Normalize(versionToken);
         if (!string.IsNullOrWhiteSpace(normalizedVersion) &&
