@@ -22,11 +22,11 @@
 #endif
 
 #ifndef WizardImagePath
-  #define WizardImagePath "Output\\InstallerAssets\\wizard-banner.png"
+  #define WizardImagePath "Output\\InstallerAssets\\wizard-banner.bmp"
 #endif
 
 #ifndef WizardSmallImagePath
-  #define WizardSmallImagePath "Output\\InstallerAssets\\wizard-small.png"
+  #define WizardSmallImagePath "Output\\InstallerAssets\\wizard-banner-small.bmp"
 #endif
 
 [Setup]
