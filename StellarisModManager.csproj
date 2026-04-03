@@ -48,6 +48,7 @@
   <ItemGroup>
     <!-- Guard against nested repositories and generated folders being compiled as source -->
     <Compile Remove="Stellarisync\**\*.cs" />
+    <Compile Remove="Updater\**\*.cs" />
     <Compile Remove="**\obj\**\*.cs" />
     <Compile Remove="**\bin\**\*.cs" />
 

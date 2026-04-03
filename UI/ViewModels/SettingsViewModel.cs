@@ -358,43 +358,28 @@ public partial class SettingsViewModel : ViewModelBase
         if (IsAppUpdateBusy)
             return;
 
-        IsDownloadingAppUpdate = true;
-        IsApplyingAppUpdate = false;
-        AppUpdateStep = "Downloading";
+        IsDownloadingAppUpdate = false;
+        IsApplyingAppUpdate = true;
+        AppUpdateStep = "Preparing install";
         AppUpdateProgressPercent = 0;
-        AppUpdateDetails = $"Downloading installer for v{_availableAppRelease.Version}...";
+        AppUpdateDetails = $"Starting updater for v{_availableAppRelease.Version}...";
 
         try
         {
             _appUpdateService.ClearSkippedVersion();
 
-            var progress = new Progress<AppDownloadProgress>(p =>
-            {
-                AppUpdateProgressPercent = p.Percent >= 0 ? p.Percent : AppUpdateProgressPercent;
-                AppUpdateDetails = p.Percent >= 0
-                    ? $"Downloading installer... {p.Percent}%"
-                    : "Downloading installer...";
-            });
-
-            var installerPath = await _appUpdateService.DownloadInstallerAsync(_availableAppRelease, progress);
-
-            IsDownloadingAppUpdate = false;
-            IsApplyingAppUpdate = true;
-            AppUpdateStep = "Preparing install";
-            AppUpdateProgressPercent = 100;
-            AppUpdateDetails = "Preparing background installer...";
-
-            var started = StartBackgroundUpdater(installerPath, _availableAppRelease);
+            var started = StartBackgroundUpdater(_availableAppRelease);
             if (!started)
             {
                 IsApplyingAppUpdate = false;
                 AppUpdateStep = "Failed";
-                AppUpdateDetails = "Could not start background updater.";
+                AppUpdateDetails = "Could not start updater executable.";
                 return;
             }
 
             AppUpdateStep = "Closing app";
-            AppUpdateDetails = "Installer is running in background. App will close now.";
+            AppUpdateProgressPercent = 5;
+            AppUpdateDetails = "Updater is running in background. App will close now.";
             StatusMessage = "Applying app update in background...";
 
             await Task.Delay(750);
@@ -656,13 +641,18 @@ public partial class SettingsViewModel : ViewModelBase
         LastAppUpdateCheckText = parsed.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
     }
 
-    private bool StartBackgroundUpdater(string installerPath, AppReleaseInfo release)
+    private bool StartBackgroundUpdater(AppReleaseInfo release)
     {
         var currentExe = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
             return false;
 
-        if (!File.Exists(installerPath))
+        var appDir = Path.GetDirectoryName(currentExe);
+        if (string.IsNullOrWhiteSpace(appDir))
+            return false;
+
+        var updaterSourcePath = Path.Combine(appDir, "StellarisModManager.Updater.exe");
+        if (!File.Exists(updaterSourcePath))
             return false;
 
         var tempRoot = Path.Combine(
@@ -673,43 +663,41 @@ public partial class SettingsViewModel : ViewModelBase
 
         Directory.CreateDirectory(tempRoot);
 
-        var updaterExe = Path.Combine(tempRoot, Path.GetFileName(currentExe));
-        File.Copy(currentExe, updaterExe, true);
+        var updaterExe = Path.Combine(tempRoot, Path.GetFileName(updaterSourcePath));
+        File.Copy(updaterSourcePath, updaterExe, true);
 
         AppUpdateStatusStore.Write(new AppUpdateApplyStatus
         {
             Step = "launching",
             Success = false,
             TargetVersion = release.Version,
-            Message = $"Starting background updater for v{release.Version}."
-        });
-
-        var args = string.Join(" ", new[]
-        {
-            "--apply-update",
-            "--parent-pid", Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture),
-            "--installer", Quote(installerPath),
-            "--app-exe", Quote(currentExe),
-            "--target-version", Quote(release.Version),
-            "--cleanup-root", Quote(tempRoot),
+            Message = $"Starting standalone updater for v{release.Version}."
         });
 
         var startInfo = new ProcessStartInfo
         {
             FileName = updaterExe,
-            Arguments = args,
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = tempRoot,
         };
 
+        startInfo.ArgumentList.Add("--apply-update");
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
+        startInfo.ArgumentList.Add("--app-exe");
+        startInfo.ArgumentList.Add(currentExe);
+        startInfo.ArgumentList.Add("--download-url");
+        startInfo.ArgumentList.Add(release.DownloadUrl);
+        startInfo.ArgumentList.Add("--release-url");
+        startInfo.ArgumentList.Add(release.ReleaseUrl);
+        startInfo.ArgumentList.Add("--target-version");
+        startInfo.ArgumentList.Add(release.Version);
+        startInfo.ArgumentList.Add("--cleanup-root");
+        startInfo.ArgumentList.Add(tempRoot);
+
         var process = Process.Start(startInfo);
         return process is not null;
-    }
-
-    private static string Quote(string value)
-    {
-        return $"\"{value.Replace("\"", "\\\"")}\"";
     }
 
     private static void RequestApplicationShutdown()
