@@ -176,6 +176,18 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
     }
 
+    private static string GetConfirmedGameVersionBadge(string workshopId, string fallbackVersion)
+    {
+        var confirmed = StellarisyncClient.GetConfirmedVersion(workshopId);
+        if (!string.IsNullOrWhiteSpace(confirmed))
+        {
+            var display = confirmed.Replace(".*", "");
+            // The prompt asks to display with a confirmed checkmark
+            return $"✅ {display}";
+        }
+        return fallbackVersion;
+    }
+
     private static void InitializeCaches()
     {
         try
@@ -376,6 +388,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 SelectedVersion = VersionItems.FirstOrDefault();
             _loadedOnce = true;
         }
+
+        await StellarisyncClient.FetchConfirmedVersionsAsync();
 
         await RefreshFromWorkshopAsync();
     }
@@ -948,7 +962,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                     WorkshopId = id,
                     Name = name,
                     PreviewImageUrl = previewImageUrl,
-                    GameVersionBadge = versionQuery,
+                    GameVersionBadge = GetConfirmedGameVersionBadge(id, versionQuery),
                     PublishedAtUnixSeconds = info?.TimeCreated ?? 0,
                     UpdatedAtUnixSeconds = info?.TimeUpdated ?? 0,
                     TotalSubscribers = info?.TotalSubscribers ?? 0,
@@ -1093,7 +1107,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 WorkshopId = item.WorkshopId,
                 Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
                 PreviewImageUrl = item.PreviewImageUrl,
-                GameVersionBadge = versionQuery,
+                GameVersionBadge = GetConfirmedGameVersionBadge(item.WorkshopId, versionQuery),
                 PublishedAtUnixSeconds = item.PublishedAtUnixSeconds,
                 UpdatedAtUnixSeconds = item.UpdatedAtUnixSeconds,
                 TotalSubscribers = item.TotalSubscribers,

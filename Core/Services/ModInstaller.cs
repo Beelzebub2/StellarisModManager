@@ -72,6 +72,11 @@ public class ModInstaller
         {
             var content = await File.ReadAllTextAsync(srcDescriptorPath);
             descriptor = DescriptorParser.Parse(content);
+
+            if (!string.IsNullOrWhiteSpace(descriptor.SupportedVersion))
+            {
+                _ = StellarisyncClient.ReportModVersionAsync(workshopId, descriptor.SupportedVersion);
+            }
         }
         else
         {
