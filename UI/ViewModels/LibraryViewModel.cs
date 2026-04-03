@@ -947,11 +947,12 @@ public partial class LibraryViewModel : ViewModelBase
         IsSubmittingCompatibilityReport = true;
         try
         {
+            var reporterId = GetOrCreateCompatibilityReporterId();
             var reported = await StellarisyncClient.ReportCompatibilityOnVersionAsync(
                 target.WorkshopId,
                 gameVersion,
                 worked,
-                Environment.UserName);
+                reporterId);
 
             if (!reported)
             {
@@ -969,6 +970,18 @@ public partial class LibraryViewModel : ViewModelBase
         {
             IsSubmittingCompatibilityReport = false;
         }
+    }
+
+    private string GetOrCreateCompatibilityReporterId()
+    {
+        var existing = _settings.CompatibilityReporterId?.Trim();
+        if (Guid.TryParse(existing, out var parsed) && parsed != Guid.Empty)
+            return parsed.ToString("D");
+
+        var created = Guid.NewGuid().ToString("D");
+        _settings.CompatibilityReporterId = created;
+        _settings.Save();
+        return created;
     }
 
     private void RefreshCompatibilityReportSummary(ModViewModel? mod = null)

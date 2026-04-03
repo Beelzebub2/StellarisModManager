@@ -38,6 +38,7 @@ public class AppSettings
     public bool WarnBeforeRestartGame { get; set; } = true;
     public string ThemePalette { get; set; } = "Obsidian Ember";
     public bool AutoCheckAppUpdates { get; set; } = true;
+    public string? CompatibilityReporterId { get; set; }
     public string? LastAppUpdateCheckUtc { get; set; }
     public string? LastOfferedAppVersion { get; set; }
     public string? SkippedAppVersion { get; set; }
