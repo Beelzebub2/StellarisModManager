@@ -13,12 +13,17 @@ call "build.bat" "%CONFIG%" "%APP_VERSION%"
 if errorlevel 1 exit /b %errorlevel%
 
 set "ASSETSDIR=Output\InstallerAssets"
-set "BANNER_SOURCE=%CD%\UI\Assets\splash-art.png"
+set "BANNER_SOURCE=C:\Users\ricar\Downloads\banner.jpg"
 set "ICON_SOURCE=%CD%\UI\Assets\icon.jpg"
 set "SETUP_ICON=%CD%\%ASSETSDIR%\setup-icon.ico"
 set "WIZARD_IMAGE=%CD%\%ASSETSDIR%\wizard-banner.bmp"
 set "WIZARD_SMALL_IMAGE=%CD%\%ASSETSDIR%\wizard-banner-small.bmp"
 set "ISCC_EXE="
+
+if not exist "%BANNER_SOURCE%" (
+    echo Custom banner not found at %BANNER_SOURCE%. Falling back to UI\Assets\splash-art.png.
+    set "BANNER_SOURCE=%CD%\UI\Assets\splash-art.png"
+)
 
 for /f "delims=" %%I in ('where iscc.exe 2^>nul') do (
     if not defined ISCC_EXE set "ISCC_EXE=%%I"
@@ -73,8 +78,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd-HHmmss"') do set "BUILDSTAMP=%%I"
-set "SETUP_BASENAME=StellarisModManager-Setup-v%APP_VERSION%-%BUILDSTAMP%"
+set "SETUP_BASENAME=StellarisModManager-Setup-version%APP_VERSION%"
 
 "%ISCC_EXE%" /Qp "/DSourceDir=Output\\StellarisModManager" "/DSetupOutputDir=Output\\Installer" "/DSetupOutputBase=%SETUP_BASENAME%" "/DMyAppVersion=%APP_VERSION%" "/DSetupIconPath=%SETUP_ICON%" "/DWizardImagePath=%WIZARD_IMAGE%" "/DWizardSmallImagePath=%WIZARD_SMALL_IMAGE%" %ISCC_DARK_DEFINE% "installer.iss"
 if errorlevel 1 (
