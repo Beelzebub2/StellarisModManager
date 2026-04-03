@@ -29,12 +29,45 @@ public partial class WorkshopView : UserControl
     private int _navigationAttempt;
     private bool _steamAutoRetryUsed;
     private string _lastNavigatedUrl = string.Empty;
+    private bool _isUnloaded;
 
     public WorkshopView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+    }
+
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    {
+        _isUnloaded = true;
+
+        if (_vm is not null)
+        {
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+            _vm.NavigateToUrlRequested -= OnNavigateToUrlRequested;
+            _vm = null;
+        }
+
+        if (_webView is not null)
+        {
+            _webView.EnvironmentRequested -= OnEnvironmentRequested;
+            _webView.AdapterCreated -= OnAdapterCreated;
+            _webView.AdapterDestroyed -= OnAdapterDestroyed;
+            _webView.NavigationStarted -= OnNavigationStarted;
+            _webView.NavigationCompleted -= OnNavigationCompleted;
+            _webView.WebMessageReceived -= OnWebMessageReceived;
+
+            if (_webView is IDisposable disposable)
+                disposable.Dispose();
+
+            _webView = null;
+        }
+
+        _isNativeEngineReady = false;
+        _navigationAttempt++;
+        WebViewHost.Content = null;
     }
 
     private void OnDataContextChanged(object? sender, EventArgs e)
@@ -61,6 +94,7 @@ public partial class WorkshopView : UserControl
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
+        _isUnloaded = false;
         _vm = DataContext as WorkshopViewModel;
 
         var initialUrl = NormalizeUrl(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl);
@@ -72,12 +106,13 @@ public partial class WorkshopView : UserControl
 
     private void TryInitWebView()
     {
-        if (_webView is not null || _webViewInitFailed)
+        if (_isUnloaded || _webView is not null || _webViewInitFailed)
             return;
 
         try
         {
             _webView = new NativeWebView();
+            _webView.EnvironmentRequested += OnEnvironmentRequested;
             _webView.AdapterCreated += OnAdapterCreated;
             _webView.AdapterDestroyed += OnAdapterDestroyed;
             _webView.NavigationStarted += OnNavigationStarted;
@@ -103,7 +138,23 @@ public partial class WorkshopView : UserControl
     private void OnAdapterCreated(object? sender, WebViewAdapterEventArgs e)
     {
         _isNativeEngineReady = true;
-        Dispatcher.UIThread.Post(() => NavigateTo(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl));
+        Dispatcher.UIThread.Post(() =>
+        {
+            try
+            {
+                if (!_isUnloaded)
+                    NavigateTo(_vm?.CurrentUrl ?? WorkshopViewModel.HomeUrl);
+            }
+            catch (Exception ex)
+            {
+                ShowFallback($"Embedded browser became unstable: {ex.Message}");
+            }
+        });
+    }
+
+    private void OnEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
+    {
+        WebViewRuntimeConfig.ApplyWritableProfile(e);
     }
 
     private void OnAdapterDestroyed(object? sender, WebViewAdapterEventArgs e)
@@ -119,26 +170,26 @@ public partial class WorkshopView : UserControl
 
     private async void OnNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
     {
-        await Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            if (_vm is not null)
-            {
-                _vm.IsLoading = false;
-                _vm.CanGoBack = _webView?.CanGoBack == true;
-                _vm.CanGoForward = _webView?.CanGoForward == true;
-            }
-        });
-
-        if (!e.IsSuccess)
-        {
-            ShowFallback("Steam Workshop could not load in the embedded browser. You can retry, install WebView2 runtime, or open in your default browser.");
-            return;
-        }
-
-        ShowEmbeddedBrowser();
-
         try
         {
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_vm is not null)
+                {
+                    _vm.IsLoading = false;
+                    _vm.CanGoBack = _webView?.CanGoBack == true;
+                    _vm.CanGoForward = _webView?.CanGoForward == true;
+                }
+            });
+
+            if (!e.IsSuccess)
+            {
+                ShowFallback("Steam Workshop could not load in the embedded browser. You can retry, install WebView2 runtime, or open in your default browser.");
+                return;
+            }
+
+            ShowEmbeddedBrowser();
+
             if (_webView is not null)
                 await EnsureInAppNavigationBehaviorAsync(_webView);
 
@@ -149,7 +200,11 @@ public partial class WorkshopView : UserControl
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[WorkshopView] Overlay injection failed: {ex.Message}");
+            if (_vm is not null)
+                _vm.IsLoading = false;
+
+            ShowFallback($"Embedded browser encountered an error: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[WorkshopView] Navigation completed handling failed: {ex}");
         }
     }
 
@@ -224,6 +279,9 @@ public partial class WorkshopView : UserControl
 
     private void NavigateTo(string rawUrl)
     {
+        if (_isUnloaded)
+            return;
+
         var url = NormalizeUrl(rawUrl);
         if (!string.Equals(url, _lastNavigatedUrl, StringComparison.OrdinalIgnoreCase))
         {
@@ -266,6 +324,9 @@ public partial class WorkshopView : UserControl
     private async Task StartNavigationWatchdogAsync(int attempt, string url)
     {
         await Task.Delay(TimeSpan.FromSeconds(12));
+
+        if (_isUnloaded)
+            return;
 
         if (_vm is null)
             return;
@@ -323,23 +384,47 @@ public partial class WorkshopView : UserControl
 
     private void BackButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady && _webView?.CanGoBack == true)
-            _webView.GoBack();
+        try
+        {
+            if (_isNativeEngineReady && _webView?.CanGoBack == true)
+                _webView.GoBack();
+        }
+        catch (Exception ex)
+        {
+            ShowFallback($"Back navigation failed: {ex.Message}");
+        }
     }
 
     private void ForwardButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady && _webView?.CanGoForward == true)
-            _webView.GoForward();
+        try
+        {
+            if (_isNativeEngineReady && _webView?.CanGoForward == true)
+                _webView.GoForward();
+        }
+        catch (Exception ex)
+        {
+            ShowFallback($"Forward navigation failed: {ex.Message}");
+        }
     }
 
     private void RefreshButton_Click(object? sender, RoutedEventArgs e)
     {
-        if (_isNativeEngineReady && _webView is not null)
+        if (!_isNativeEngineReady || _webView is null)
+            return;
+
+        try
         {
             if (_vm is not null)
                 _vm.IsLoading = true;
             _webView.Refresh();
+        }
+        catch (Exception ex)
+        {
+            if (_vm is not null)
+                _vm.IsLoading = false;
+
+            ShowFallback($"Refresh failed: {ex.Message}");
         }
     }
 
@@ -463,8 +548,15 @@ public partial class WorkshopView : UserControl
             ? "{}"
             : _vm.ModStatesJson;
 
-        await _webView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
-        await _webView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
+        try
+        {
+            await _webView.InvokeScript($"window.__smmSetInstalledMods?.({idsJson});");
+            await _webView.InvokeScript($"window.__smmSetModStates?.({statesJson});");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[WorkshopView] ApplyOverlayStateAsync failed: {ex.Message}");
+        }
     }
 
     private static async Task EnsureInAppNavigationBehaviorAsync(NativeWebView webView)

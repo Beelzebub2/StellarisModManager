@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
+using StellarisModManager.Core.Utils;
 using StellarisModManager.UI.ViewModels;
 
 namespace StellarisModManager.UI.Views;
@@ -24,6 +25,23 @@ public partial class VersionBrowserView : UserControl
         InitializeComponent();
         PropertyChanged += OnControlPropertyChanged;
         Loaded += OnLoaded;
+        Unloaded += OnUnloaded;
+    }
+
+    private void OnUnloaded(object? sender, RoutedEventArgs e)
+    {
+        if (_modDetailsWebView is not null)
+        {
+            _modDetailsWebView.EnvironmentRequested -= OnModBrowserEnvironmentRequested;
+            _modDetailsWebView.NavigationCompleted -= OnModBrowserNavigationCompleted;
+
+            if (_modDetailsWebView is IDisposable disposable)
+                disposable.Dispose();
+
+            _modDetailsWebView = null;
+        }
+
+        ModBrowserHost.Content = null;
     }
 
     private void OnLoaded(object? sender, RoutedEventArgs e)
@@ -175,6 +193,7 @@ public partial class VersionBrowserView : UserControl
         try
         {
             _modDetailsWebView = new NativeWebView();
+            _modDetailsWebView.EnvironmentRequested += OnModBrowserEnvironmentRequested;
             _modDetailsWebView.NavigationCompleted += OnModBrowserNavigationCompleted;
             ModBrowserHost.Content = _modDetailsWebView;
             ModBrowserFallbackPanel.IsVisible = false;
@@ -189,18 +208,24 @@ public partial class VersionBrowserView : UserControl
         }
     }
 
+    private void OnModBrowserEnvironmentRequested(object? sender, WebViewEnvironmentRequestedEventArgs e)
+    {
+        WebViewRuntimeConfig.ApplyWritableProfile(e);
+    }
+
     private async void OnModBrowserNavigationCompleted(object? sender, WebViewNavigationCompletedEventArgs e)
     {
-        if (!e.IsSuccess || _modDetailsWebView is null)
-            return;
-
         try
         {
+            if (!e.IsSuccess || _modDetailsWebView is null)
+                return;
+
             await EnsureInAppNavigationBehaviorAsync(_modDetailsWebView);
         }
-        catch
+        catch (Exception ex)
         {
-            // Best-effort script injection only.
+            ModBrowserFallbackText.Text = $"Embedded browser encountered an error: {ex.Message}";
+            ModBrowserFallbackPanel.IsVisible = true;
         }
     }
 
