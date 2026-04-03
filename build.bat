@@ -9,11 +9,10 @@ if "%APP_VERSION%"=="" set "APP_VERSION=1.0.0"
 
 set "RUNTIME=win-x64"
 set "APPNAME=StellarisModManager"
-set "UPDATER_PROJECT=Updater\StellarisModManager.Updater.csproj"
-set "UPDATER_EXE=StellarisModManager.Updater.exe"
 set "OUTDIR=Output\%APPNAME%"
 set "PUBLISHDIR=Output\_publish\%APPNAME%"
-set "UPDATER_PUBLISHDIR=%PUBLISHDIR%\_updater"
+set "PYTHON_UPDATER_SOURCE=Updater\python_updater.py"
+set "PYTHON_UPDATER_DESTDIR=%PUBLISHDIR%\Updater"
 
 if exist "%PUBLISHDIR%" rmdir /s /q "%PUBLISHDIR%"
 
@@ -25,21 +24,18 @@ if not exist "%PUBLISHDIR%\%APPNAME%.exe" (
 	exit /b 1
 )
 
-dotnet publish "%UPDATER_PROJECT%" -c "%CONFIG%" -r "%RUNTIME%" --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -p:UseAppHost=true -p:Version=%APP_VERSION% -p:InformationalVersion=%APP_VERSION% -p:DebugType=None -p:DebugSymbols=false -o "%UPDATER_PUBLISHDIR%"
-if errorlevel 1 exit /b %errorlevel%
-
-if not exist "%UPDATER_PUBLISHDIR%\%UPDATER_EXE%" (
-	echo Updater build finished but executable was not found in publish output.
+if not exist "%PYTHON_UPDATER_SOURCE%" (
+	echo Python updater script not found at %PYTHON_UPDATER_SOURCE%.
 	exit /b 1
 )
 
-copy /y "%UPDATER_PUBLISHDIR%\%UPDATER_EXE%" "%PUBLISHDIR%\%UPDATER_EXE%" >nul
+if not exist "%PYTHON_UPDATER_DESTDIR%" mkdir "%PYTHON_UPDATER_DESTDIR%"
+
+copy /y "%PYTHON_UPDATER_SOURCE%" "%PYTHON_UPDATER_DESTDIR%\python_updater.py" >nul
 if errorlevel 1 (
-	echo Failed to place updater executable in publish output.
+	echo Failed to place python updater script in publish output.
 	exit /b 1
 )
-
-rmdir /s /q "%UPDATER_PUBLISHDIR%"
 
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 

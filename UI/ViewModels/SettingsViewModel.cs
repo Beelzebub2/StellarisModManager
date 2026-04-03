@@ -375,7 +375,7 @@ public partial class SettingsViewModel : ViewModelBase
             {
                 IsApplyingAppUpdate = false;
                 AppUpdateStep = "Failed";
-                AppUpdateDetails = "Could not start updater executable.";
+                AppUpdateDetails = "Could not start Python updater process.";
                 return;
             }
 
@@ -655,7 +655,10 @@ public partial class SettingsViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(appDir))
             return false;
 
-        var updaterSourcePath = Path.Combine(appDir, "StellarisModManager.Updater.exe");
+        var updaterSourcePath = Path.Combine(appDir, "Updater", "python_updater.py");
+        if (!File.Exists(updaterSourcePath))
+            updaterSourcePath = Path.Combine(appDir, "python_updater.py");
+
         if (!File.Exists(updaterSourcePath))
             return false;
 
@@ -665,17 +668,11 @@ public partial class SettingsViewModel : ViewModelBase
             "updater",
             Guid.NewGuid().ToString("N"));
 
-        Directory.CreateDirectory(tempRoot);
+        var tempUpdaterDir = Path.Combine(tempRoot, "Updater");
+        Directory.CreateDirectory(tempUpdaterDir);
 
-        // Copy everything matching StellarisModManager.Updater.*
-        var prefix = "StellarisModManager.Updater.";
-        foreach (var file in Directory.GetFiles(appDir, $"{prefix}*"))
-        {
-            var fileName = Path.GetFileName(file);
-            File.Copy(file, Path.Combine(tempRoot, fileName), true);
-        }
-
-        var updaterExe = Path.Combine(tempRoot, "StellarisModManager.Updater.exe");
+        var updaterScriptPath = Path.Combine(tempUpdaterDir, "python_updater.py");
+        File.Copy(updaterSourcePath, updaterScriptPath, true);
 
         var startupSignalPath = Path.Combine(tempRoot, "updater-started.signal");
         if (File.Exists(startupSignalPath))
@@ -695,42 +692,16 @@ public partial class SettingsViewModel : ViewModelBase
             Step = "launching",
             Success = false,
             TargetVersion = release.Version,
-            Message = $"Starting standalone updater for v{release.Version}."
+            Message = $"Starting python updater for v{release.Version}."
         });
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = updaterExe,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = tempRoot,
-        };
-
-        startInfo.ArgumentList.Add("--apply-update");
-        startInfo.ArgumentList.Add("--parent-pid");
-        startInfo.ArgumentList.Add(Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture));
-        startInfo.ArgumentList.Add("--app-exe");
-        startInfo.ArgumentList.Add(currentExe);
-        startInfo.ArgumentList.Add("--download-url");
-        startInfo.ArgumentList.Add(release.DownloadUrl);
-        startInfo.ArgumentList.Add("--release-url");
-        startInfo.ArgumentList.Add(release.ReleaseUrl);
-        startInfo.ArgumentList.Add("--target-version");
-        startInfo.ArgumentList.Add(release.Version);
-        startInfo.ArgumentList.Add("--startup-signal");
-        startInfo.ArgumentList.Add(startupSignalPath);
-        startInfo.ArgumentList.Add("--cleanup-root");
-        startInfo.ArgumentList.Add(tempRoot);
-
-        Process? process;
-        try
-        {
-            process = Process.Start(startInfo);
-        }
-        catch
-        {
-            return false;
-        }
+        var process = TryStartPythonUpdaterProcess(
+            tempRoot,
+            updaterScriptPath,
+            currentExe,
+            release,
+            startupSignalPath,
+            tempRoot);
 
         if (process is null)
             return false;
@@ -750,6 +721,69 @@ public partial class SettingsViewModel : ViewModelBase
         }
 
         return false;
+    }
+
+    private static Process? TryStartPythonUpdaterProcess(
+        string workingDirectory,
+        string scriptPath,
+        string appExePath,
+        AppReleaseInfo release,
+        string startupSignalPath,
+        string cleanupRoot)
+    {
+        var parentPid = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+
+        foreach (var (executable, prefixArgs) in EnumeratePythonLaunchCandidates())
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = executable,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = workingDirectory,
+            };
+
+            foreach (var prefixArg in prefixArgs)
+                startInfo.ArgumentList.Add(prefixArg);
+
+            startInfo.ArgumentList.Add(scriptPath);
+            startInfo.ArgumentList.Add("--apply-update");
+            startInfo.ArgumentList.Add("--parent-pid");
+            startInfo.ArgumentList.Add(parentPid);
+            startInfo.ArgumentList.Add("--app-exe");
+            startInfo.ArgumentList.Add(appExePath);
+            startInfo.ArgumentList.Add("--download-url");
+            startInfo.ArgumentList.Add(release.DownloadUrl);
+            startInfo.ArgumentList.Add("--release-url");
+            startInfo.ArgumentList.Add(release.ReleaseUrl);
+            startInfo.ArgumentList.Add("--target-version");
+            startInfo.ArgumentList.Add(release.Version);
+            startInfo.ArgumentList.Add("--startup-signal");
+            startInfo.ArgumentList.Add(startupSignalPath);
+            startInfo.ArgumentList.Add("--cleanup-root");
+            startInfo.ArgumentList.Add(cleanupRoot);
+
+            try
+            {
+                var process = Process.Start(startInfo);
+                if (process is not null)
+                    return process;
+            }
+            catch
+            {
+                // Try next Python launcher candidate.
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<(string Executable, string[] PrefixArgs)> EnumeratePythonLaunchCandidates()
+    {
+        yield return ("pythonw.exe", Array.Empty<string>());
+        yield return ("python.exe", Array.Empty<string>());
+        yield return ("py.exe", new[] { "-3" });
+        yield return ("py.exe", Array.Empty<string>());
     }
 
     private static async Task<bool> WaitForUpdaterStartupSignalAsync(Process process, string signalPath, TimeSpan timeout)

@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -27,13 +26,6 @@ public sealed class AppUpdateCheckResult
     public bool IsSkippedVersion { get; init; }
     public string Message { get; init; } = string.Empty;
     public AppReleaseInfo? Release { get; init; }
-}
-
-public sealed class AppDownloadProgress
-{
-    public long DownloadedBytes { get; init; }
-    public long? TotalBytes { get; init; }
-    public int Percent { get; init; }
 }
 
 public sealed class AppUpdateApplyStatus
@@ -163,167 +155,6 @@ public sealed class AppUpdateService
                 ? $"Critical update {latest.Version} is available."
                 : $"Update {latest.Version} is available."
         };
-    }
-
-    public async Task<string> DownloadInstallerAsync(
-        AppReleaseInfo release,
-        IProgress<AppDownloadProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        var baseDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "StellarisModManager",
-            "updates",
-            release.Version);
-
-        Directory.CreateDirectory(baseDir);
-
-        var fileName = TryGetFileNameFromUrl(release.DownloadUrl);
-        if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            fileName = "StellarisModManager-Setup.exe";
-
-        var targetPath = Path.Combine(baseDir, fileName);
-
-        var downloadUrl = release.DownloadUrl;
-        var usedFallback = false;
-
-        while (true)
-        {
-            try
-            {
-                await DownloadFileAsync(downloadUrl, targetPath, progress, cancellationToken);
-                return targetPath;
-            }
-            catch (HttpRequestException ex) when (!usedFallback && IsStaleAssetStatus(ex.StatusCode))
-            {
-                var fallbackUrl = await ResolveFallbackDownloadUrlAsync(release, cancellationToken);
-                if (string.IsNullOrWhiteSpace(fallbackUrl) || string.Equals(fallbackUrl, downloadUrl, StringComparison.OrdinalIgnoreCase))
-                    throw;
-
-                var fallbackName = TryGetFileNameFromUrl(fallbackUrl);
-                if (!string.IsNullOrWhiteSpace(fallbackName) && fallbackName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    targetPath = Path.Combine(baseDir, fallbackName);
-
-                usedFallback = true;
-                downloadUrl = fallbackUrl;
-            }
-        }
-    }
-
-    private static async Task DownloadFileAsync(
-        string downloadUrl,
-        string targetPath,
-        IProgress<AppDownloadProgress>? progress,
-        CancellationToken cancellationToken)
-    {
-        using var response = await Http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        var total = response.Content.Headers.ContentLength;
-        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-        await using var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-
-        var buffer = new byte[1024 * 64];
-        long downloaded = 0;
-
-        while (true)
-        {
-            var read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-            if (read <= 0)
-                break;
-
-            await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            downloaded += read;
-
-            progress?.Report(new AppDownloadProgress
-            {
-                DownloadedBytes = downloaded,
-                TotalBytes = total,
-                Percent = total > 0
-                    ? (int)Math.Round((downloaded / (double)total.Value) * 100, MidpointRounding.AwayFromZero)
-                    : -1
-            });
-        }
-    }
-
-    private async Task<string?> ResolveFallbackDownloadUrlAsync(AppReleaseInfo release, CancellationToken cancellationToken)
-    {
-        if (TryParseGitHubReleaseTag(release.ReleaseUrl, out var owner, out var repo, out var tag))
-        {
-            var tagged = await TryGetGitHubReleaseByTagAsync(owner, repo, tag, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(tagged))
-                return tagged;
-        }
-
-        // Last fallback: query latest release in configured repository.
-        var latest = await TryGetLatestReleaseFromGitHubAsync(cancellationToken);
-        return latest?.DownloadUrl;
-    }
-
-    private async Task<string?> TryGetGitHubReleaseByTagAsync(
-        string owner,
-        string repo,
-        string tag,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var url = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{Uri.EscapeDataString(tag)}";
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("StellarisModManager", CurrentVersion));
-            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-
-            using var response = await Http.SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-                return null;
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-
-            return TryGetInstallerAssetUrl(doc.RootElement);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static bool TryParseGitHubReleaseTag(string releaseUrl, out string owner, out string repo, out string tag)
-    {
-        owner = string.Empty;
-        repo = string.Empty;
-        tag = string.Empty;
-
-        if (!Uri.TryCreate(releaseUrl, UriKind.Absolute, out var uri))
-            return false;
-
-        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 5)
-            return false;
-
-        if (!string.Equals(segments[2], "releases", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(segments[3], "tag", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        owner = segments[0];
-        repo = segments[1];
-        tag = Uri.UnescapeDataString(segments[4]);
-        return !string.IsNullOrWhiteSpace(owner)
-               && !string.IsNullOrWhiteSpace(repo)
-               && !string.IsNullOrWhiteSpace(tag);
-    }
-
-    private static bool IsStaleAssetStatus(HttpStatusCode? statusCode)
-    {
-        if (!statusCode.HasValue)
-            return false;
-
-        return statusCode == HttpStatusCode.NotFound
-            || statusCode == HttpStatusCode.Forbidden
-            || statusCode == HttpStatusCode.Gone;
     }
 
     private static string? TryGetInstallerAssetUrl(JsonElement releaseRoot)
@@ -472,17 +303,4 @@ public sealed class AppUpdateService
         };
     }
 
-    private static string? TryGetFileNameFromUrl(string url)
-    {
-        try
-        {
-            var uri = new Uri(url, UriKind.Absolute);
-            var name = Path.GetFileName(uri.LocalPath);
-            return string.IsNullOrWhiteSpace(name) ? null : name;
-        }
-        catch
-        {
-            return null;
-        }
-    }
 }
