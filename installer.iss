@@ -41,19 +41,22 @@ OutputDir={#SetupOutputDir}
 OutputBaseFilename={#SetupOutputBase}
 Compression=lzma2
 SolidCompression=yes
-WizardStyle=modern
+WizardStyle=modern dynamic windows11
 SetupIconFile={#SetupIconPath}
+
+; Light-mode colours (used when Windows is in light mode)
 WizardImageFile={#WizardImagePath}
 WizardImageAlphaFormat=defined
 WizardImageBackColor=$F0F0F0
 WizardSmallImageFile={#WizardSmallImagePath}
 WizardSmallImageBackColor=$F0F0F0
-#ifdef EnableDarkWizardStyle
+
+; Dark-mode colours (used when Windows is in dark mode)
 WizardImageFileDynamicDark={#WizardImagePath}
 WizardImageBackColorDynamicDark=$202020
 WizardSmallImageFileDynamicDark={#WizardSmallImagePath}
 WizardSmallImageBackColorDynamicDark=$202020
-#endif
+
 WizardImageStretch=yes
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
