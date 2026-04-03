@@ -15,6 +15,12 @@
             <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.16" />
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.20" />
+                </Transitions>
+            </Setter>
         </Style>
         <Style Selector="Border.mod-card:pointerover">
             <Setter Property="BorderBrush" Value="{DynamicResource Theme.Accent}" />
@@ -198,6 +204,8 @@
                                         Height="244"
                                         Margin="4"
                                         ClipToBounds="True"
+                                        Opacity="0"
+                                        AttachedToVisualTree="OnModCardAttachedToVisualTree"
                                         PointerPressed="OnModCardPointerPressed">
                                     <Grid RowDefinitions="120,*,Auto">
 
@@ -286,25 +294,52 @@
                         VerticalAlignment="Bottom"
                         Margin="0,0,0,10"
                         IsVisible="{Binding HasResults}">
-                    <Button Command="{Binding ScanMoreCommand}"
-                            IsEnabled="{Binding CanScanMore}"
-                            ToolTip.Tip="Load the next page of workshop results"
-                            Background="{DynamicResource Theme.SurfaceBg}"
-                            BorderBrush="{DynamicResource Theme.Border}"
-                            BorderThickness="1"
-                            CornerRadius="8"
-                            Padding="12,7">
-                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding NextPageButtonText}"
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <Button Command="{Binding PreviousPageCommand}"
+                                IsEnabled="{Binding CanGoToPreviousPage}"
+                                ToolTip.Tip="Go to previous page"
+                                Background="{DynamicResource Theme.SurfaceBg}"
+                                BorderBrush="{DynamicResource Theme.Border}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,7">
+                            <TextBlock Text="Previous"
                                        Foreground="{DynamicResource Theme.TextPrimary}"
                                        FontSize="12"
                                        FontWeight="SemiBold" />
-                            <ProgressBar IsIndeterminate="True"
-                                         Width="26"
-                                         Height="4"
-                                         IsVisible="{Binding IsScanningMore}" />
-                        </StackPanel>
-                    </Button>
+                        </Button>
+
+                        <Border Background="{DynamicResource Theme.SurfaceBg}"
+                                BorderBrush="{DynamicResource Theme.Border}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,7">
+                            <TextBlock Text="{Binding ResultPageText}"
+                                       Foreground="{DynamicResource Theme.TextMuted}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+                        </Border>
+
+                        <Button Command="{Binding NextPageCommand}"
+                                IsEnabled="{Binding CanGoToNextPage}"
+                                ToolTip.Tip="Go to next page or scan more results"
+                                Background="{DynamicResource Theme.SurfaceBg}"
+                                BorderBrush="{DynamicResource Theme.Border}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12,7">
+                            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding NextPageButtonText}"
+                                           Foreground="{DynamicResource Theme.TextPrimary}"
+                                           FontSize="12"
+                                           FontWeight="SemiBold" />
+                                <ProgressBar IsIndeterminate="True"
+                                             Width="26"
+                                             Height="4"
+                                             IsVisible="{Binding IsScanningMore}" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
                 </Border>
             </Grid>
 

@@ -30,6 +30,15 @@
         <Style Selector="Button.nav-btn:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
         </Style>
+        <Style Selector="Button.nav-btn.footer-nav">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.nav-btn.footer-nav:pointerover">
+            <Setter Property="Opacity" Value="0.92" />
+        </Style>
+        <Style Selector="Button.nav-btn.footer-nav:pressed">
+            <Setter Property="Opacity" Value="0.82" />
+        </Style>
         <Style Selector="TextBlock.icon-glyph">
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
             <Setter Property="FontSize" Value="14" />
@@ -283,7 +292,7 @@
                             Padding="10,8"
                             Margin="4">
                         <StackPanel Spacing="8" HorizontalAlignment="Stretch">
-                            <Button Classes="nav-btn" Command="{Binding LaunchGameCommand}">
+                            <Button Classes="nav-btn footer-nav" Command="{Binding LaunchGameCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <TextBlock Classes="icon-glyph" Text="{Binding LaunchGameButtonIconGlyph}" />
                                     <TextBlock Text="{Binding LaunchGameButtonText}" />
@@ -293,7 +302,7 @@
                             <Border Height="1" Background="{DynamicResource Theme.Border}" />
 
                             <Grid>
-                                <Button Classes="nav-btn" Command="{Binding NavigateToSettingsCommand}">
+                                <Button Classes="nav-btn footer-nav" Command="{Binding NavigateToSettingsCommand}">
                                     <StackPanel Orientation="Horizontal" Spacing="10">
                                         <TextBlock Classes="icon-glyph" Text="&#xE713;" />
                                         <TextBlock Text="Settings" />

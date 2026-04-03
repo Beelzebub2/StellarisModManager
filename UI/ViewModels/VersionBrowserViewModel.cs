@@ -20,13 +20,14 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class VersionBrowserViewModel : ViewModelBase
 {
-    private const string CacheSchemaVersion = "4";
+    private const string CacheSchemaVersion = "5";
     private const int DefaultFetchLimit = 64;
     private const int ScanMoreStep = 32;
     private const int MetadataResolveConcurrency = 8;
     private const int SearchBackgroundPageLimit = 40;
     private const int SearchCacheFlushBatchSize = 48;
     private const int MaxCachedCardsPerQuery = 1500;
+    private const int ResultPageSize = ScanMoreStep;
     private static readonly Regex AnyVersionRegex = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -59,6 +60,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _thumbnailWarmCts;
     private CancellationTokenSource? _searchDebounceCts;
+    private List<VersionModCard> _orderedFilteredMods = new();
 
     public ObservableCollection<VersionDropdownItem> VersionItems { get; } = new();
     public ObservableCollection<VersionSortModeItem> SortModes { get; } = new();
@@ -74,14 +76,23 @@ public partial class VersionBrowserViewModel : ViewModelBase
     [ObservableProperty] private bool _isScanningMore;
     [ObservableProperty] private bool _hasNoMods;
     [ObservableProperty] private string _statusText = "Select a Stellaris version to load workshop mods.";
+    [ObservableProperty] private int _currentResultPage = 1;
+    [ObservableProperty] private int _totalResultPages = 1;
+    [ObservableProperty] private int _overlayStateVersion;
 
     public bool ShowNoModsState => !IsLoading && HasNoMods && DisplayedModCount == 0;
     public bool ShowFilteredEmptyState => !IsLoading && !HasNoMods && DisplayedModCount == 0;
     public bool HasResults => DisplayedModCount > 0;
     public bool ShowLoadingState => IsLoading && DisplayedModCount == 0;
     public bool CanScanMore => !IsLoading && !IsScanningMore;
-    public int CurrentScanPage => Math.Max(1, ((FetchLimit - DefaultFetchLimit) / ScanMoreStep) + 1);
-    public string NextPageButtonText => IsScanningMore ? "Scanning..." : $"Next page ({CurrentScanPage + 1})";
+    public bool CanGoToPreviousPage => !IsLoading && CurrentResultPage > 1;
+    public bool CanGoToNextPage => !IsLoading && !IsScanningMore && (CurrentResultPage < TotalResultPages || CanScanMore);
+    public string ResultPageText => $"Page {CurrentResultPage} of {TotalResultPages}";
+    public string NextPageButtonText => IsScanningMore
+        ? "Scanning..."
+        : CurrentResultPage < TotalResultPages
+            ? $"Next page ({CurrentResultPage + 1})"
+            : "Scan next page";
 
     public event EventHandler<string>? InstallModRequested;
     public event EventHandler<string>? UninstallModRequested;
@@ -242,12 +253,16 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     partial void OnSelectedVersionChanged(VersionDropdownItem? value)
     {
+        CurrentResultPage = 1;
+
         if (_loadedOnce)
             _ = RefreshFromWorkshopAsync(ignoreCache: !string.IsNullOrWhiteSpace(SearchText));
     }
 
     partial void OnSearchTextChanged(string value)
     {
+        CurrentResultPage = 1;
+
         if (!_loadedOnce)
         {
             ApplyFilter();
@@ -262,6 +277,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     partial void OnSelectedSortModeChanged(VersionSortModeItem? value)
     {
+        CurrentResultPage = 1;
         ApplyFilter();
 
         if (_loadedOnce)
@@ -273,6 +289,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (!_loadedOnce)
             return;
 
+        CurrentResultPage = 1;
         BuildVersionDropdown();
         _ = RefreshFromWorkshopAsync(ignoreCache: !string.IsNullOrWhiteSpace(SearchText));
     }
@@ -317,17 +334,35 @@ public partial class VersionBrowserViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowFilteredEmptyState));
         OnPropertyChanged(nameof(HasResults));
         OnPropertyChanged(nameof(CanScanMore));
+        OnPropertyChanged(nameof(CanGoToPreviousPage));
+        OnPropertyChanged(nameof(CanGoToNextPage));
     }
 
     partial void OnIsScanningMoreChanged(bool value)
     {
         OnPropertyChanged(nameof(CanScanMore));
+        OnPropertyChanged(nameof(CanGoToNextPage));
         OnPropertyChanged(nameof(NextPageButtonText));
     }
 
     partial void OnFetchLimitChanged(int value)
     {
-        OnPropertyChanged(nameof(CurrentScanPage));
+        OnPropertyChanged(nameof(NextPageButtonText));
+    }
+
+    partial void OnCurrentResultPageChanged(int value)
+    {
+        OnPropertyChanged(nameof(ResultPageText));
+        OnPropertyChanged(nameof(CanGoToPreviousPage));
+        OnPropertyChanged(nameof(CanGoToNextPage));
+        OnPropertyChanged(nameof(NextPageButtonText));
+    }
+
+    partial void OnTotalResultPagesChanged(int value)
+    {
+        OnPropertyChanged(nameof(ResultPageText));
+        OnPropertyChanged(nameof(CanGoToPreviousPage));
+        OnPropertyChanged(nameof(CanGoToNextPage));
         OnPropertyChanged(nameof(NextPageButtonText));
     }
 
@@ -358,6 +393,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
 
         ApplyModStateToCards();
+        NotifyOverlayStateChanged();
     }
 
     public void SetModStates(IReadOnlyDictionary<string, string> modStates)
@@ -373,6 +409,62 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
 
         ApplyModStateToCards();
+        NotifyOverlayStateChanged();
+    }
+
+    public IReadOnlyList<string> GetInstalledWorkshopIdsSnapshot()
+    {
+        return _installedWorkshopIds.ToList();
+    }
+
+    public IReadOnlyDictionary<string, string> GetModStatesSnapshot()
+    {
+        return _modStates.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.Ordinal);
+    }
+
+    public void RequestInstallFromOverlay(string workshopId)
+    {
+        if (string.IsNullOrWhiteSpace(workshopId))
+            return;
+
+        var normalizedId = workshopId.Trim();
+        var card = _fetchedMods.FirstOrDefault(m => string.Equals(m.WorkshopId, normalizedId, StringComparison.Ordinal));
+        var state = card is not null ? NormalizeState(card.ActionState) : GetEffectiveState(normalizedId);
+        if (state is "queued" or "installing" or "uninstalling" or "installed")
+            return;
+
+        if (card is not null)
+            card.ActionState = "queued";
+
+        StatusText = string.IsNullOrWhiteSpace(card?.Name)
+            ? $"Queued workshop mod {normalizedId}"
+            : $"Queued {card.Name}";
+        NotifyOverlayStateChanged();
+        InstallModRequested?.Invoke(this, normalizedId);
+    }
+
+    public void RequestUninstallFromOverlay(string workshopId)
+    {
+        if (string.IsNullOrWhiteSpace(workshopId))
+            return;
+
+        var normalizedId = workshopId.Trim();
+        var card = _fetchedMods.FirstOrDefault(m => string.Equals(m.WorkshopId, normalizedId, StringComparison.Ordinal));
+        var state = card is not null ? NormalizeState(card.ActionState) : GetEffectiveState(normalizedId);
+        if (state is "queued" or "installing" or "uninstalling")
+            return;
+
+        if (state != "installed")
+            return;
+
+        if (card is not null)
+            card.ActionState = "uninstalling";
+
+        StatusText = string.IsNullOrWhiteSpace(card?.Name)
+            ? $"Uninstalling workshop mod {normalizedId}..."
+            : $"Uninstalling {card.Name}...";
+        NotifyOverlayStateChanged();
+        UninstallModRequested?.Invoke(this, normalizedId);
     }
 
     [RelayCommand]
@@ -389,12 +481,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
         {
             card.ActionState = "uninstalling";
             StatusText = $"Uninstalling {card.Name}...";
+            NotifyOverlayStateChanged();
             UninstallModRequested?.Invoke(this, card.WorkshopId);
             return;
         }
 
         card.ActionState = "queued";
         StatusText = $"Queued {card.Name}";
+        NotifyOverlayStateChanged();
         InstallModRequested?.Invoke(this, card.WorkshopId);
     }
 
@@ -416,14 +510,45 @@ public partial class VersionBrowserViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task NextPageAsync()
+    {
+        if (IsLoading || IsScanningMore)
+            return;
+
+        if (CurrentResultPage < TotalResultPages)
+        {
+            CurrentResultPage++;
+            ApplyPagedResults();
+            return;
+        }
+
+        var requestedPage = CurrentResultPage + 1;
+        await ScanMoreAsync();
+
+        if (TotalResultPages >= requestedPage)
+        {
+            CurrentResultPage = requestedPage;
+            ApplyPagedResults();
+        }
+    }
+
+    [RelayCommand]
+    private void PreviousPage()
+    {
+        if (IsLoading || CurrentResultPage <= 1)
+            return;
+
+        CurrentResultPage--;
+        ApplyPagedResults();
+    }
+
     private async Task ScanMoreAsync()
     {
         if (IsLoading || IsScanningMore)
             return;
 
-        var nextPage = CurrentScanPage + 1;
         FetchLimit += ScanMoreStep;
-        StatusText = $"Scanning page {nextPage} for more mods (up to {FetchLimit})...";
+        StatusText = $"Scanning page {TotalResultPages + 1} for more mods...";
         await AppendMoreModsInBackgroundAsync();
     }
 
@@ -978,11 +1103,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 var info = await _downloader.GetModInfoAsync(id);
                 var name = string.IsNullOrWhiteSpace(info?.Title) ? $"Workshop {id}" : info.Title;
                 var previewImageUrl = NormalizePreviewUrl(info?.PreviewImageUrl);
+                var versionEvidenceTokens = BuildVersionEvidenceTokens(info, name);
 
                 var card = new VersionModCard
                 {
                     WorkshopId = id,
                     Name = name,
+                    VersionEvidenceTokens = versionEvidenceTokens,
                     PreviewImageUrl = previewImageUrl,
                     GameVersionBadge = GetConfirmedGameVersionBadge(id, versionQuery),
                     CommunityWorksCount = GetCommunityWorksCount(id, versionQuery),
@@ -1004,11 +1131,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         var cards = await Task.WhenAll(tasks);
         var releaseCutoffExcludedInBatch = 0;
+        var excludePatchPinned = ShouldExcludePatchPinnedForSelection(versionQuery);
 
         var filtered = cards
             .OrderBy(c => c.Index)
             .Select(c => c.Card)
-            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, out var excludedByReleaseCutoff)
+            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, excludePatchPinned, out var excludedByReleaseCutoff)
                 ? true
                 : CountReleaseCutoffExclusion(ref releaseCutoffExcludedInBatch, excludedByReleaseCutoff))
             .Take(maxCount ?? int.MaxValue)
@@ -1084,6 +1212,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
             {
                 WorkshopId = c.WorkshopId,
                 Name = c.Name,
+                VersionEvidenceTokens = c.VersionEvidenceTokens,
                 PreviewImageUrl = c.PreviewImageUrl,
                 PublishedAtUnixSeconds = c.PublishedAtUnixSeconds,
                 UpdatedAtUnixSeconds = c.UpdatedAtUnixSeconds,
@@ -1130,6 +1259,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
             {
                 WorkshopId = item.WorkshopId,
                 Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
+                VersionEvidenceTokens = item.VersionEvidenceTokens,
                 PreviewImageUrl = item.PreviewImageUrl,
                 GameVersionBadge = GetConfirmedGameVersionBadge(item.WorkshopId, versionQuery),
                 CommunityWorksCount = GetCommunityWorksCount(item.WorkshopId, versionQuery),
@@ -1144,11 +1274,12 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         await Task.CompletedTask;
         var releaseCutoffExcludedInBatch = 0;
+        var excludePatchPinned = ShouldExcludePatchPinnedForSelection(versionQuery);
 
         var filtered = cards
             .OrderBy(c => c.Index)
             .Select(c => c.Card)
-            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, out var excludedByReleaseCutoff)
+            .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, excludePatchPinned, out var excludedByReleaseCutoff)
                 ? true
                 : CountReleaseCutoffExclusion(ref releaseCutoffExcludedInBatch, excludedByReleaseCutoff))
             .ToList();
@@ -1202,8 +1333,6 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
     private void ApplyFilter()
     {
-        DisplayedMods.Clear();
-
         IEnumerable<VersionModCard> filtered = _fetchedMods;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
@@ -1211,12 +1340,31 @@ public partial class VersionBrowserViewModel : ViewModelBase
             filtered = filtered.Where(m => m.Name.ToLowerInvariant().Contains(lower));
         }
 
-        filtered = OrderFilteredMods(filtered, SearchText);
+        _orderedFilteredMods = OrderFilteredMods(filtered, SearchText).ToList();
 
-        foreach (var mod in filtered)
+        var pages = _orderedFilteredMods.Count == 0
+            ? 1
+            : (int)Math.Ceiling((double)_orderedFilteredMods.Count / ResultPageSize);
+
+        TotalResultPages = pages;
+
+        if (CurrentResultPage > TotalResultPages)
+            CurrentResultPage = TotalResultPages;
+        else if (CurrentResultPage < 1)
+            CurrentResultPage = 1;
+
+        ApplyPagedResults();
+    }
+
+    private void ApplyPagedResults()
+    {
+        DisplayedMods.Clear();
+
+        var skip = (CurrentResultPage - 1) * ResultPageSize;
+        foreach (var mod in _orderedFilteredMods.Skip(skip).Take(ResultPageSize))
             DisplayedMods.Add(mod);
 
-        DisplayedModCount = DisplayedMods.Count;
+        DisplayedModCount = _orderedFilteredMods.Count;
     }
 
     private IEnumerable<VersionModCard> OrderFilteredMods(IEnumerable<VersionModCard> mods, string searchText)
@@ -1300,6 +1448,11 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         foreach (var card in _fetchedMods)
             card.ActionState = GetEffectiveState(card.WorkshopId);
+    }
+
+    private void NotifyOverlayStateChanged()
+    {
+        OverlayStateVersion++;
     }
 
     private string GetEffectiveState(string workshopId)
@@ -1521,9 +1674,63 @@ public partial class VersionBrowserViewModel : ViewModelBase
         return $"{status} Release cutoff hid {_releaseCutoffExcludedCount} older mod(s) (before {releaseDateUtc:MMM d, yyyy}).";
     }
 
+    private static string BuildVersionEvidenceTokens(WorkshopModInfo? info, string fallbackName)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static void AddTokens(HashSet<string> tokenSet, string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return;
+
+            foreach (Match match in AnyVersionRegex.Matches(text))
+            {
+                var token = match.Value;
+                if (!string.IsNullOrWhiteSpace(token))
+                    tokenSet.Add(token);
+            }
+        }
+
+        AddTokens(tokens, info?.Title);
+        AddTokens(tokens, info?.Description);
+
+        if (info?.Tags is { Count: > 0 })
+        {
+            foreach (var tag in info.Tags)
+                AddTokens(tokens, tag);
+        }
+
+        if (tokens.Count == 0)
+            AddTokens(tokens, fallbackName);
+
+        return string.Join(',', tokens);
+    }
+
+    private static bool HasSelectedVersionEvidence(string selectedToken, string? evidenceTokens)
+    {
+        if (string.IsNullOrWhiteSpace(selectedToken) || string.IsNullOrWhiteSpace(evidenceTokens))
+            return false;
+
+        var selectedMajorMinor = StellarisVersions.Normalize(selectedToken) ?? selectedToken;
+        var tokens = evidenceTokens.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        foreach (var token in tokens)
+        {
+            if (string.Equals(token, selectedToken, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var tokenMajorMinor = StellarisVersions.Normalize(token) ?? token;
+            if (string.Equals(tokenMajorMinor, selectedMajorMinor, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
     private static bool ShouldIncludeForSelectedVersion(
         string versionQuery,
         VersionModCard modCard,
+        bool excludePatchPinned,
         out bool excludedByReleaseCutoff)
     {
         excludedByReleaseCutoff = false;
@@ -1542,11 +1749,15 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(selectedToken))
             return true;
 
+        if (!HasSelectedVersionEvidence(selectedToken, modCard.VersionEvidenceTokens))
+            return false;
+
         // For major.minor pages (e.g. 4.2), exclude explicitly patch-pinned mods (e.g. 4.2.4).
-        if (Regex.IsMatch(selectedToken, @"^\d+\.\d+$"))
+        if (excludePatchPinned && Regex.IsMatch(selectedToken, @"^\d+\.\d+$"))
         {
-            var patchRegex = new Regex($@"\b{Regex.Escape(selectedToken)}\.\d+\b", RegexOptions.IgnoreCase);
-            if (patchRegex.IsMatch(modName))
+            var patchRegex = new Regex($@"^{Regex.Escape(selectedToken)}\.\d+$", RegexOptions.IgnoreCase);
+            var evidenceTokens = modCard.VersionEvidenceTokens.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (evidenceTokens.Any(token => patchRegex.IsMatch(token)))
                 return false;
         }
 
@@ -1570,6 +1781,21 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
 
         return true;
+    }
+
+    private bool ShouldExcludePatchPinnedForSelection(string versionQuery)
+    {
+        var selectedToken = ExtractVersionToken(versionQuery);
+        if (string.IsNullOrWhiteSpace(selectedToken))
+            return false;
+
+        if (!Regex.IsMatch(selectedToken, @"^\d+\.\d+$"))
+            return false;
+
+        var prefix = selectedToken + ".";
+        return VersionItems.Any(v =>
+            !string.IsNullOrWhiteSpace(v.Version) &&
+            v.Version.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
     }
 
     private static List<string> GetVersionQueries(bool includeOlder)
@@ -1647,6 +1873,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         public string WorkshopId { get; set; } = "";
         public string Name { get; set; } = "";
+        public string VersionEvidenceTokens { get; set; } = "";
         public string? PreviewImageUrl { get; set; }
         public long PublishedAtUnixSeconds { get; set; }
         public long UpdatedAtUnixSeconds { get; set; }
@@ -1731,6 +1958,7 @@ public sealed partial class VersionModCard : ObservableObject
 
     public string WorkshopId { get; init; } = "";
     public string Name { get; init; } = "";
+    public string VersionEvidenceTokens { get; init; } = "";
     public string GameVersionBadge { get; init; } = "Unknown";
     public string? PreviewImageUrl { get; init; }
     public long PublishedAtUnixSeconds { get; init; }

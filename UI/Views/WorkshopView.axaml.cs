@@ -569,7 +569,6 @@ public partial class WorkshopView : UserControl
         var next = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _overlayStateDebounceCts, next);
         previous?.Cancel();
-        previous?.Dispose();
 
         _ = Task.Run(async () =>
         {
@@ -588,6 +587,10 @@ public partial class WorkshopView : UserControl
             catch (OperationCanceledException)
             {
                 // Ignore debounced cancellation.
+            }
+            catch (ObjectDisposedException)
+            {
+                // Ignore races where a replaced CTS is disposed before the delayed task runs.
             }
             finally
             {

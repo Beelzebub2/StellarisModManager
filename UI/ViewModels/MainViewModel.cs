@@ -1172,8 +1172,16 @@ public partial class MainViewModel : ViewModelBase
     [RelayCommand]
     private async Task NavigateToVersionBrowser()
     {
-        ActiveView = VersionBrowserViewModel;
-        await VersionBrowserViewModel.LoadAsync();
+        try
+        {
+            ActiveView = VersionBrowserViewModel;
+            await VersionBrowserViewModel.LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = $"By Version failed: {ex.Message}";
+            ActiveView = LibraryViewModel;
+        }
     }
 
     [RelayCommand]
