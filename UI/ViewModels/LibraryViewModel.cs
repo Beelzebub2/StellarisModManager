@@ -14,6 +14,7 @@ using CommunityToolkit.Mvvm.Input;
 using Serilog;
 using StellarisModManager.Core.Models;
 using StellarisModManager.Core.Services;
+using StellarisModManager.Core.Utils;
 
 namespace StellarisModManager.UI.ViewModels;
 
@@ -58,8 +59,10 @@ public partial class LibraryViewModel : ViewModelBase
     // Status
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _isCheckingUpdates = false;
+    [ObservableProperty] private bool _isSubmittingCompatibilityReport = false;
     [ObservableProperty] private int _updatesAvailable = 0;
     public bool HasUpdatesAvailable => UpdatesAvailable > 0;
+    public bool CanSubmitCompatibilityReport => SelectedMod is not null && !IsSubmittingCompatibilityReport;
 
     public event EventHandler<string>? ShareIdCopiedRequested;
     public event EventHandler<string>? OpenWorkshopInAppRequested;
@@ -152,6 +155,8 @@ public partial class LibraryViewModel : ViewModelBase
     partial void OnShowEnabledOnlyChanged(bool value) => ApplyFilter();
     partial void OnSelectedModChanged(ModViewModel? value)
     {
+        OnPropertyChanged(nameof(CanSubmitCompatibilityReport));
+
         if (value is null)
             return;
 
@@ -159,6 +164,11 @@ public partial class LibraryViewModel : ViewModelBase
             return;
 
         _ = HydrateSubscribersAsync(value);
+    }
+
+    partial void OnIsSubmittingCompatibilityReportChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanSubmitCompatibilityReport));
     }
 
     private void ApplyFilter()
@@ -892,6 +902,86 @@ public partial class LibraryViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(url)) return;
         OpenWorkshopInAppRequested?.Invoke(this, url);
         StatusMessage = $"Opened {mod.Name} in Workshop tab.";
+    }
+
+    [RelayCommand]
+    private async Task ReportWorkedOnMyVersionAsync(ModViewModel? mod)
+    {
+        var target = mod ?? SelectedMod;
+        if (target is null)
+        {
+            StatusMessage = "Select a mod first.";
+            return;
+        }
+
+        var gameVersion = ResolveCurrentGameVersionForReport();
+        if (string.IsNullOrWhiteSpace(gameVersion))
+        {
+            StatusMessage = "Could not determine your Stellaris version. Open Settings and detect game version first.";
+            return;
+        }
+
+        IsSubmittingCompatibilityReport = true;
+        try
+        {
+            var reported = await StellarisyncClient.ReportWorkedOnVersionAsync(
+                target.WorkshopId,
+                gameVersion,
+                Environment.UserName);
+
+            if (!reported)
+            {
+                StatusMessage = $"Could not submit compatibility report for {target.Name}.";
+                return;
+            }
+
+            await StellarisyncClient.FetchCommunityCompatibilityAsync();
+            StatusMessage = $"Thanks! Marked {target.Name} as working on {gameVersion}.";
+        }
+        finally
+        {
+            IsSubmittingCompatibilityReport = false;
+        }
+    }
+
+    private string? ResolveCurrentGameVersionForReport()
+    {
+        var fromSettings = NormalizeVersionForReport(_settings.LastDetectedGameVersion);
+        if (!string.IsNullOrWhiteSpace(fromSettings))
+            return fromSettings;
+
+        try
+        {
+            var detector = new GameDetector();
+            var gamePath = _settings.GamePath;
+            if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+                gamePath = detector.DetectGamePath();
+
+            if (string.IsNullOrWhiteSpace(gamePath) || !Directory.Exists(gamePath))
+                return null;
+
+            var detected = detector.DetectGameVersion(gamePath);
+            var normalized = NormalizeVersionForReport(detected);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                _settings.LastDetectedGameVersion = normalized;
+                _settings.Save();
+            }
+
+            return normalized;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NormalizeVersionForReport(string? version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return null;
+
+        return StellarisVersions.Normalize(version) ?? version.Trim();
     }
 
     // Export with an explicit file path (called from code-behind after file dialog)

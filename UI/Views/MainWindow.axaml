@@ -285,7 +285,7 @@
                         <StackPanel Spacing="8" HorizontalAlignment="Stretch">
                             <Button Classes="nav-btn" Command="{Binding LaunchGameCommand}">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <TextBlock Classes="icon-glyph" Text="&#xE72C;" />
+                                    <TextBlock Classes="icon-glyph" Text="{Binding LaunchGameButtonIconGlyph}" />
                                     <TextBlock Text="{Binding LaunchGameButtonText}" />
                                 </StackPanel>
                             </Button>
@@ -382,7 +382,7 @@
                 </Border>
 
                 <Border Grid.Column="3" Classes="status-chip-muted" Margin="8,0,0,0">
-                    <TextBlock Text="{Binding AppVersion, StringFormat='v{0}'}"
+                    <TextBlock Text="{Binding AppVersion}"
                                Foreground="{DynamicResource Theme.TextMuted}"
                                FontSize="11"
                                FontWeight="SemiBold" />

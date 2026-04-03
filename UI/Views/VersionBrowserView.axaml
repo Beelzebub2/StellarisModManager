@@ -14,7 +14,7 @@
             <Setter Property="Background" Value="{DynamicResource Theme.SurfaceBg}" />
             <Setter Property="BorderBrush" Value="{DynamicResource Theme.Border}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="10" />
         </Style>
         <Style Selector="Border.mod-card:pointerover">
             <Setter Property="BorderBrush" Value="{DynamicResource Theme.Accent}" />
@@ -45,6 +45,16 @@
         </Style>
         <Style Selector="Button.mod-action.error">
             <Setter Property="Background" Value="#C97A19" />
+        </Style>
+        <Style Selector="Border.version-badge">
+            <Setter Property="Background" Value="{DynamicResource Theme.Accent}" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="5,2" />
+        </Style>
+        <Style Selector="Border.compat-badge">
+            <Setter Property="Background" Value="#244734" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="5,2" />
         </Style>
     </UserControl.Styles>
 
@@ -183,8 +193,8 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:VersionModCard">
                                 <Border Classes="mod-card"
-                                        Width="160"
-                                        Height="220"
+                                        Width="174"
+                                        Height="244"
                                         Margin="4"
                                         ClipToBounds="True"
                                         PointerPressed="OnModCardPointerPressed">
@@ -207,7 +217,7 @@
                                         </Panel>
 
                                         <!-- Row 1: Mod name and version badge -->
-                                        <Grid Grid.Row="1" Margin="8,6" RowDefinitions="*,Auto">
+                                        <Grid Grid.Row="1" Margin="8,6" RowDefinitions="*,Auto,Auto">
                                             <TextBlock Grid.Row="0"
                                                        Text="{Binding Name}"
                                                        FontSize="11"
@@ -218,15 +228,29 @@
                                                        Foreground="{DynamicResource Theme.TextPrimary}"
                                                        VerticalAlignment="Top" />
                                             <Border Grid.Row="1"
-                                                    Background="{DynamicResource Theme.Accent}"
-                                                    CornerRadius="4"
-                                                    Padding="5,2"
+                                                    Classes="version-badge"
                                                     HorizontalAlignment="Left">
                                                 <TextBlock Text="{Binding GameVersionBadge}"
                                                            Foreground="White"
                                                            FontSize="9"
                                                            FontWeight="SemiBold" />
                                             </Border>
+
+                                            <StackPanel Grid.Row="2" Spacing="4">
+                                                <Border Classes="compat-badge"
+                                                        HorizontalAlignment="Left"
+                                                        IsVisible="{Binding HasCommunityWorks}">
+                                                    <TextBlock Text="{Binding CommunityWorksBadge}"
+                                                               Foreground="White"
+                                                               FontSize="9"
+                                                               FontWeight="SemiBold" />
+                                                </Border>
+
+                                                <TextBlock Text="{Binding SubscriberSummary}"
+                                                           Foreground="{DynamicResource Theme.TextMuted}"
+                                                           FontSize="9"
+                                                           TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
                                         </Grid>
 
                                         <Button Grid.Row="2"

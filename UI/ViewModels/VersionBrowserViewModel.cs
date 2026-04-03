@@ -176,16 +176,22 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
     }
 
-    private static string GetConfirmedGameVersionBadge(string workshopId, string fallbackVersion)
+    private static string GetConfirmedGameVersionBadge(string workshopId, string selectedVersion)
     {
         var confirmed = StellarisyncClient.GetConfirmedVersion(workshopId);
         if (!string.IsNullOrWhiteSpace(confirmed))
         {
-            var display = confirmed.Replace(".*", "");
-            // The prompt asks to display with a confirmed checkmark
+            var display = StellarisVersions.Normalize(confirmed) ?? confirmed.Replace(".*", "");
             return $"✅ {display}";
         }
-        return fallbackVersion;
+
+        var selectedDisplay = StellarisVersions.Normalize(selectedVersion) ?? selectedVersion;
+        return selectedDisplay;
+    }
+
+    private static int GetCommunityWorksCount(string workshopId, string selectedVersion)
+    {
+        return StellarisyncClient.GetCommunityWorksCount(workshopId, selectedVersion);
     }
 
     private static void InitializeCaches()
@@ -390,6 +396,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
         }
 
         await StellarisyncClient.FetchConfirmedVersionsAsync();
+        await StellarisyncClient.FetchCommunityCompatibilityAsync();
 
         await RefreshFromWorkshopAsync();
     }
@@ -963,6 +970,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                     Name = name,
                     PreviewImageUrl = previewImageUrl,
                     GameVersionBadge = GetConfirmedGameVersionBadge(id, versionQuery),
+                    CommunityWorksCount = GetCommunityWorksCount(id, versionQuery),
                     PublishedAtUnixSeconds = info?.TimeCreated ?? 0,
                     UpdatedAtUnixSeconds = info?.TimeUpdated ?? 0,
                     TotalSubscribers = info?.TotalSubscribers ?? 0,
@@ -1108,6 +1116,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 Name = string.IsNullOrWhiteSpace(item.Name) ? $"Workshop {item.WorkshopId}" : item.Name,
                 PreviewImageUrl = item.PreviewImageUrl,
                 GameVersionBadge = GetConfirmedGameVersionBadge(item.WorkshopId, versionQuery),
+                CommunityWorksCount = GetCommunityWorksCount(item.WorkshopId, versionQuery),
                 PublishedAtUnixSeconds = item.PublishedAtUnixSeconds,
                 UpdatedAtUnixSeconds = item.UpdatedAtUnixSeconds,
                 TotalSubscribers = item.TotalSubscribers,
@@ -1711,6 +1720,7 @@ public sealed partial class VersionModCard : ObservableObject
     public long UpdatedAtUnixSeconds { get; init; }
     public long TotalSubscribers { get; init; }
     public double PopularitySignal { get; init; }
+    public int CommunityWorksCount { get; init; }
 
     public Bitmap? ThumbnailImage
     {
@@ -1755,6 +1765,14 @@ public sealed partial class VersionModCard : ObservableObject
 
     public bool HasThumbnail => ThumbnailImage is not null;
     public string PlaceholderLetter => string.IsNullOrWhiteSpace(Name) ? "?" : Name[0].ToString().ToUpperInvariant();
+    public bool HasCommunityWorks => CommunityWorksCount > 0;
+    public string CommunityWorksBadge => CommunityWorksCount switch
+    {
+        <= 0 => string.Empty,
+        1 => "✅ Works on this version",
+        _ => $"✅ Works on this version ({CommunityWorksCount})"
+    };
+    public string SubscriberSummary => TotalSubscribers > 0 ? $"{TotalSubscribers:N0} subscribers" : "New / low data";
 
     public bool IsInstalledState => string.Equals(ActionState, "installed", StringComparison.OrdinalIgnoreCase);
     public bool IsBusyState => ActionState is "queued" or "installing" or "uninstalling";

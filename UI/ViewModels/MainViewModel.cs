@@ -83,6 +83,7 @@ public partial class MainViewModel : ViewModelBase
     public bool HasInstallQueueItems => _installQueueItems.Count > 0;
 
     public string LaunchGameButtonText => IsGameRunning ? "Restart Game" : "Start Game";
+    public string LaunchGameButtonIconGlyph => IsGameRunning ? "\uE72C" : "\uE768";
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
     public Func<string, Task<(bool goToSettings, bool skipVersion)>>? RequestUpdatePromptAsync { get; set; }
 
@@ -223,6 +224,7 @@ public partial class MainViewModel : ViewModelBase
     partial void OnIsGameRunningChanged(bool value)
     {
         OnPropertyChanged(nameof(LaunchGameButtonText));
+        OnPropertyChanged(nameof(LaunchGameButtonIconGlyph));
     }
 
     private void RefreshGameRunningState()
