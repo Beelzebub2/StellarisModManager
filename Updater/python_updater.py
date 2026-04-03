@@ -70,6 +70,7 @@ class UpdateRequest:
     target_version: str
     startup_signal_path: str
     cleanup_root: str
+    api_base: str
 
 
 class Theme:
@@ -319,6 +320,53 @@ def resolve_fallback_download_url(release_url: str) -> Optional[str]:
     return None
 
 
+def derive_repo_from_release_url(release_url: str) -> Optional[str]:
+    parsed = parse_release_tag_url(release_url)
+    if not parsed:
+        return None
+
+    owner, repo, _tag = parsed
+    owner = clean_string(owner, 120)
+    repo = clean_string(repo, 120)
+    if not owner or not repo:
+        return None
+
+    return f"{owner}/{repo}"
+
+
+def resolve_recovery_download_url(
+    request: UpdateRequest,
+    attempted_urls: set[str],
+) -> Optional[str]:
+    def is_new_candidate(url: str) -> bool:
+        candidate = clean_string(url, 2000)
+        if not candidate:
+            return False
+        return candidate.lower() not in attempted_urls
+
+    # First try the tag-specific GitHub release fallback.
+    fallback = resolve_fallback_download_url(request.release_url)
+    if fallback and is_new_candidate(fallback):
+        return fallback
+
+    # Then refresh metadata from Stellarisync, which may point to a corrected URL.
+    refreshed = fetch_latest_from_stellarisync(request.api_base)
+    if refreshed and refreshed.download_url and is_new_candidate(refreshed.download_url):
+        if request.target_version and refreshed.version:
+            if clean_string(refreshed.version, 120) != clean_string(request.target_version, 120):
+                refreshed = None
+        if refreshed is not None:
+            return refreshed.download_url
+
+    # Finally, query GitHub latest release as a broad recovery path.
+    repo = derive_repo_from_release_url(request.release_url) or DEFAULT_GITHUB_REPO
+    latest = fetch_latest_from_github(repo, include_prerelease=True)
+    if latest and latest.download_url and is_new_candidate(latest.download_url):
+        return latest.download_url
+
+    return None
+
+
 def is_stale_asset_http_status(status_code: Optional[int]) -> bool:
     return status_code in (403, 404, 410)
 
@@ -491,19 +539,20 @@ class UpdaterEngine:
             target_name = DEFAULT_SETUP_NAME
 
         target_path = base_dir / target_name
-        used_fallback = False
+        attempted_urls: set[str] = set()
 
-        while True:
+        for _ in range(4):
+            attempted_urls.add(clean_string(download_url, 2000).lower())
             try:
                 step_callback("Downloading", "Downloading installer package...", 12)
                 self._download_file(download_url, target_path, chunk_callback)
                 return str(target_path)
             except HTTPError as ex:
-                if used_fallback or not is_stale_asset_http_status(ex.code):
+                if not is_stale_asset_http_status(ex.code):
                     raise
 
-                fallback = resolve_fallback_download_url(self.request.release_url)
-                if not fallback or fallback.lower() == download_url.lower():
+                fallback = resolve_recovery_download_url(self.request, attempted_urls)
+                if not fallback:
                     raise
 
                 fallback_name = try_file_name_from_url(fallback)
@@ -511,9 +560,10 @@ class UpdaterEngine:
                     target_path = base_dir / fallback_name
 
                 download_url = fallback
-                used_fallback = True
             except URLError:
                 raise
+
+        raise UpdateError("Unable to resolve a valid installer download URL.")
 
     def _download_file(
         self,
@@ -1219,6 +1269,7 @@ def parse_update_request(args: argparse.Namespace) -> Optional[UpdateRequest]:
         target_version=clean_string(args.target_version, 120),
         startup_signal_path=clean_string(args.startup_signal, 1000),
         cleanup_root=clean_string(args.cleanup_root, 1000),
+        api_base=clean_string(args.api_base, 1000) or DEFAULT_STELLARISYNC_BASE_URL,
     )
 
 

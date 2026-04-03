@@ -763,6 +763,13 @@ public partial class SettingsViewModel : ViewModelBase
             startInfo.ArgumentList.Add("--cleanup-root");
             startInfo.ArgumentList.Add(cleanupRoot);
 
+            var apiBase = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+            if (!string.IsNullOrWhiteSpace(apiBase))
+            {
+                startInfo.ArgumentList.Add("--api-base");
+                startInfo.ArgumentList.Add(apiBase);
+            }
+
             try
             {
                 var process = Process.Start(startInfo);
