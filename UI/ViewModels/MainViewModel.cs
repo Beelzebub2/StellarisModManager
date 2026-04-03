@@ -85,7 +85,7 @@ public partial class MainViewModel : ViewModelBase
     public string LaunchGameButtonText => IsGameRunning ? "Restart Game" : "Start Game";
     public string LaunchGameButtonIconGlyph => IsGameRunning ? "\uE72C" : "\uE768";
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
-    public Func<string, Task<(bool goToSettings, bool skipVersion)>>? RequestUpdatePromptAsync { get; set; }
+    public Func<string, Task<(bool installNow, bool skipVersion)>>? RequestUpdatePromptAsync { get; set; }
 
     // App version
     public string AppVersion => AppVersionInfo.GetDisplayVersion();
@@ -112,14 +112,14 @@ public partial class MainViewModel : ViewModelBase
         SettingsViewModel.UpdateAvailableNotificationRequested += async (_, versionInfo) =>
         {
             if (RequestUpdatePromptAsync is null) return;
-            var (goToSettings, skipVersion) = await RequestUpdatePromptAsync($"Version {versionInfo.Version} is available.");
+            var (installNow, skipVersion) = await RequestUpdatePromptAsync($"Version {versionInfo.Version} is available.");
             if (skipVersion)
             {
                 SettingsViewModel.SkipAppUpdateCommand.Execute(null);
             }
-            if (goToSettings)
+            if (installNow && SettingsViewModel.InstallAppUpdateCommand.CanExecute(null))
             {
-                ActiveView = SettingsViewModel;
+                SettingsViewModel.InstallAppUpdateCommand.Execute(null);
             }
         };
 

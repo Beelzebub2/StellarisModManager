@@ -29,10 +29,10 @@ public partial class MainWindow : Window
         DataContext = vm;
     }
 
-    private async Task<(bool goToSettings, bool skipVersion)> ShowUpdatePromptAsync(string versionMsg)
+    private async Task<(bool installNow, bool skipVersion)> ShowUpdatePromptAsync(string versionMsg)
     {
         var prompt = new UpdateAvailablePromptWindow(versionMsg);
-        var result = await prompt.ShowDialog<(bool goToSettings, bool skipVersion)?>(this);
+        var result = await prompt.ShowDialog<(bool installNow, bool skipVersion)?>(this);
         return result ?? (false, false);
     }
 
