@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -179,11 +180,43 @@ public sealed class AppUpdateService
 
         var fileName = TryGetFileNameFromUrl(release.DownloadUrl);
         if (string.IsNullOrWhiteSpace(fileName) || !fileName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            fileName = $"StellarisModManager-Setup-v{release.Version}.exe";
+            fileName = "StellarisModManager-Setup.exe";
 
         var targetPath = Path.Combine(baseDir, fileName);
 
-        using var response = await Http.GetAsync(release.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        var downloadUrl = release.DownloadUrl;
+        var usedFallback = false;
+
+        while (true)
+        {
+            try
+            {
+                await DownloadFileAsync(downloadUrl, targetPath, progress, cancellationToken);
+                return targetPath;
+            }
+            catch (HttpRequestException ex) when (!usedFallback && IsStaleAssetStatus(ex.StatusCode))
+            {
+                var fallbackUrl = await ResolveFallbackDownloadUrlAsync(release, cancellationToken);
+                if (string.IsNullOrWhiteSpace(fallbackUrl) || string.Equals(fallbackUrl, downloadUrl, StringComparison.OrdinalIgnoreCase))
+                    throw;
+
+                var fallbackName = TryGetFileNameFromUrl(fallbackUrl);
+                if (!string.IsNullOrWhiteSpace(fallbackName) && fallbackName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    targetPath = Path.Combine(baseDir, fallbackName);
+
+                usedFallback = true;
+                downloadUrl = fallbackUrl;
+            }
+        }
+    }
+
+    private static async Task DownloadFileAsync(
+        string downloadUrl,
+        string targetPath,
+        IProgress<AppDownloadProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        using var response = await Http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
         var total = response.Content.Headers.ContentLength;
@@ -211,8 +244,108 @@ public sealed class AppUpdateService
                     : -1
             });
         }
+    }
 
-        return targetPath;
+    private async Task<string?> ResolveFallbackDownloadUrlAsync(AppReleaseInfo release, CancellationToken cancellationToken)
+    {
+        if (TryParseGitHubReleaseTag(release.ReleaseUrl, out var owner, out var repo, out var tag))
+        {
+            var tagged = await TryGetGitHubReleaseByTagAsync(owner, repo, tag, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(tagged))
+                return tagged;
+        }
+
+        // Last fallback: query latest release in configured repository.
+        var latest = await TryGetLatestReleaseFromGitHubAsync(cancellationToken);
+        return latest?.DownloadUrl;
+    }
+
+    private async Task<string?> TryGetGitHubReleaseByTagAsync(
+        string owner,
+        string repo,
+        string tag,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var url = $"https://api.github.com/repos/{owner}/{repo}/releases/tags/{Uri.EscapeDataString(tag)}";
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.Add(new ProductInfoHeaderValue("StellarisModManager", CurrentVersion));
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+            using var response = await Http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+
+            return TryGetInstallerAssetUrl(doc.RootElement);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool TryParseGitHubReleaseTag(string releaseUrl, out string owner, out string repo, out string tag)
+    {
+        owner = string.Empty;
+        repo = string.Empty;
+        tag = string.Empty;
+
+        if (!Uri.TryCreate(releaseUrl, UriKind.Absolute, out var uri))
+            return false;
+
+        if (!string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 5)
+            return false;
+
+        if (!string.Equals(segments[2], "releases", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(segments[3], "tag", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        owner = segments[0];
+        repo = segments[1];
+        tag = Uri.UnescapeDataString(segments[4]);
+        return !string.IsNullOrWhiteSpace(owner)
+               && !string.IsNullOrWhiteSpace(repo)
+               && !string.IsNullOrWhiteSpace(tag);
+    }
+
+    private static bool IsStaleAssetStatus(HttpStatusCode? statusCode)
+    {
+        if (!statusCode.HasValue)
+            return false;
+
+        return statusCode == HttpStatusCode.NotFound
+            || statusCode == HttpStatusCode.Forbidden
+            || statusCode == HttpStatusCode.Gone;
+    }
+
+    private static string? TryGetInstallerAssetUrl(JsonElement releaseRoot)
+    {
+        if (!releaseRoot.TryGetProperty("assets", out var assetsEl) || assetsEl.ValueKind != JsonValueKind.Array)
+            return null;
+
+        foreach (var asset in assetsEl.EnumerateArray())
+        {
+            var name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? string.Empty : string.Empty;
+            if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var browserUrl = asset.TryGetProperty("browser_download_url", out var dlEl)
+                ? dlEl.GetString()
+                : null;
+
+            if (!string.IsNullOrWhiteSpace(browserUrl))
+                return browserUrl;
+        }
+
+        return null;
     }
 
     public void MarkVersionSkipped(string version)
@@ -316,27 +449,7 @@ public sealed class AppUpdateService
         if (string.IsNullOrWhiteSpace(releaseUrl))
             return null;
 
-        string? downloadUrl = null;
-        if (root.TryGetProperty("assets", out var assetsEl) && assetsEl.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var asset in assetsEl.EnumerateArray())
-            {
-                var contentType = asset.TryGetProperty("content_type", out var typeEl) ? typeEl.GetString() ?? string.Empty : string.Empty;
-                var name = asset.TryGetProperty("name", out var nameEl) ? nameEl.GetString() ?? string.Empty : string.Empty;
-
-                if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                if (contentType.Contains("application", StringComparison.OrdinalIgnoreCase) || name.Contains("Setup", StringComparison.OrdinalIgnoreCase))
-                {
-                    downloadUrl = asset.TryGetProperty("browser_download_url", out var dlEl)
-                        ? dlEl.GetString()
-                        : null;
-                    if (!string.IsNullOrWhiteSpace(downloadUrl))
-                        break;
-                }
-            }
-        }
+        var downloadUrl = TryGetInstallerAssetUrl(root);
 
         if (string.IsNullOrWhiteSpace(downloadUrl))
             return null;

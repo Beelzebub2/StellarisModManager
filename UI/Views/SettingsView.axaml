@@ -332,7 +332,7 @@
                                         IsEnabled="{Binding !IsAppUpdateBusy}">
                                     <StackPanel Orientation="Horizontal" Spacing="6">
                                         <TextBlock Classes="icon-glyph" Text="&#xE896;" />
-                                        <TextBlock Text="Install in background" />
+                                        <TextBlock Text="Install" />
                                     </StackPanel>
                                 </Button>
                             </StackPanel>

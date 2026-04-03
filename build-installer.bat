@@ -78,7 +78,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-set "SETUP_BASENAME=StellarisModManager-Setup-version%APP_VERSION%"
+set "SETUP_BASENAME=StellarisModManager-Setup"
 
 "%ISCC_EXE%" /Qp "/DSourceDir=Output\\StellarisModManager" "/DSetupOutputDir=Output\\Installer" "/DSetupOutputBase=%SETUP_BASENAME%" "/DMyAppVersion=%APP_VERSION%" "/DSetupIconPath=%SETUP_ICON%" "/DWizardImagePath=%WIZARD_IMAGE%" "/DWizardSmallImagePath=%WIZARD_SMALL_IMAGE%" %ISCC_DARK_DEFINE% "installer.iss"
 if errorlevel 1 (
