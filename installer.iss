@@ -22,11 +22,11 @@
 #endif
 
 #ifndef WizardImagePath
-  #define WizardImagePath "Output\\InstallerAssets\\wizard-banner.bmp"
+  #define WizardImagePath "Output\\InstallerAssets\\wizard-banner.png"
 #endif
 
 #ifndef WizardSmallImagePath
-  #define WizardSmallImagePath "Output\\InstallerAssets\\wizard-banner-small.bmp"
+  #define WizardSmallImagePath "Output\\InstallerAssets\\wizard-small.png"
 #endif
 
 [Setup]
@@ -44,6 +44,7 @@ SolidCompression=yes
 WizardStyle=modern dynamic windows11
 SetupIconFile={#SetupIconPath}
 WizardImageFile={#WizardImagePath}
+WizardImageAlphaFormat=defined
 WizardImageBackColor=$F0F0F0
 WizardSmallImageFile={#WizardSmallImagePath}
 WizardSmallImageBackColor=$F0F0F0
