@@ -8,6 +8,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -20,6 +21,7 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class LibraryViewModel : ViewModelBase
 {
+    private static readonly Regex VersionTokenPattern = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
     private static readonly Serilog.ILogger _log = Log.ForContext<LibraryViewModel>();
     private static readonly HttpClient _stellarisyncHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
     private const string StellarisyncBaseUrl = "https://stellarisync.rrmtools.uk";
@@ -60,6 +62,7 @@ public partial class LibraryViewModel : ViewModelBase
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _isCheckingUpdates = false;
     [ObservableProperty] private bool _isSubmittingCompatibilityReport = false;
+    [ObservableProperty] private string _compatibilityReportSummary = "";
     [ObservableProperty] private int _updatesAvailable = 0;
     public bool HasUpdatesAvailable => UpdatesAvailable > 0;
     public bool CanSubmitCompatibilityReport => SelectedMod is not null && !IsSubmittingCompatibilityReport;
@@ -158,7 +161,12 @@ public partial class LibraryViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanSubmitCompatibilityReport));
 
         if (value is null)
+        {
+            CompatibilityReportSummary = string.Empty;
             return;
+        }
+
+        RefreshCompatibilityReportSummary(value);
 
         if (value.Model.TotalSubscribers is > 0)
             return;
@@ -815,6 +823,8 @@ public partial class LibraryViewModel : ViewModelBase
         Mods.Clear();
         FilteredMods.Clear();
 
+        await StellarisyncClient.FetchCommunityCompatibilityAsync();
+
         var duplicatesRemoved = await _db.NormalizeDuplicateWorkshopModsAsync();
 
         var mods = await _db.GetAllModsAsync();
@@ -875,6 +885,8 @@ public partial class LibraryViewModel : ViewModelBase
         ApplyFilter();
         _ = Task.Run(SyncLauncherStateAsync);
 
+        RefreshCompatibilityReportSummary();
+
         if (duplicatesRemoved > 0)
             StatusMessage = $"Detected and merged {duplicatesRemoved} duplicate mod record(s).";
     }
@@ -907,6 +919,17 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task ReportWorkedOnMyVersionAsync(ModViewModel? mod)
     {
+        await ReportCompatibilityOnMyVersionAsync(mod, worked: true);
+    }
+
+    [RelayCommand]
+    private async Task ReportNotWorkedOnMyVersionAsync(ModViewModel? mod)
+    {
+        await ReportCompatibilityOnMyVersionAsync(mod, worked: false);
+    }
+
+    private async Task ReportCompatibilityOnMyVersionAsync(ModViewModel? mod, bool worked)
+    {
         var target = mod ?? SelectedMod;
         if (target is null)
         {
@@ -924,9 +947,10 @@ public partial class LibraryViewModel : ViewModelBase
         IsSubmittingCompatibilityReport = true;
         try
         {
-            var reported = await StellarisyncClient.ReportWorkedOnVersionAsync(
+            var reported = await StellarisyncClient.ReportCompatibilityOnVersionAsync(
                 target.WorkshopId,
                 gameVersion,
+                worked,
                 Environment.UserName);
 
             if (!reported)
@@ -936,12 +960,41 @@ public partial class LibraryViewModel : ViewModelBase
             }
 
             await StellarisyncClient.FetchCommunityCompatibilityAsync();
-            StatusMessage = $"Thanks! Marked {target.Name} as working on {gameVersion}.";
+            RefreshCompatibilityReportSummary(target);
+            StatusMessage = worked
+                ? $"Thanks! Marked {target.Name} as working on {gameVersion}."
+                : $"Thanks! Marked {target.Name} as not working on {gameVersion}.";
         }
         finally
         {
             IsSubmittingCompatibilityReport = false;
         }
+    }
+
+    private void RefreshCompatibilityReportSummary(ModViewModel? mod = null)
+    {
+        var target = mod ?? SelectedMod;
+        if (target is null)
+        {
+            CompatibilityReportSummary = string.Empty;
+            return;
+        }
+
+        var gameVersion = ResolveCurrentGameVersionForReport();
+        if (string.IsNullOrWhiteSpace(gameVersion))
+        {
+            CompatibilityReportSummary = "Detect your Stellaris version in Settings to view community compatibility.";
+            return;
+        }
+
+        var stats = StellarisyncClient.GetCommunityCompatibilityStats(target.WorkshopId, gameVersion);
+        if (stats.TotalReports <= 0)
+        {
+            CompatibilityReportSummary = $"No community reports yet for your {gameVersion} version.";
+            return;
+        }
+
+        CompatibilityReportSummary = $"This mod is reported to work by {stats.WorksPercentage}% of users for your {gameVersion} version ({stats.WorkedCount} worked, {stats.NotWorkedCount} not worked).";
     }
 
     private string? ResolveCurrentGameVersionForReport()
@@ -981,7 +1034,12 @@ public partial class LibraryViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(version))
             return null;
 
-        return StellarisVersions.Normalize(version) ?? version.Trim();
+        var trimmed = version.Trim();
+        var tokenMatch = VersionTokenPattern.Match(trimmed);
+        if (tokenMatch.Success)
+            return tokenMatch.Value;
+
+        return StellarisVersions.Normalize(trimmed) ?? trimmed;
     }
 
     // Export with an explicit file path (called from code-behind after file dialog)

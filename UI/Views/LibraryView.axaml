@@ -365,7 +365,8 @@
                                     IsVisible="{Binding TagsDisplay, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
                                 <StackPanel Spacing="4">
                                     <TextBlock Text="Tags" Foreground="{DynamicResource Theme.TextMuted}" FontSize="12" />
-                                    <TextBlock Text="{Binding TagsDisplay}" Foreground="{DynamicResource Theme.TextPrimary}" FontSize="12" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding TagsDisplay}" Foreground="{DynamicResource Theme.TextPrimary}" FontSize="12" TextWrapping="Wrap"
+                                               ToolTip.Tip="{Binding TagsDisplay}" />
                                 </StackPanel>
                             </Border>
 
@@ -375,6 +376,7 @@
                                     <Button Width="162"
                                             IsVisible="{Binding HasUpdate}"
                                             Margin="0,0,6,6"
+                                            ToolTip.Tip="Update this mod"
                                             Background="{DynamicResource Theme.SurfaceBg}"
                                             BorderBrush="{DynamicResource Theme.Border}"
                                             BorderThickness="1"
@@ -392,6 +394,7 @@
 
                                     <Button Width="162"
                                             Margin="0,0,6,6"
+                                            ToolTip.Tip="Report this mod as working on your current game version"
                                             Background="{DynamicResource Theme.SurfaceBg}"
                                             BorderBrush="{DynamicResource Theme.Border}"
                                             BorderThickness="1"
@@ -404,12 +407,32 @@
                                             IsEnabled="{Binding #Root.((vm:LibraryViewModel)DataContext).CanSubmitCompatibilityReport}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Classes="icon-glyph" Text="&#xE73E;" />
-                                            <TextBlock Text="Worked on my version" />
+                                            <TextBlock Text="Worked" />
                                         </StackPanel>
                                     </Button>
 
                                     <Button Width="162"
                                             Margin="0,0,6,6"
+                                            ToolTip.Tip="Report this mod as not working on your current game version"
+                                            Background="{DynamicResource Theme.SurfaceBg}"
+                                            BorderBrush="{DynamicResource Theme.Border}"
+                                            BorderThickness="1"
+                                            Foreground="{DynamicResource Theme.Danger}"
+                                            CornerRadius="8"
+                                            Padding="10,8"
+                                            HorizontalContentAlignment="Center"
+                                            Command="{Binding #Root.((vm:LibraryViewModel)DataContext).ReportNotWorkedOnMyVersionCommand}"
+                                            CommandParameter="{Binding}"
+                                            IsEnabled="{Binding #Root.((vm:LibraryViewModel)DataContext).CanSubmitCompatibilityReport}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                            <TextBlock Classes="icon-glyph" Text="&#xE711;" />
+                                            <TextBlock Text="Not worked" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Width="162"
+                                            Margin="0,0,6,6"
+                                            ToolTip.Tip="Open this mod on the Steam Workshop"
                                             Background="{DynamicResource Theme.SurfaceBg}"
                                             BorderBrush="{DynamicResource Theme.Border}"
                                             BorderThickness="1"
@@ -427,6 +450,7 @@
 
                                     <Button Width="162"
                                             Margin="0,0,6,6"
+                                            ToolTip.Tip="Open this mod folder"
                                             Background="{DynamicResource Theme.SurfaceBg}"
                                             BorderBrush="{DynamicResource Theme.Border}"
                                             BorderThickness="1"
@@ -443,7 +467,20 @@
                                     </Button>
                                 </WrapPanel>
 
+                                <Border Background="{DynamicResource Theme.SurfaceBg}"
+                                        BorderBrush="{DynamicResource Theme.Border}"
+                                        BorderThickness="1"
+                                        CornerRadius="8"
+                                        Padding="10,8"
+                                        IsVisible="{Binding #Root.((vm:LibraryViewModel)DataContext).CompatibilityReportSummary, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                    <TextBlock Text="{Binding #Root.((vm:LibraryViewModel)DataContext).CompatibilityReportSummary}"
+                                               Foreground="{DynamicResource Theme.TextMuted}"
+                                               FontSize="12"
+                                               TextWrapping="Wrap" />
+                                </Border>
+
                                 <Button
+                                ToolTip.Tip="Uninstall and remove this mod"
                                 Background="{DynamicResource Theme.SurfaceBg}"
                                 BorderBrush="{DynamicResource Theme.Border}"
                                 BorderThickness="1"

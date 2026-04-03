@@ -183,6 +183,7 @@
                 <!-- Mod grid -->
                 <ScrollViewer x:Name="ResultsScrollViewer"
                               HorizontalScrollBarVisibility="Disabled"
+                              Margin="0,0,0,56"
                               IsVisible="{Binding HasResults}">
                     <ItemsControl ItemsSource="{Binding DisplayedMods}">
                         <ItemsControl.ItemsPanel>
@@ -226,10 +227,12 @@
                                                        MaxLines="2"
                                                        TextWrapping="Wrap"
                                                        Foreground="{DynamicResource Theme.TextPrimary}"
-                                                       VerticalAlignment="Top" />
+                                                       VerticalAlignment="Top"
+                                                       ToolTip.Tip="{Binding Name}" />
                                             <Border Grid.Row="1"
                                                     Classes="version-badge"
-                                                    HorizontalAlignment="Left">
+                                                    HorizontalAlignment="Left"
+                                                    ToolTip.Tip="{Binding GameVersionBadge, StringFormat='Version tag: {0}'}">
                                                 <TextBlock Text="{Binding GameVersionBadge}"
                                                            Foreground="White"
                                                            FontSize="9"
@@ -239,7 +242,8 @@
                                             <StackPanel Grid.Row="2" Spacing="4">
                                                 <Border Classes="compat-badge"
                                                         HorizontalAlignment="Left"
-                                                        IsVisible="{Binding HasCommunityWorks}">
+                                                        IsVisible="{Binding HasCommunityWorks}"
+                                                        ToolTip.Tip="{Binding CommunityWorksBadge}">
                                                     <TextBlock Text="{Binding CommunityWorksBadge}"
                                                                Foreground="White"
                                                                FontSize="9"
@@ -249,7 +253,8 @@
                                                 <TextBlock Text="{Binding SubscriberSummary}"
                                                            Foreground="{DynamicResource Theme.TextMuted}"
                                                            FontSize="9"
-                                                           TextTrimming="CharacterEllipsis" />
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip.Tip="{Binding SubscriberSummary}" />
                                             </StackPanel>
                                         </Grid>
 
@@ -262,6 +267,7 @@
                                                 Click="OnCardActionClick"
                                                 PointerEntered="OnCardActionPointerEntered"
                                                 PointerExited="OnCardActionPointerExited"
+                                                ToolTip.Tip="{Binding ActionButtonTooltip}"
                                                 IsEnabled="{Binding IsActionEnabled}">
                                             <TextBlock Text="{Binding ActionButtonText}"
                                                        FontSize="10"
@@ -275,6 +281,31 @@
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </ScrollViewer>
+
+                <Border HorizontalAlignment="Center"
+                        VerticalAlignment="Bottom"
+                        Margin="0,0,0,10"
+                        IsVisible="{Binding HasResults}">
+                    <Button Command="{Binding ScanMoreCommand}"
+                            IsEnabled="{Binding CanScanMore}"
+                            ToolTip.Tip="Load the next page of workshop results"
+                            Background="{DynamicResource Theme.SurfaceBg}"
+                            BorderBrush="{DynamicResource Theme.Border}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12,7">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding NextPageButtonText}"
+                                       Foreground="{DynamicResource Theme.TextPrimary}"
+                                       FontSize="12"
+                                       FontWeight="SemiBold" />
+                            <ProgressBar IsIndeterminate="True"
+                                         Width="26"
+                                         Height="4"
+                                         IsVisible="{Binding IsScanningMore}" />
+                        </StackPanel>
+                    </Button>
+                </Border>
             </Grid>
 
             <Border x:Name="ModBrowserPanel"

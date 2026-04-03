@@ -27,7 +27,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private const int SearchBackgroundPageLimit = 40;
     private const int SearchCacheFlushBatchSize = 48;
     private const int MaxCachedCardsPerQuery = 1500;
-    private static readonly Regex AnyVersionRegex = new(@"\b\d+\.\d+(?:\.\d+)?\b", RegexOptions.Compiled);
+    private static readonly Regex AnyVersionRegex = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly IReadOnlyList<string> RelevanceBrowseSorts = new[] { "trend", "totaluniquesubscribers" };
@@ -80,6 +80,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
     public bool HasResults => DisplayedModCount > 0;
     public bool ShowLoadingState => IsLoading && DisplayedModCount == 0;
     public bool CanScanMore => !IsLoading && !IsScanningMore;
+    public int CurrentScanPage => Math.Max(1, ((FetchLimit - DefaultFetchLimit) / ScanMoreStep) + 1);
+    public string NextPageButtonText => IsScanningMore ? "Scanning..." : $"Next page ({CurrentScanPage + 1})";
 
     public event EventHandler<string>? InstallModRequested;
     public event EventHandler<string>? UninstallModRequested;
@@ -192,6 +194,11 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private static int GetCommunityWorksCount(string workshopId, string selectedVersion)
     {
         return StellarisyncClient.GetCommunityWorksCount(workshopId, selectedVersion);
+    }
+
+    private static int GetCommunityNotWorksCount(string workshopId, string selectedVersion)
+    {
+        return StellarisyncClient.GetCommunityNotWorksCount(workshopId, selectedVersion);
     }
 
     private static void InitializeCaches()
@@ -315,6 +322,13 @@ public partial class VersionBrowserViewModel : ViewModelBase
     partial void OnIsScanningMoreChanged(bool value)
     {
         OnPropertyChanged(nameof(CanScanMore));
+        OnPropertyChanged(nameof(NextPageButtonText));
+    }
+
+    partial void OnFetchLimitChanged(int value)
+    {
+        OnPropertyChanged(nameof(CurrentScanPage));
+        OnPropertyChanged(nameof(NextPageButtonText));
     }
 
     partial void OnHasNoModsChanged(bool value)
@@ -407,8 +421,9 @@ public partial class VersionBrowserViewModel : ViewModelBase
         if (IsLoading || IsScanningMore)
             return;
 
+        var nextPage = CurrentScanPage + 1;
         FetchLimit += ScanMoreStep;
-        StatusText = $"Scanning for more mods (up to {FetchLimit})...";
+        StatusText = $"Scanning page {nextPage} for more mods (up to {FetchLimit})...";
         await AppendMoreModsInBackgroundAsync();
     }
 
@@ -971,6 +986,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                     PreviewImageUrl = previewImageUrl,
                     GameVersionBadge = GetConfirmedGameVersionBadge(id, versionQuery),
                     CommunityWorksCount = GetCommunityWorksCount(id, versionQuery),
+                    CommunityNotWorksCount = GetCommunityNotWorksCount(id, versionQuery),
                     PublishedAtUnixSeconds = info?.TimeCreated ?? 0,
                     UpdatedAtUnixSeconds = info?.TimeUpdated ?? 0,
                     TotalSubscribers = info?.TotalSubscribers ?? 0,
@@ -1117,6 +1133,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 PreviewImageUrl = item.PreviewImageUrl,
                 GameVersionBadge = GetConfirmedGameVersionBadge(item.WorkshopId, versionQuery),
                 CommunityWorksCount = GetCommunityWorksCount(item.WorkshopId, versionQuery),
+                CommunityNotWorksCount = GetCommunityNotWorksCount(item.WorkshopId, versionQuery),
                 PublishedAtUnixSeconds = item.PublishedAtUnixSeconds,
                 UpdatedAtUnixSeconds = item.UpdatedAtUnixSeconds,
                 TotalSubscribers = item.TotalSubscribers,
@@ -1721,6 +1738,7 @@ public sealed partial class VersionModCard : ObservableObject
     public long TotalSubscribers { get; init; }
     public double PopularitySignal { get; init; }
     public int CommunityWorksCount { get; init; }
+    public int CommunityNotWorksCount { get; init; }
 
     public Bitmap? ThumbnailImage
     {
@@ -1748,6 +1766,7 @@ public sealed partial class VersionModCard : ObservableObject
             OnPropertyChanged(nameof(IsInstalledState));
             OnPropertyChanged(nameof(IsBusyState));
             OnPropertyChanged(nameof(IsErrorState));
+            OnPropertyChanged(nameof(ActionButtonTooltip));
         }
     }
 
@@ -1765,12 +1784,15 @@ public sealed partial class VersionModCard : ObservableObject
 
     public bool HasThumbnail => ThumbnailImage is not null;
     public string PlaceholderLetter => string.IsNullOrWhiteSpace(Name) ? "?" : Name[0].ToString().ToUpperInvariant();
-    public bool HasCommunityWorks => CommunityWorksCount > 0;
+    public int CommunityTotalReports => CommunityWorksCount + CommunityNotWorksCount;
+    public int CommunityWorksPercent => CommunityTotalReports <= 0
+        ? 0
+        : (int)Math.Round((double)CommunityWorksCount * 100d / CommunityTotalReports, MidpointRounding.AwayFromZero);
+    public bool HasCommunityWorks => CommunityTotalReports > 0;
     public string CommunityWorksBadge => CommunityWorksCount switch
     {
-        <= 0 => string.Empty,
-        1 => "✅ Works on this version",
-        _ => $"✅ Works on this version ({CommunityWorksCount})"
+        <= 0 when CommunityTotalReports <= 0 => string.Empty,
+        _ => $"✅ {CommunityWorksPercent}% work ({CommunityTotalReports} report{(CommunityTotalReports == 1 ? "" : "s")})"
     };
     public string SubscriberSummary => TotalSubscribers > 0 ? $"{TotalSubscribers:N0} subscribers" : "New / low data";
 
@@ -1788,6 +1810,16 @@ public sealed partial class VersionModCard : ObservableObject
         "uninstalling" => "Uninstalling...",
         "error" => "Retry Install",
         _ => "Install"
+    };
+
+    public string ActionButtonTooltip => ActionState switch
+    {
+        "queued" => "This mod is queued for installation",
+        "installing" => "This mod is currently installing",
+        "installed" => "Click to uninstall this mod",
+        "uninstalling" => "This mod is currently uninstalling",
+        "error" => "Retry installing this mod",
+        _ => "Install this mod"
     };
 
     private static string NormalizeActionState(string? state)
