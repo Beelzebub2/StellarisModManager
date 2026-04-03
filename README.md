@@ -1,10 +1,8 @@
 # Stellaris Mod Manager
 
 [![Build Installer](https://img.shields.io/github/actions/workflow/status/Beelzebub2/StellarisModManager/release-installer.yml?label=build%20installer)](https://github.com/Beelzebub2/StellarisModManager/actions/workflows/release-installer.yml)
-[![Stars](https://img.shields.io/github/stars/Beelzebub2/StellarisModManager?style=flat)](https://github.com/Beelzebub2/StellarisModManager/stargazers)
 [![Issues](https://img.shields.io/github/issues/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/issues)
 [![Release](https://img.shields.io/github/v/release/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/releases)
-[![License](https://img.shields.io/github/license/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager)
 
 Desktop mod manager for Stellaris built with Avalonia and .NET 8.
 
