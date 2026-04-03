@@ -88,7 +88,7 @@ public sealed class AppUpdateService
     };
 
     private const string DefaultStellarisyncBaseUrl = "https://stellarisync.rrmtools.uk";
-    private const string DefaultGitHubRepo = "ricarrrdoaraujo/StellarisModManager";
+    private const string DefaultGitHubRepo = "Beelzebub2/StellarisModManager";
     private static readonly Regex SemverRegex = new(@"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$", RegexOptions.Compiled);
 
     private readonly AppSettings _settings;

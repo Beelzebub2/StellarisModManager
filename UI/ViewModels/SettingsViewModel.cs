@@ -36,6 +36,7 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private string _modsPath = "";
     [ObservableProperty] private string _steamCmdPath = "";
     [ObservableProperty] private string _steamCmdDownloadPath = "";
+    [ObservableProperty] private WorkshopDownloadRuntime _selectedDownloadRuntime = WorkshopDownloadRuntime.Auto;
     [ObservableProperty] private bool _autoDetectGame = true;
     [ObservableProperty] private string _gameVersion = "";
     [ObservableProperty] private string _selectedPalette = "Obsidian Ember";
@@ -58,9 +59,11 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private bool _isApplyingAppUpdate = false;
     [ObservableProperty] private bool _isAppUpdateCritical = false;
 
+    public ObservableCollection<WorkshopDownloadRuntime> DownloadRuntimeOptions { get; } = new();
     public ObservableCollection<string> PaletteOptions { get; } = new();
 
     public bool IsSteamCmdConfigured => _downloader.IsSteamCmdAvailable(SteamCmdPath);
+    public bool IsSteamCmdPathRequired => SelectedDownloadRuntime != WorkshopDownloadRuntime.SteamKit2;
     public bool IsAppUpdateBusy => IsCheckingAppUpdates || IsDownloadingAppUpdate || IsApplyingAppUpdate;
 
     public SettingsViewModel(AppSettings settings, GameDetector detector, WorkshopDownloader downloader, ModDatabase db)
@@ -76,6 +79,7 @@ public partial class SettingsViewModel : ViewModelBase
         ModsPath = settings.ModsPath ?? "";
         SteamCmdPath = settings.SteamCmdPath ?? "";
         SteamCmdDownloadPath = settings.SteamCmdDownloadPath ?? "";
+        SelectedDownloadRuntime = settings.WorkshopDownloadRuntime;
         AutoDetectGame = settings.AutoDetectGame;
         DeveloperMode = settings.DeveloperMode;
         WarnBeforeRestartGame = settings.WarnBeforeRestartGame;
@@ -85,6 +89,9 @@ public partial class SettingsViewModel : ViewModelBase
             : settings.ThemePalette;
 
         AppVersion = _appUpdateService.CurrentVersionDisplay;
+
+        foreach (var runtime in Enum.GetValues<WorkshopDownloadRuntime>())
+            DownloadRuntimeOptions.Add(runtime);
 
         foreach (var palette in ThemePaletteService.GetPaletteNames())
             PaletteOptions.Add(palette);
@@ -135,6 +142,12 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     partial void OnSteamCmdDownloadPathChanged(string value) => HasUnsavedChanges = true;
+    partial void OnSelectedDownloadRuntimeChanged(WorkshopDownloadRuntime value)
+    {
+        HasUnsavedChanges = true;
+        OnPropertyChanged(nameof(IsSteamCmdPathRequired));
+    }
+
     partial void OnAutoDetectGameChanged(bool value) => HasUnsavedChanges = true;
     partial void OnDeveloperModeChanged(bool value) => HasUnsavedChanges = true;
     partial void OnWarnBeforeRestartGameChanged(bool value)
@@ -332,7 +345,15 @@ public partial class SettingsViewModel : ViewModelBase
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(SteamCmdPath) && !File.Exists(SteamCmdPath))
+        if (SelectedDownloadRuntime == WorkshopDownloadRuntime.SteamCmd && string.IsNullOrWhiteSpace(SteamCmdPath))
+        {
+            StatusMessage = "SteamCMD runtime selected, but steamcmd.exe path is empty.";
+            errors++;
+        }
+
+        if (SelectedDownloadRuntime != WorkshopDownloadRuntime.SteamKit2 &&
+            !string.IsNullOrWhiteSpace(SteamCmdPath) &&
+            !File.Exists(SteamCmdPath))
         {
             StatusMessage = "SteamCMD executable not found at selected path.";
             errors++;
@@ -415,6 +436,7 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.ModsPath = string.IsNullOrWhiteSpace(ModsPath) ? null : ModsPath;
         _settings.SteamCmdPath = string.IsNullOrWhiteSpace(SteamCmdPath) ? null : SteamCmdPath;
         _settings.SteamCmdDownloadPath = string.IsNullOrWhiteSpace(SteamCmdDownloadPath) ? null : SteamCmdDownloadPath;
+        _settings.WorkshopDownloadRuntime = SelectedDownloadRuntime;
         _settings.AutoDetectGame = AutoDetectGame;
         _settings.DeveloperMode = DeveloperMode;
         _settings.WarnBeforeRestartGame = WarnBeforeRestartGame;

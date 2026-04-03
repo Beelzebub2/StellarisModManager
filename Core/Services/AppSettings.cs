@@ -31,6 +31,7 @@ public class AppSettings
     public string? ModsPath { get; set; }
     public string? SteamCmdPath { get; set; }
     public string? SteamCmdDownloadPath { get; set; }
+    public WorkshopDownloadRuntime WorkshopDownloadRuntime { get; set; } = WorkshopDownloadRuntime.Auto;
     public string? LastDetectedGameVersion { get; set; }
     public bool AutoDetectGame { get; set; } = true;
     public bool DeveloperMode { get; set; }

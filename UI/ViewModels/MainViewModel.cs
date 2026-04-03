@@ -351,6 +351,9 @@ public partial class MainViewModel : ViewModelBase
 
     private async Task TryWarmUpSteamCmdAsync(AppSettings settings)
     {
+        if (settings.WorkshopDownloadRuntime == WorkshopDownloadRuntime.SteamKit2)
+            return;
+
         if (string.IsNullOrWhiteSpace(settings.SteamCmdPath) ||
             !_downloader.IsSteamCmdAvailable(settings.SteamCmdPath))
         {
@@ -505,13 +508,16 @@ public partial class MainViewModel : ViewModelBase
             return true;
         }
 
-        if (string.IsNullOrWhiteSpace(_settings.SteamCmdPath) ||
-            !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath))
+        var selectedRuntime = _settings.WorkshopDownloadRuntime;
+
+        if (selectedRuntime == WorkshopDownloadRuntime.SteamCmd &&
+            (string.IsNullOrWhiteSpace(_settings.SteamCmdPath) ||
+             !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath)))
         {
             SetOverlayModState(workshopId, "error");
             RunOnUiThread(() =>
             {
-                StatusMessage = "SteamCMD not configured. Please go to Settings.";
+                StatusMessage = "SteamCMD runtime selected, but steamcmd.exe is not configured. Please go to Settings.";
                 ActiveView = SettingsViewModel;
             });
             return false;
@@ -519,18 +525,19 @@ public partial class MainViewModel : ViewModelBase
 
         var modsPath = _settings.ModsPath ?? new Core.Services.GameDetector().GetDefaultModsPath();
         var downloadPath = _settings.SteamCmdDownloadPath ?? modsPath;
-        _downloader.PublishDiagnostic($"[install:{workshopId}] Starting install pipeline. downloadPath='{downloadPath}', modsPath='{modsPath}'");
+        _downloader.PublishDiagnostic($"[install:{workshopId}] Starting install pipeline. runtime='{selectedRuntime}', downloadPath='{downloadPath}', modsPath='{modsPath}'");
 
         var downloadedPath = await _downloader.DownloadModAsync(
             workshopId,
             _settings.SteamCmdPath,
-            downloadPath);
+            downloadPath,
+            selectedRuntime);
 
         if (downloadedPath is null)
         {
             _downloader.PublishDiagnostic($"[install:{workshopId}] Download step failed.");
             SetOverlayModState(workshopId, "error");
-            RunOnUiThread(() => StatusMessage = $"Download failed for mod {workshopId}");
+            RunOnUiThread(() => StatusMessage = $"Download failed for mod {workshopId} using runtime {selectedRuntime}");
             return false;
         }
 

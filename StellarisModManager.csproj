@@ -44,6 +44,9 @@
 
     <!-- JSON -->
     <PackageReference Include="Newtonsoft.Json" Version="13.*" />
+
+    <!-- Steam network integration -->
+    <PackageReference Include="SteamKit2" Version="3.4.0" />
   </ItemGroup>
 
   <ItemGroup>

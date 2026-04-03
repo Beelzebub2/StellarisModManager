@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Serilog;
+using SteamKit2;
 
 namespace StellarisModManager.Core.Services;
 
@@ -56,7 +57,7 @@ public class WorkshopModInfo
 // -------------------------------------------------------------------------
 
 /// <summary>
-/// Downloads Workshop mods using SteamCMD and queries the Steam Web API.
+/// Downloads Workshop mods and queries the Steam Web API.
 /// </summary>
 public class WorkshopDownloader
 {
@@ -166,17 +167,74 @@ public class WorkshopDownloader
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Downloads a Workshop mod using SteamCMD.
+    /// Downloads a Workshop mod using Auto runtime selection.
     /// Returns the path to the downloaded mod folder, or null on failure.
     ///
     /// SteamCMD downloads to:
     ///   {downloadBasePath}/steamapps/workshop/content/281990/{modId}/
     /// </summary>
-    public async Task<string?> DownloadModAsync(
+    public Task<string?> DownloadModAsync(
         string modId,
         string steamCmdPath,
         string downloadBasePath,
         CancellationToken ct = default)
+    {
+        return DownloadModAsync(modId, steamCmdPath, downloadBasePath, WorkshopDownloadRuntime.Auto, ct);
+    }
+
+    /// <summary>
+    /// Downloads a Workshop mod using the selected runtime.
+    /// </summary>
+    public async Task<string?> DownloadModAsync(
+        string modId,
+        string? steamCmdPath,
+        string downloadBasePath,
+        WorkshopDownloadRuntime runtime,
+        CancellationToken ct = default)
+    {
+        if (runtime is WorkshopDownloadRuntime.Auto or WorkshopDownloadRuntime.SteamKit2)
+        {
+            var steamKitAttempt = await TryDownloadViaSteamKitAsync(modId, downloadBasePath, ct);
+            if (steamKitAttempt.Success)
+            {
+                RaiseComplete(modId, true, steamKitAttempt.DownloadedPath, null);
+                return steamKitAttempt.DownloadedPath;
+            }
+
+            if (runtime == WorkshopDownloadRuntime.SteamKit2)
+            {
+                RaiseComplete(modId, false, null, steamKitAttempt.ErrorMessage);
+                return null;
+            }
+
+            RaiseLog($"SteamKit2 attempt failed for mod {modId}; falling back to SteamCMD. Reason: {steamKitAttempt.ErrorMessage}");
+        }
+
+        return await DownloadModViaSteamCmdAsync(modId, steamCmdPath, downloadBasePath, ct);
+    }
+
+    private async Task<(bool Success, string? DownloadedPath, string? ErrorMessage)> TryDownloadViaSteamKitAsync(
+        string modId,
+        string downloadBasePath,
+        CancellationToken ct)
+    {
+        await Task.Yield();
+
+        var steamKitVersion = typeof(SteamClient).Assembly.GetName().Version?.ToString() ?? "unknown";
+        RaiseProgress(modId, "", -1, $"Using SteamKit2 runtime (v{steamKitVersion})...");
+        RaiseLog($"SteamKit2 selected for mod {modId}. Download root: {downloadBasePath}");
+
+        if (ct.IsCancellationRequested)
+            return (false, null, "Download cancelled.");
+
+        return (false, null, $"SteamKit2 download path is still in progress in this build (v{steamKitVersion}).");
+    }
+
+    private async Task<string?> DownloadModViaSteamCmdAsync(
+        string modId,
+        string? steamCmdPath,
+        string downloadBasePath,
+        CancellationToken ct)
     {
         if (!IsSteamCmdAvailable(steamCmdPath))
         {
@@ -186,6 +244,8 @@ public class WorkshopDownloader
             return null;
         }
 
+        var steamCmdExePath = steamCmdPath!;
+
         // Mirror WorkshopDL behavior: detect the real consumer app id from the mod id.
         var effectiveAppId = await TryDetectWorkshopAppIdAsync(modId, ct) ?? StellarisAppId;
         RaiseLog($"Download requested for mod {modId}, app {effectiveAppId}");
@@ -193,7 +253,7 @@ public class WorkshopDownloader
             RaiseProgress(modId, "", -1, $"Detected AppID {effectiveAppId} for this item");
 
         var forceInstallDir = downloadBasePath.Replace('/', '\\');
-        var steamCmdDir = Path.GetDirectoryName(steamCmdPath) ?? downloadBasePath;
+        var steamCmdDir = Path.GetDirectoryName(steamCmdExePath) ?? downloadBasePath;
 
         var attempts = new[]
         {
@@ -202,7 +262,6 @@ public class WorkshopDownloader
         };
 
         string? downloadedPath = null;
-        string? errorMessage = null;
         var attemptErrors = new List<string>();
 
         foreach (var args in attempts)
@@ -210,7 +269,7 @@ public class WorkshopDownloader
             var result = await RunSteamCmdCommandAttemptAsync(
                 modId,
                 effectiveAppId,
-                steamCmdPath,
+                steamCmdExePath,
                 steamCmdDir,
                 forceInstallDir,
                 downloadBasePath,
@@ -230,7 +289,7 @@ public class WorkshopDownloader
 
         if (downloadedPath is null)
         {
-            errorMessage = attemptErrors.Count > 0
+            var errorMessage = attemptErrors.Count > 0
                 ? string.Join(" | ", attemptErrors)
                 : "SteamCMD failed with unknown error.";
             RaiseComplete(modId, false, null, errorMessage);
@@ -244,7 +303,7 @@ public class WorkshopDownloader
     /// <summary>
     /// Returns true if steamcmd.exe exists at the given path.
     /// </summary>
-    public bool IsSteamCmdAvailable(string steamCmdPath)
+    public bool IsSteamCmdAvailable(string? steamCmdPath)
     {
         return !string.IsNullOrWhiteSpace(steamCmdPath) && File.Exists(steamCmdPath);
     }

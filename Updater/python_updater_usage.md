@@ -21,8 +21,8 @@ python Updater/python_updater.py \
   --apply-update \
   --parent-pid 1234 \
   --app-exe "C:\\Program Files\\Stellaris Mod Manager\\StellarisModManager.exe" \
-  --download-url "https://github.com/ricarrrdoaraujo/StellarisModManager/releases/download/v1.0.8/StellarisModManager-Setup.exe" \
-  --release-url "https://github.com/ricarrrdoaraujo/StellarisModManager/releases/tag/v1.0.8" \
+  --download-url "https://github.com/Beelzebub2/StellarisModManager/releases/download/v1.0.8/StellarisModManager-Setup.exe" \
+  --release-url "https://github.com/Beelzebub2/StellarisModManager/releases/tag/v1.0.8" \
   --target-version "1.0.8" \
   --startup-signal "%LOCALAPPDATA%\\StellarisModManager\\updates\\updater-started.signal" \
   --cleanup-root "%LOCALAPPDATA%\\StellarisModManager\\updates\\tmp-updater"
@@ -37,5 +37,5 @@ python Updater/python_updater.py --check-only --current-version "1.0.7"
 Optional check flags:
 
 - `--api-base` (default: `https://stellarisync.rrmtools.uk`)
-- `--github-repo` (default: `ricarrrdoaraujo/StellarisModManager`)
+- `--github-repo` (default: `Beelzebub2/StellarisModManager`)
 - `--include-prerelease`

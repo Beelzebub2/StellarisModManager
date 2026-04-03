@@ -351,10 +351,13 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task UpdateModAsync(ModViewModel mod)
     {
-        if (string.IsNullOrWhiteSpace(_settings.SteamCmdPath) ||
-            !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath))
+        var selectedRuntime = _settings.WorkshopDownloadRuntime;
+
+        if (selectedRuntime == WorkshopDownloadRuntime.SteamCmd &&
+            (string.IsNullOrWhiteSpace(_settings.SteamCmdPath) ||
+             !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath)))
         {
-            StatusMessage = "SteamCMD not configured. Set it in Settings first.";
+            StatusMessage = "SteamCMD runtime selected, but steamcmd.exe is not configured. Set it in Settings first.";
             return;
         }
 
@@ -373,7 +376,8 @@ public partial class LibraryViewModel : ViewModelBase
             var downloadedPath = await _downloader.DownloadModAsync(
                 mod.WorkshopId,
                 _settings.SteamCmdPath,
-                downloadBasePath);
+                downloadBasePath,
+                selectedRuntime);
 
             if (downloadedPath is null)
             {
