@@ -305,6 +305,20 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    private static async Task<bool> WaitForStellarisExitAsync(string gamePath, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow.Add(timeout);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (!IsStellarisRunning(gamePath))
+                return true;
+
+            await Task.Delay(250);
+        }
+
+        return !IsStellarisRunning(gamePath);
+    }
+
     private async Task<bool> EnsureReadyForLaunchAsync(string gamePath)
     {
         RefreshGameRunningState();
@@ -358,31 +372,27 @@ public partial class MainViewModel : ViewModelBase
                 }
             }
 
-            var closeDeadline = DateTime.UtcNow.AddSeconds(8);
-            while (DateTime.UtcNow < closeDeadline)
-            {
-                if (runningProcesses.All(SafeHasExited))
-                    break;
+            var exitedAfterClose = await WaitForStellarisExitAsync(gamePath, TimeSpan.FromSeconds(10));
 
-                await Task.Delay(250);
-            }
-
-            foreach (var process in runningProcesses)
+            if (!exitedAfterClose)
             {
-                try
+                foreach (var process in runningProcesses)
                 {
-                    if (!SafeHasExited(process))
-                        process.Kill(true);
-                }
-                catch
-                {
-                    // Process may already be gone or inaccessible.
+                    try
+                    {
+                        if (!SafeHasExited(process))
+                            process.Kill(true);
+                    }
+                    catch
+                    {
+                        // Process may already be gone or inaccessible.
+                    }
                 }
             }
 
-            await Task.Delay(700);
+            var exitedAfterKill = exitedAfterClose || await WaitForStellarisExitAsync(gamePath, TimeSpan.FromSeconds(6));
             RefreshGameRunningState();
-            var stillRunning = IsGameRunning;
+            var stillRunning = IsGameRunning && !exitedAfterKill;
             if (stillRunning)
             {
                 StatusMessage = "Could not close running Stellaris process. Please close it manually.";
