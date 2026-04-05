@@ -40,7 +40,7 @@ except Exception as exc:
 DEFAULT_STELLARISYNC_BASE_URL = "https://stellarisync.rrmtools.uk"
 DEFAULT_GITHUB_REPO = "Beelzebub2/StellarisModManager"
 DEFAULT_SETUP_NAME = "StellarisModManager-Setup.exe"
-DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 DOWNLOAD_PROGRESS_UPDATE_INTERVAL_SEC = 0.15
 
 

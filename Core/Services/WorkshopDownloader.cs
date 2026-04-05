@@ -1032,6 +1032,9 @@ public class WorkshopDownloader
         string command,
         CancellationToken ct)
     {
+        // Clear known SteamCMD workshop cache targets so stale folders cannot be mistaken for a fresh download.
+        ClearSteamCmdCandidatePaths(appId, modId, downloadBasePath, steamCmdDir);
+
         if (_allowConcurrentSteamCmdDownloads)
         {
             RaiseProgress(modId, "", -1, "Starting SteamCMD...");
@@ -1127,7 +1130,7 @@ public class WorkshopDownloader
 
             foreach (var path in candidatePaths)
             {
-                if (Directory.Exists(path))
+                if (Directory.Exists(path) && ContainsAnyContent(path))
                 {
                     _log.Information("Mod {Id} downloaded to {Path}", modId, path);
                     return (true, path, null);
@@ -1355,6 +1358,9 @@ public class WorkshopDownloader
         CancellationToken ct,
         bool allowBootstrapRetry = true)
     {
+        // Ensure each direct attempt starts from a clean cache path.
+        ClearSteamCmdCandidatePaths(appId, modId, downloadBasePath, steamCmdDir);
+
         var args = $"+force_install_dir \"{forceInstallDir}\" +login anonymous +{command} +quit";
         _log.Information("Running direct steamcmd fallback: {Exe} {Args}", steamCmdPath, args);
         RaiseLog($"Running direct fallback: {command}");
@@ -1458,7 +1464,7 @@ public class WorkshopDownloader
 
             foreach (var path in candidatePaths)
             {
-                if (Directory.Exists(path))
+                if (Directory.Exists(path) && ContainsAnyContent(path))
                     return (true, path, null);
             }
 
@@ -1576,6 +1582,29 @@ public class WorkshopDownloader
         Add(Path.Combine(steamCmdDir, "steamapps", "workshop", "content", appId, modId));
 
         return candidates;
+    }
+
+    private static void ClearSteamCmdCandidatePaths(
+        string appId,
+        string modId,
+        string downloadBasePath,
+        string steamCmdDir)
+    {
+        var paths = BuildCandidateDownloadPaths(appId, modId, downloadBasePath, steamCmdDir, outputPath: null);
+        foreach (var path in paths)
+        {
+            if (!Directory.Exists(path))
+                continue;
+
+            try
+            {
+                Directory.Delete(path, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup only; SteamCMD may still repair/overwrite existing content.
+            }
+        }
     }
 
     private static bool TryExtractDownloadedPath(string line, out string? path)

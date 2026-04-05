@@ -8,7 +8,7 @@ namespace StellarisModManager.Updater;
 
 internal static class Program
 {
-    private const int DownloadBufferSize = 1024 * 1024;
+    private const int DownloadBufferSize = 4 * 1024 * 1024;
     private const int MinParallelDownloadBytes = 8 * 1024 * 1024;
     private const int DefaultParallelDownloadParts = 4;
     private const int MaxParallelDownloadParts = 8;
