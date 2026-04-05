@@ -303,7 +303,7 @@
                                                 BorderThickness="1"
                                                 CornerRadius="9"
                                                 Padding="8,3">
-                                            <TextBlock Text="{Binding LoadOrder}"
+                                            <TextBlock Text="{Binding LoadOrderDisplay}"
                                                        FontSize="11"
                                                        FontWeight="SemiBold"
                                                        Foreground="{DynamicResource Theme.TextPrimary}" />
@@ -312,12 +312,14 @@
                                         <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center" HorizontalAlignment="Center">
                                             <Button Classes="icon-btn"
                                                     ToolTip.Tip="Move up"
+                                                    IsVisible="{Binding IsEnabled}"
                                                     Command="{Binding #Root.((vm:LibraryViewModel)DataContext).MoveModUpCommand}"
                                                     CommandParameter="{Binding}">
                                                 <TextBlock Classes="icon-glyph" Text="&#xE70E;" />
                                             </Button>
                                             <Button Classes="icon-btn"
                                                     ToolTip.Tip="Move down"
+                                                    IsVisible="{Binding IsEnabled}"
                                                     Command="{Binding #Root.((vm:LibraryViewModel)DataContext).MoveModDownCommand}"
                                                     CommandParameter="{Binding}">
                                                 <TextBlock Classes="icon-glyph" Text="&#xE70D;" />

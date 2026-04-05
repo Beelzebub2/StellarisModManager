@@ -46,6 +46,7 @@ public partial class ModViewModel : ViewModelBase
         }
     }
     public string InstalledDate => Model.InstalledAt.ToString("yyyy-MM-dd");
+    public string LoadOrderDisplay => IsEnabled ? (LoadOrder + 1).ToString() : "-";
     public bool HasTotalSubscribers => Model.TotalSubscribers is > 0;
     public string TotalSubscribersDisplay => Model.TotalSubscribers is > 0
         ? Model.TotalSubscribers.Value.ToString("N0")
@@ -96,7 +97,17 @@ public partial class ModViewModel : ViewModelBase
     }
 
     partial void OnHasUpdateChanged(bool value) => OnPropertyChanged(nameof(HasUpdateText));
-    partial void OnIsEnabledChanged(bool value) => Model.IsEnabled = value;
+    partial void OnIsEnabledChanged(bool value)
+    {
+        Model.IsEnabled = value;
+        OnPropertyChanged(nameof(LoadOrderDisplay));
+    }
+
+    partial void OnLoadOrderChanged(int value)
+    {
+        Model.LoadOrder = value;
+        OnPropertyChanged(nameof(LoadOrderDisplay));
+    }
 
     public void SetTotalSubscribers(long? totalSubscribers)
     {

@@ -198,6 +198,10 @@ public class ModDatabase
         if (existing is null)
         {
             mod.InstalledAt = DateTime.UtcNow;
+            var maxLoadOrder = await ctx.Mods
+                .Select(m => (int?)m.LoadOrder)
+                .MaxAsync() ?? -1;
+            mod.LoadOrder = maxLoadOrder + 1;
             ctx.Mods.Add(mod);
             await ctx.SaveChangesAsync();
             return mod;
@@ -301,6 +305,34 @@ public class ModDatabase
             ctx.Mods.Remove(mod);
             await ctx.SaveChangesAsync();
         }
+    }
+
+    public async Task<int> RemoveMissingInstalledModsAsync()
+    {
+        await using var ctx = _contextFactory();
+
+        var mods = await ctx.Mods.ToListAsync();
+        var staleMods = mods
+            .Where(mod => !IsModPresentOnDisk(mod))
+            .ToList();
+
+        if (staleMods.Count == 0)
+            return 0;
+
+        ctx.Mods.RemoveRange(staleMods);
+        await ctx.SaveChangesAsync();
+        return staleMods.Count;
+    }
+
+    private static bool IsModPresentOnDisk(Mod mod)
+    {
+        if (mod is null)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(mod.InstalledPath) || string.IsNullOrWhiteSpace(mod.DescriptorPath))
+            return false;
+
+        return Directory.Exists(mod.InstalledPath) && File.Exists(mod.DescriptorPath);
     }
 
     // -------------------------------------------------------------------------

@@ -210,7 +210,10 @@ public partial class LibraryViewModel : ViewModelBase
         if (ShowEnabledOnly)
             filtered = filtered.Where(m => m.IsEnabled);
 
-        foreach (var mod in filtered.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name))
+        foreach (var mod in filtered
+                     .OrderByDescending(m => m.IsEnabled)
+                     .ThenBy(m => m.LoadOrder)
+                     .ThenBy(m => m.Name))
             FilteredMods.Add(mod);
 
         OnPropertyChanged(nameof(TotalMods));
@@ -219,7 +222,20 @@ public partial class LibraryViewModel : ViewModelBase
 
     private List<ModViewModel> GetLoadOrderSortedMods()
     {
-        return Mods.OrderBy(m => m.LoadOrder).ThenBy(m => m.Name).ToList();
+        return Mods
+            .OrderByDescending(m => m.IsEnabled)
+            .ThenBy(m => m.LoadOrder)
+            .ThenBy(m => m.Name)
+            .ToList();
+    }
+
+    private List<ModViewModel> GetEnabledLoadOrderSortedMods()
+    {
+        return Mods
+            .Where(m => m.IsEnabled)
+            .OrderBy(m => m.LoadOrder)
+            .ThenBy(m => m.Name)
+            .ToList();
     }
 
     private async Task SaveProfileSnapshotIfActiveAsync()
@@ -253,8 +269,7 @@ public partial class LibraryViewModel : ViewModelBase
     private async Task PersistEnabledStateAsync(ModViewModel mod)
     {
         await _db.SetModEnabledAsync(mod.Model.Id, mod.IsEnabled);
-        await SaveProfileSnapshotIfActiveAsync();
-        await SyncLauncherStateAsync();
+        await SaveLoadOrderAsync();
         OnPropertyChanged(nameof(ActiveMods));
     }
 
@@ -280,7 +295,13 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private void MoveModUp(ModViewModel mod)
     {
-        var ordered = GetLoadOrderSortedMods();
+        if (!mod.IsEnabled)
+        {
+            StatusMessage = "Only enabled mods can be reordered.";
+            return;
+        }
+
+        var ordered = GetEnabledLoadOrderSortedMods();
         var idx = ordered.IndexOf(mod);
         if (idx <= 0) return;
 
@@ -293,7 +314,13 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private void MoveModDown(ModViewModel mod)
     {
-        var ordered = GetLoadOrderSortedMods();
+        if (!mod.IsEnabled)
+        {
+            StatusMessage = "Only enabled mods can be reordered.";
+            return;
+        }
+
+        var ordered = GetEnabledLoadOrderSortedMods();
         var idx = ordered.IndexOf(mod);
         if (idx < 0 || idx >= ordered.Count - 1) return;
 
@@ -303,19 +330,30 @@ public partial class LibraryViewModel : ViewModelBase
         _ = SaveLoadOrderAsync();
     }
 
-    private async Task SaveLoadOrderAsync()
+    private async Task SaveLoadOrderAsync(bool saveProfileSnapshot = true, bool syncLauncherState = true)
     {
         var ordered = GetLoadOrderSortedMods();
-        for (var i = 0; i < ordered.Count; i++)
-            ordered[i].LoadOrder = i;
+
+        // Keep enabled mods contiguous at the top, followed by disabled mods.
+        var index = 0;
+        foreach (var mod in ordered.Where(m => m.IsEnabled))
+            mod.LoadOrder = index++;
+
+        foreach (var mod in ordered.Where(m => !m.IsEnabled))
+            mod.LoadOrder = index++;
 
         var updates = ordered
             .Select((m, i) => (m.Model.Id, i))
             .ToList();
 
         await _db.UpdateLoadOrderAsync(updates);
-        await SaveProfileSnapshotIfActiveAsync();
-        await SyncLauncherStateAsync();
+        if (saveProfileSnapshot)
+            await SaveProfileSnapshotIfActiveAsync();
+
+        if (syncLauncherState)
+            await SyncLauncherStateAsync();
+
+        ApplyFilter();
     }
 
     private string ResolveModsPath()
@@ -990,6 +1028,7 @@ public partial class LibraryViewModel : ViewModelBase
 
         await StellarisyncClient.FetchCommunityCompatibilityAsync();
 
+        var missingRemoved = await _db.RemoveMissingInstalledModsAsync();
         var duplicatesRemoved = await _db.NormalizeDuplicateWorkshopModsAsync();
 
         var mods = await _db.GetAllModsAsync();
@@ -999,6 +1038,8 @@ public partial class LibraryViewModel : ViewModelBase
             vm.PropertyChanged += OnModPropertyChanged;
             Mods.Add(vm);
         }
+
+        await SaveLoadOrderAsync(saveProfileSnapshot: false, syncLauncherState: false);
 
         var profiles = await _db.GetProfilesAsync();
 
@@ -1052,8 +1093,19 @@ public partial class LibraryViewModel : ViewModelBase
 
         RefreshCompatibilityReportSummary();
 
-        if (duplicatesRemoved > 0)
+        if (missingRemoved > 0 && duplicatesRemoved > 0)
+        {
+            StatusMessage =
+                $"Removed {missingRemoved} mod record(s) missing on disk and merged {duplicatesRemoved} duplicate record(s).";
+        }
+        else if (missingRemoved > 0)
+        {
+            StatusMessage = $"Removed {missingRemoved} mod record(s) missing on disk.";
+        }
+        else if (duplicatesRemoved > 0)
+        {
             StatusMessage = $"Detected and merged {duplicatesRemoved} duplicate mod record(s).";
+        }
     }
 
     // Called when a new mod is installed
