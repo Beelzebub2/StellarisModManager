@@ -68,7 +68,17 @@ if not defined PYINSTALLER_CMD (
 )
 
 if not defined PYINSTALLER_CMD (
-	echo PyInstaller was not found.
+	echo PyInstaller was not found. Attempting automatic install...
+	py -3 -m pip install --disable-pip-version-check pyinstaller >nul 2>nul
+	if not errorlevel 1 set "PYINSTALLER_CMD=py -3 -m PyInstaller"
+	if not defined PYINSTALLER_CMD (
+		python -m pip install --disable-pip-version-check pyinstaller >nul 2>nul
+		if not errorlevel 1 set "PYINSTALLER_CMD=python -m PyInstaller"
+	)
+)
+
+if not defined PYINSTALLER_CMD (
+	echo Failed to install or locate PyInstaller.
 	echo Install it with: py -3 -m pip install pyinstaller
 	echo Or set SMM_SKIP_PY_UPDATER_EXE=1 to skip python updater exe generation.
 	exit /b 1
