@@ -21,6 +21,14 @@ namespace StellarisModManager.UI.ViewModels;
 
 public partial class LibraryViewModel : ViewModelBase
 {
+    private sealed class SharedProfileSyncContext
+    {
+        public required int LocalProfileId { get; init; }
+        public required string LocalProfileName { get; init; }
+        public required List<string> OrderedWorkshopIds { get; init; }
+        public required HashSet<string> WorkshopIdSet { get; init; }
+    }
+
     private static readonly Regex VersionTokenPattern = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
     private static readonly Serilog.ILogger _log = Log.ForContext<LibraryViewModel>();
     private static readonly HttpClient _stellarisyncHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
@@ -29,6 +37,7 @@ public partial class LibraryViewModel : ViewModelBase
     private bool _isLoadingProfiles;
     private bool _isApplyingProfileSelection;
     private int? _currentActiveProfileId;
+    private SharedProfileSyncContext? _sharedProfileSyncContext;
 
     private readonly ModDatabase _db;
     private readonly ModUpdateChecker _updateChecker;
@@ -96,6 +105,9 @@ public partial class LibraryViewModel : ViewModelBase
     partial void OnUpdatesAvailableChanged(int value) => OnPropertyChanged(nameof(HasUpdatesAvailable));
     partial void OnActiveProfileChanged(ModProfile? value)
     {
+        if (_sharedProfileSyncContext is not null && (value is null || value.Id != _sharedProfileSyncContext.LocalProfileId))
+            _sharedProfileSyncContext = null;
+
         if (value is null)
         {
             if (!_isLoadingProfiles && !_isApplyingProfileSelection)
@@ -667,60 +679,32 @@ public partial class LibraryViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(baseUrl))
             baseUrl = StellarisyncBaseUrl;
 
-        var url = $"{baseUrl.TrimEnd('/')}/profiles/{Uri.EscapeDataString(id)}/sync-check";
-        var installed = Mods
-            .Select(m => m.WorkshopId)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-
-        var payload = JsonSerializer.Serialize(new { installedMods = installed });
-
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            var (remoteProfileName, profileWorkshopIds) = await FetchSharedProfileDefinitionAsync(baseUrl, id);
+            if (profileWorkshopIds.Count == 0)
             {
-                Content = new StringContent(payload, Encoding.UTF8, "application/json")
-            };
-
-            using var response = await _stellarisyncHttp.SendAsync(request);
-            var body = await response.Content.ReadAsStringAsync();
-
-            if (!response.IsSuccessStatusCode)
-            {
-                StatusMessage = $"Profile ID check failed ({(int)response.StatusCode}): {body}";
+                StatusMessage = $"Profile '{remoteProfileName}' has no mods to sync.";
                 return;
             }
 
-            using var doc = JsonDocument.Parse(body);
-            var shouldPromptInstall = doc.RootElement.TryGetProperty("shouldPromptInstall", out var installEl) && installEl.GetBoolean();
-            var profileName = doc.RootElement.TryGetProperty("profileName", out var nameEl) ? nameEl.GetString() : id;
-            var missingMods = new List<string>();
+            var desiredSet = new HashSet<string>(profileWorkshopIds, StringComparer.Ordinal);
+            var installedSet = new HashSet<string>(
+                Mods.Select(m => m.WorkshopId)
+                    .Where(x => !string.IsNullOrWhiteSpace(x)),
+                StringComparer.Ordinal);
 
-            if (doc.RootElement.TryGetProperty("missingMods", out var missingEl) && missingEl.ValueKind == JsonValueKind.Array)
+            var missingMods = profileWorkshopIds
+                .Where(workshopId => !installedSet.Contains(workshopId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            var shouldQueueMissing = false;
+            if (missingMods.Count > 0)
             {
-                foreach (var entry in missingEl.EnumerateArray())
-                {
-                    var modId = entry.GetString()?.Trim();
-                    if (!string.IsNullOrWhiteSpace(modId))
-                        missingMods.Add(modId);
-                }
-            }
-
-            if (missingMods.Count > 1)
-                missingMods = missingMods.Distinct(StringComparer.Ordinal).ToList();
-
-            if (shouldPromptInstall)
-            {
-                if (missingMods.Count == 0)
-                {
-                    StatusMessage = $"Profile '{profileName}' needs sync, but no mod IDs were returned by the service.";
-                    return;
-                }
-
                 var promptMessage =
-                    $"Profile '{profileName}' is not fully synced on this PC. " +
-                    $"Sync now by queueing {missingMods.Count} mod(s)?";
+                    $"Profile '{remoteProfileName}' is not fully synced on this PC. " +
+                    $"Queue {missingMods.Count} missing mod(s) now?";
 
                 if (RequestSharedProfileInstallConfirmationAsync is null)
                 {
@@ -728,30 +712,170 @@ public partial class LibraryViewModel : ViewModelBase
                     return;
                 }
 
-                var installConfirmed = await RequestSharedProfileInstallConfirmationAsync(promptMessage);
-                if (!installConfirmed)
-                {
-                    StatusMessage = $"Profile sync canceled for '{profileName}'.";
-                    return;
-                }
+                shouldQueueMissing = await RequestSharedProfileInstallConfirmationAsync(promptMessage);
+            }
 
-                if (QueueSharedProfileMissingModsAsync is null)
-                {
-                    StatusMessage = "Install queue is unavailable right now. Try again.";
-                    return;
-                }
+            var localProfile = await CreateAndActivateSharedSyncProfileAsync(remoteProfileName, id, profileWorkshopIds, desiredSet);
 
-                await QueueSharedProfileMissingModsAsync(missingMods);
-                StatusMessage = $"Syncing profile '{profileName}': queued {missingMods.Count} mod(s).";
+            if (missingMods.Count == 0)
+            {
+                StatusMessage = $"Profile synced: created '{localProfile.Name}' with {desiredSet.Count} mod(s).";
                 return;
             }
 
-            StatusMessage = $"Profile '{profileName}' matches your installed mods.";
+            if (!shouldQueueMissing)
+            {
+                StatusMessage =
+                    $"Profile synced as '{localProfile.Name}'. " +
+                    $"{missingMods.Count} mod(s) are still missing and can be installed later.";
+                return;
+            }
+
+            if (QueueSharedProfileMissingModsAsync is null)
+            {
+                StatusMessage =
+                    $"Profile synced as '{localProfile.Name}', but install queue is unavailable right now.";
+                return;
+            }
+
+            await QueueSharedProfileMissingModsAsync(missingMods);
+            StatusMessage =
+                $"Syncing profile '{localProfile.Name}': queued {missingMods.Count} missing mod(s).";
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Profile ID check failed: {ex.Message}";
+            StatusMessage = $"Profile sync failed: {ex.Message}";
         }
+    }
+
+    public async Task TryUpdateSharedSyncProfileAfterInstallAsync(string workshopId)
+    {
+        if (string.IsNullOrWhiteSpace(workshopId))
+            return;
+
+        var context = _sharedProfileSyncContext;
+        if (context is null)
+            return;
+
+        if (_currentActiveProfileId != context.LocalProfileId)
+            return;
+
+        if (!context.WorkshopIdSet.Contains(workshopId))
+            return;
+
+        await ApplySharedSyncProfileStateAsync(context.LocalProfileId, context.OrderedWorkshopIds, context.WorkshopIdSet, context.LocalProfileName);
+    }
+
+    private async Task<(string ProfileName, List<string> WorkshopIds)> FetchSharedProfileDefinitionAsync(string baseUrl, string sharedProfileId)
+    {
+        var profileUrl = $"{baseUrl.TrimEnd('/')}/profiles/{Uri.EscapeDataString(sharedProfileId)}";
+        using var response = await _stellarisyncHttp.GetAsync(profileUrl);
+        var body = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Shared profile lookup failed ({(int)response.StatusCode}): {body}");
+
+        using var doc = JsonDocument.Parse(body);
+        var profileName = doc.RootElement.TryGetProperty("name", out var nameEl)
+            ? nameEl.GetString()
+            : null;
+
+        var workshopIds = new List<string>();
+        if (doc.RootElement.TryGetProperty("mods", out var modsEl) && modsEl.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var modEl in modsEl.EnumerateArray())
+            {
+                var workshopId = modEl.ValueKind switch
+                {
+                    JsonValueKind.String => modEl.GetString(),
+                    JsonValueKind.Number => modEl.GetRawText(),
+                    _ => null,
+                };
+
+                workshopId = workshopId?.Trim();
+                if (!string.IsNullOrWhiteSpace(workshopId))
+                    workshopIds.Add(workshopId);
+            }
+        }
+
+        if (workshopIds.Count > 1)
+            workshopIds = workshopIds.Distinct(StringComparer.Ordinal).ToList();
+
+        return (string.IsNullOrWhiteSpace(profileName) ? sharedProfileId : profileName.Trim(), workshopIds);
+    }
+
+    private async Task<ModProfile> CreateAndActivateSharedSyncProfileAsync(
+        string remoteProfileName,
+        string sharedProfileId,
+        IReadOnlyList<string> orderedWorkshopIds,
+        HashSet<string> desiredWorkshopIds)
+    {
+        await SaveCurrentlyActiveProfileBeforeSwitchAsync();
+
+        var localProfileName = BuildUniqueSharedSyncProfileName(remoteProfileName);
+        var profile = await _db.CreateProfileAsync(localProfileName);
+        await _db.SetProfileSharedIdAsync(profile.Id, sharedProfileId);
+
+        profile.SharedProfileId = sharedProfileId;
+
+        await ApplySharedSyncProfileStateAsync(profile.Id, orderedWorkshopIds, desiredWorkshopIds, localProfileName);
+        return profile;
+    }
+
+    private async Task ApplySharedSyncProfileStateAsync(
+        int profileId,
+        IReadOnlyList<string> orderedWorkshopIds,
+        HashSet<string> desiredWorkshopIds,
+        string localProfileName)
+    {
+        var orderByWorkshopId = orderedWorkshopIds
+            .Select((id, index) => (id, index))
+            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
+
+        var enabledMods = Mods
+            .Where(mod => desiredWorkshopIds.Contains(mod.WorkshopId))
+            .OrderBy(mod => orderByWorkshopId.TryGetValue(mod.WorkshopId, out var order) ? order : int.MaxValue)
+            .ThenBy(mod => mod.Name)
+            .ToList();
+
+        // Keep only enabled shared mods in profile entries so disabled mods do not consume load-order positions.
+        var entries = new List<(int modId, bool isEnabled, int loadOrder)>(enabledMods.Count);
+        var nextOrder = 0;
+
+        foreach (var mod in enabledMods)
+            entries.Add((mod.Model.Id, true, nextOrder++));
+
+        await _db.SaveProfileEntriesAsync(profileId, entries);
+        await _db.ActivateProfileAsync(profileId);
+
+        _currentActiveProfileId = profileId;
+        _sharedProfileSyncContext = new SharedProfileSyncContext
+        {
+            LocalProfileId = profileId,
+            LocalProfileName = localProfileName,
+            OrderedWorkshopIds = orderedWorkshopIds.ToList(),
+            WorkshopIdSet = new HashSet<string>(desiredWorkshopIds, StringComparer.Ordinal),
+        };
+
+        await LoadModsAsync();
+    }
+
+    private string BuildUniqueSharedSyncProfileName(string remoteProfileName)
+    {
+        var baseName = $"Synced - {remoteProfileName}";
+        if (string.IsNullOrWhiteSpace(remoteProfileName))
+            baseName = "Synced Profile";
+
+        var candidate = baseName;
+        var suffix = 2;
+
+        while (Profiles.Any(p => string.Equals(p.Name, candidate, StringComparison.OrdinalIgnoreCase)))
+        {
+            candidate = $"{baseName} ({suffix})";
+            suffix++;
+        }
+
+        return candidate;
     }
 
     [RelayCommand]
@@ -774,6 +898,8 @@ public partial class LibraryViewModel : ViewModelBase
 
         await _db.DeleteProfileAsync(profile.Id);
         Profiles.Remove(profile);
+        if (_sharedProfileSyncContext is not null && _sharedProfileSyncContext.LocalProfileId == profile.Id)
+            _sharedProfileSyncContext = null;
         OnPropertyChanged(nameof(CanDeleteProfiles));
 
         if (deletedWasActive)

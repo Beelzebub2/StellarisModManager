@@ -191,6 +191,7 @@ public partial class MainViewModel : ViewModelBase
             if (e.Success)
             {
                 await LibraryViewModel.RefreshAsync();
+                await LibraryViewModel.TryUpdateSharedSyncProfileAfterInstallAsync(e.ModId);
                 UpdateWorkshopOverlayState();
                 RunOnUiThread(() => StatusMessage = $"Mod {e.ModId} installed successfully");
             }
@@ -275,11 +276,11 @@ public partial class MainViewModel : ViewModelBase
                     if (!string.IsNullOrWhiteSpace(path))
                         include = expectedPaths.Contains(Path.GetFullPath(path));
                     else
-                        include = true;
+                        include = false;
                 }
                 catch
                 {
-                    include = true;
+                    include = false;
                 }
             }
 
@@ -380,14 +381,13 @@ public partial class MainViewModel : ViewModelBase
             }
 
             await Task.Delay(700);
-            var stillRunning = runningProcesses.Any(p => !SafeHasExited(p));
+            RefreshGameRunningState();
+            var stillRunning = IsGameRunning;
             if (stillRunning)
             {
                 StatusMessage = "Could not close running Stellaris process. Please close it manually.";
                 return false;
             }
-
-            RefreshGameRunningState();
             return true;
         }
         finally
@@ -685,6 +685,7 @@ public partial class MainViewModel : ViewModelBase
             await _db.AddModAsync(mod);
 
             await LibraryViewModel.RefreshAsync();
+            await LibraryViewModel.TryUpdateSharedSyncProfileAfterInstallAsync(workshopId);
             SetOverlayModState(workshopId, "installed");
             UpdateWorkshopOverlayState();
             _downloader.PublishDiagnostic($"[install:{workshopId}] Completed successfully as '{mod.Name}'.");

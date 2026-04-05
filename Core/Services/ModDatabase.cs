@@ -393,9 +393,10 @@ public class ModDatabase
         return await ctx.ProfileEntries
             .Where(e => e.ProfileId == profileId && e.IsEnabled)
             .Include(e => e.Mod)
+            .OrderBy(e => e.LoadOrder)
+            .ThenBy(e => e.Id)
             .Select(e => e.Mod.SteamWorkshopId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Distinct()
             .ToListAsync();
     }
 

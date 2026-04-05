@@ -713,50 +713,58 @@ public partial class SettingsViewModel : ViewModelBase
         }
 
         var nativeUpdaterSourcePath = ResolveNativeUpdaterExecutablePath(appDir);
-        if (!string.IsNullOrWhiteSpace(nativeUpdaterSourcePath))
+        var preferSilentUpdaterFirst = string.Equals(
+            Environment.GetEnvironmentVariable("SMM_PREFER_SILENT_UPDATER"),
+            "1",
+            StringComparison.OrdinalIgnoreCase);
+
+        if (preferSilentUpdaterFirst)
         {
-            try
+            if (!string.IsNullOrWhiteSpace(nativeUpdaterSourcePath))
             {
-                var nativeUpdaterPath = CopyUpdaterBundleToTemp(nativeUpdaterSourcePath, tempUpdaterDir);
-
-                AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                try
                 {
-                    Step = "launching",
-                    Success = false,
-                    TargetVersion = release.Version,
-                    Message = $"Starting bundled updater for v{release.Version}."
-                });
+                    var nativeUpdaterPath = CopyUpdaterBundleToTemp(nativeUpdaterSourcePath, tempUpdaterDir);
 
-                var nativeProcess = TryStartNativeUpdaterProcess(
-                    tempRoot,
-                    nativeUpdaterPath,
-                    currentExe,
-                    release,
-                    startupSignalPath,
-                    tempRoot);
+                    AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                    {
+                        Step = "launching",
+                        Success = false,
+                        TargetVersion = release.Version,
+                        Message = $"Starting bundled updater for v{release.Version}."
+                    });
 
-                if (nativeProcess is not null)
-                {
-                    var nativeStarted = await WaitForUpdaterStartupSignalAsync(nativeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
-                    if (nativeStarted)
-                        return true;
+                    var nativeProcess = TryStartNativeUpdaterProcess(
+                        tempRoot,
+                        nativeUpdaterPath,
+                        currentExe,
+                        release,
+                        startupSignalPath,
+                        tempRoot);
 
-                    launchIssues.Add("Bundled updater started but did not report readiness.");
-                    TryKillProcess(nativeProcess);
+                    if (nativeProcess is not null)
+                    {
+                        var nativeStarted = await WaitForUpdaterStartupSignalAsync(nativeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
+                        if (nativeStarted)
+                            return true;
+
+                        launchIssues.Add("Bundled updater started but did not report readiness.");
+                        TryKillProcess(nativeProcess);
+                    }
+                    else
+                    {
+                        launchIssues.Add("Bundled updater process could not be started.");
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    launchIssues.Add("Bundled updater process could not be started.");
+                    launchIssues.Add($"Bundled updater preparation failed: {ex.Message}");
                 }
             }
-            catch (Exception ex)
+            else
             {
-                launchIssues.Add($"Bundled updater preparation failed: {ex.Message}");
+                launchIssues.Add("Bundled updater executable was not found in the installation folder.");
             }
-        }
-        else
-        {
-            launchIssues.Add("Bundled updater executable was not found in the installation folder.");
         }
 
         var pythonUpdaterExeSourcePath = ResolvePythonUpdaterExecutablePath(appDir);
@@ -784,7 +792,7 @@ public partial class SettingsViewModel : ViewModelBase
 
                 if (pythonExeProcess is not null)
                 {
-                    var pythonExeStarted = await WaitForUpdaterStartupSignalAsync(pythonExeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
+                    var pythonExeStarted = await WaitForUpdaterStartupSignalAsync(pythonExeProcess, startupSignalPath, TimeSpan.FromSeconds(15));
                     if (pythonExeStarted)
                         return true;
 
@@ -835,7 +843,7 @@ public partial class SettingsViewModel : ViewModelBase
 
                 if (process is not null)
                 {
-                    var started = await WaitForUpdaterStartupSignalAsync(process, startupSignalPath, TimeSpan.FromSeconds(8));
+                    var started = await WaitForUpdaterStartupSignalAsync(process, startupSignalPath, TimeSpan.FromSeconds(15));
                     if (started)
                         return true;
 
@@ -855,6 +863,56 @@ public partial class SettingsViewModel : ViewModelBase
         else
         {
             launchIssues.Add("Python updater script was not found in the installation folder.");
+        }
+
+        // Fallback to the bundled silent updater only after UI updater paths fail.
+        if (!preferSilentUpdaterFirst)
+        {
+            if (!string.IsNullOrWhiteSpace(nativeUpdaterSourcePath))
+            {
+                try
+                {
+                    var nativeUpdaterPath = CopyUpdaterBundleToTemp(nativeUpdaterSourcePath, tempUpdaterDir);
+
+                    AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                    {
+                        Step = "launching",
+                        Success = false,
+                        TargetVersion = release.Version,
+                        Message = $"Starting bundled fallback updater for v{release.Version}."
+                    });
+
+                    var nativeProcess = TryStartNativeUpdaterProcess(
+                        tempRoot,
+                        nativeUpdaterPath,
+                        currentExe,
+                        release,
+                        startupSignalPath,
+                        tempRoot);
+
+                    if (nativeProcess is not null)
+                    {
+                        var nativeStarted = await WaitForUpdaterStartupSignalAsync(nativeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
+                        if (nativeStarted)
+                            return true;
+
+                        launchIssues.Add("Bundled fallback updater started but did not report readiness.");
+                        TryKillProcess(nativeProcess);
+                    }
+                    else
+                    {
+                        launchIssues.Add("Bundled fallback updater process could not be started.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    launchIssues.Add($"Bundled fallback updater preparation failed: {ex.Message}");
+                }
+            }
+            else
+            {
+                launchIssues.Add("Bundled updater executable was not found in the installation folder.");
+            }
         }
 
         _lastUpdaterLaunchFailure = "Could not start updater process. " + string.Join(" ", launchIssues);
