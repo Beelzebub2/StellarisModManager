@@ -69,6 +69,8 @@ public partial class LibraryViewModel : ViewModelBase
 
     public event EventHandler<string>? ShareIdCopiedRequested;
     public event EventHandler<string>? OpenWorkshopInAppRequested;
+    public Func<string, Task<bool>>? RequestSharedProfileInstallConfirmationAsync { get; set; }
+    public Func<IReadOnlyList<string>, Task>? QueueSharedProfileMissingModsAsync { get; set; }
 
     // Status bar computed values
     public int TotalMods => Mods.Count;
@@ -691,19 +693,54 @@ public partial class LibraryViewModel : ViewModelBase
             var prompt = doc.RootElement.TryGetProperty("prompt", out var promptEl) ? promptEl.GetString() : null;
             var shouldPromptInstall = doc.RootElement.TryGetProperty("shouldPromptInstall", out var installEl) && installEl.GetBoolean();
             var profileName = doc.RootElement.TryGetProperty("profileName", out var nameEl) ? nameEl.GetString() : id;
+            var missingMods = new List<string>();
+
+            if (doc.RootElement.TryGetProperty("missingMods", out var missingEl) && missingEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in missingEl.EnumerateArray())
+                {
+                    var modId = entry.GetString()?.Trim();
+                    if (!string.IsNullOrWhiteSpace(modId))
+                        missingMods.Add(modId);
+                }
+            }
+
+            if (missingMods.Count > 1)
+                missingMods = missingMods.Distinct(StringComparer.Ordinal).ToList();
 
             if (shouldPromptInstall)
             {
-                if (!string.IsNullOrWhiteSpace(prompt))
+                if (missingMods.Count == 0)
                 {
-                    StatusMessage = prompt;
+                    StatusMessage = $"Profile '{profileName}' has missing mods, but none were returned by the service.";
                     return;
                 }
 
-                var missing = doc.RootElement.TryGetProperty("missingMods", out var missingEl) && missingEl.ValueKind == JsonValueKind.Array
-                    ? missingEl.GetArrayLength()
-                    : 0;
-                StatusMessage = $"Profile '{profileName}' has {missing} missing mod(s).";
+                var promptMessage = !string.IsNullOrWhiteSpace(prompt)
+                    ? prompt
+                    : $"Profile '{profileName}' has {missingMods.Count} missing mod(s). Install them now?";
+
+                if (RequestSharedProfileInstallConfirmationAsync is null)
+                {
+                    StatusMessage = promptMessage;
+                    return;
+                }
+
+                var installConfirmed = await RequestSharedProfileInstallConfirmationAsync(promptMessage);
+                if (!installConfirmed)
+                {
+                    StatusMessage = $"Skipped installing missing mods from profile '{profileName}'.";
+                    return;
+                }
+
+                if (QueueSharedProfileMissingModsAsync is null)
+                {
+                    StatusMessage = "Install queue is unavailable right now. Try again.";
+                    return;
+                }
+
+                await QueueSharedProfileMissingModsAsync(missingMods);
+                StatusMessage = $"Queued {missingMods.Count} missing mod(s) from profile '{profileName}'.";
                 return;
             }
 

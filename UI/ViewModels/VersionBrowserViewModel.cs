@@ -24,6 +24,9 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private const int DefaultFetchLimit = 64;
     private const int ScanMoreStep = 32;
     private const int MetadataResolveConcurrency = 8;
+    private const int BrowseRequestConcurrency = 4;
+    private const int BrowseInitialPageLimit = 6;
+    private const int BrowseEarlyStopEmptyPageStreak = 2;
     private const int SearchBackgroundPageLimit = 40;
     private const int SearchCacheFlushBatchSize = 48;
     private const int MaxCachedCardsPerQuery = 1500;
@@ -985,28 +988,72 @@ public partial class VersionBrowserViewModel : ViewModelBase
     {
         var found = new List<string>();
 
+        var fetchedByQueryAndSort = await FetchWorkshopIdsByQueryAndSortAsync(searchQueries, page, cancellationToken);
+        foreach (var fetched in fetchedByQueryAndSort)
+        {
+            foreach (var id in fetched.Ids)
+            {
+                if (!knownIds.Add(id))
+                    continue;
+
+                found.Add(id);
+            }
+        }
+
+        return found;
+    }
+
+    private async Task<List<IndexedWorkshopIds>> FetchWorkshopIdsByQueryAndSortAsync(
+        IReadOnlyList<string> searchQueries,
+        int page,
+        CancellationToken cancellationToken)
+    {
+        var requests = new List<(int order, string url)>();
         foreach (var query in searchQueries)
         {
             foreach (var sort in GetWorkshopBrowseSorts())
             {
                 var url = BuildWorkshopBrowseUrl(query, sort, page);
-                var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
-
-                foreach (Match match in WorkshopIdRegex.Matches(html))
-                {
-                    var id = match.Groups["id"].Value;
-                    if (string.IsNullOrWhiteSpace(id))
-                        continue;
-
-                    if (!knownIds.Add(id))
-                        continue;
-
-                    found.Add(id);
-                }
+                requests.Add((requests.Count, url));
             }
         }
 
-        return found;
+        if (requests.Count == 0)
+            return new List<IndexedWorkshopIds>();
+
+        using var semaphore = new SemaphoreSlim(BrowseRequestConcurrency);
+        var tasks = requests.Select(async request =>
+        {
+            await semaphore.WaitAsync(cancellationToken);
+            try
+            {
+                var html = await WorkshopHttp.GetStringAsync(request.url, cancellationToken);
+                var ids = ExtractWorkshopIds(html);
+                return new IndexedWorkshopIds(request.order, ids);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        var fetched = await Task.WhenAll(tasks);
+        return fetched
+            .OrderBy(x => x.Index)
+            .ToList();
+    }
+
+    private static List<string> ExtractWorkshopIds(string html)
+    {
+        var ids = new List<string>();
+        foreach (Match match in WorkshopIdRegex.Matches(html))
+        {
+            var id = match.Groups["id"].Value;
+            if (!string.IsNullOrWhiteSpace(id))
+                ids.Add(id);
+        }
+
+        return ids;
     }
 
     private void QueueThumbnailWarm(IReadOnlyList<VersionModCard> cards)
@@ -1038,33 +1085,43 @@ public partial class VersionBrowserViewModel : ViewModelBase
         var ordered = new List<string>();
         var targetCount = Math.Max(desiredCount, 24);
         var hardCap = Math.Max(targetCount * 2, targetCount);
+        var emptyPageStreak = 0;
 
-        foreach (var query in searchQueries)
+        for (var page = 1; page <= BrowseInitialPageLimit; page++)
         {
-            foreach (var sort in GetWorkshopBrowseSorts())
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var fetchedByQueryAndSort = await FetchWorkshopIdsByQueryAndSortAsync(searchQueries, page, cancellationToken);
+
+            var addedThisPage = 0;
+            foreach (var fetched in fetchedByQueryAndSort)
             {
-                for (var page = 1; page <= 6; page++)
+                foreach (var id in fetched.Ids)
                 {
-                    var url = BuildWorkshopBrowseUrl(query, sort, page);
-                    var html = await WorkshopHttp.GetStringAsync(url, cancellationToken);
+                    if (!dedupe.Add(id))
+                        continue;
 
-                    foreach (Match match in WorkshopIdRegex.Matches(html))
-                    {
-                        var id = match.Groups["id"].Value;
-                        if (string.IsNullOrWhiteSpace(id))
-                            continue;
+                    ordered.Add(id);
+                    addedThisPage++;
 
-                        if (dedupe.Add(id))
-                            ordered.Add(id);
-
-                        if (ordered.Count >= hardCap)
-                            return ordered;
-                    }
+                    if (ordered.Count >= hardCap)
+                        return ordered;
                 }
             }
 
+            if (addedThisPage == 0)
+            {
+                emptyPageStreak++;
+                if (ordered.Count >= targetCount || emptyPageStreak >= BrowseEarlyStopEmptyPageStreak)
+                    break;
+
+                continue;
+            }
+
+            emptyPageStreak = 0;
+
             if (ordered.Count >= targetCount)
-                return ordered;
+                break;
         }
 
         return ordered;
@@ -1862,6 +1919,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
     }
 
     private sealed record IndexedCard(int Index, VersionModCard Card);
+    private sealed record IndexedWorkshopIds(int Index, List<string> Ids);
 
     private sealed class CachedVersionResult
     {

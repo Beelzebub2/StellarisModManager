@@ -24,6 +24,7 @@ public partial class MainWindow : Window
         {
             RequestRestartConfirmationAsync = ShowRestartConfirmationAsync,
             RequestUpdatePromptAsync = ShowUpdatePromptAsync,
+            RequestSharedProfileInstallConfirmationAsync = ShowSharedProfileInstallConfirmationAsync,
         };
 
         DataContext = vm;
@@ -41,6 +42,13 @@ public partial class MainWindow : Window
         var prompt = new RestartGamePromptWindow();
         var result = await prompt.ShowDialog<(bool proceed, bool skipPrompt)?>(this);
         return result ?? (false, false);
+    }
+
+    private async Task<bool> ShowSharedProfileInstallConfirmationAsync(string message)
+    {
+        var prompt = new SharedProfileInstallPromptWindow(message);
+        var result = await prompt.ShowDialog<bool?>(this);
+        return result == true;
     }
 
     private void TrySetWindowIcon()

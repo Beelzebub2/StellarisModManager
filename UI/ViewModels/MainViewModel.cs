@@ -86,6 +86,7 @@ public partial class MainViewModel : ViewModelBase
     public string LaunchGameButtonIconGlyph => IsGameRunning ? "\uE72C" : "\uE768";
     public Func<Task<(bool proceed, bool skipPrompt)>>? RequestRestartConfirmationAsync { get; set; }
     public Func<string, Task<(bool installNow, bool skipVersion)>>? RequestUpdatePromptAsync { get; set; }
+    public Func<string, Task<bool>>? RequestSharedProfileInstallConfirmationAsync { get; set; }
 
     // App version
     public string AppVersion => AppVersionInfo.GetDisplayVersion();
@@ -122,6 +123,16 @@ public partial class MainViewModel : ViewModelBase
                 SettingsViewModel.InstallAppUpdateCommand.Execute(null);
             }
         };
+
+        LibraryViewModel.RequestSharedProfileInstallConfirmationAsync = async promptMessage =>
+        {
+            if (RequestSharedProfileInstallConfirmationAsync is null)
+                return false;
+
+            return await RequestSharedProfileInstallConfirmationAsync(promptMessage);
+        };
+
+        LibraryViewModel.QueueSharedProfileMissingModsAsync = QueueSharedProfileMissingModsForInstallAsync;
 
         LibraryViewModel.OpenWorkshopInAppRequested += (_, url) => OpenWorkshopUrlInApp(url);
 
@@ -457,6 +468,14 @@ public partial class MainViewModel : ViewModelBase
 
         StartPendingInstalls();
         UpdateInstallUiFromState();
+    }
+
+    private Task QueueSharedProfileMissingModsForInstallAsync(IReadOnlyList<string> workshopIds)
+    {
+        foreach (var workshopId in workshopIds)
+            EnqueueInstallRequest(workshopId);
+
+        return Task.CompletedTask;
     }
 
     private void StartPendingInstalls()
