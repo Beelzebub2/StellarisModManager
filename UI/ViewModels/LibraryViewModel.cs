@@ -401,7 +401,10 @@ public partial class LibraryViewModel : ViewModelBase
 
             if (downloadedPath is null)
             {
-                StatusMessage = $"Update failed for {mod.Name}";
+                var hasFailureReason = _downloader.TryGetLastFailureReason(mod.WorkshopId, out var failureReason);
+                StatusMessage = hasFailureReason
+                    ? $"Update failed for {mod.Name}: {failureReason}"
+                    : $"Update failed for {mod.Name}";
                 return;
             }
 
@@ -690,7 +693,6 @@ public partial class LibraryViewModel : ViewModelBase
             }
 
             using var doc = JsonDocument.Parse(body);
-            var prompt = doc.RootElement.TryGetProperty("prompt", out var promptEl) ? promptEl.GetString() : null;
             var shouldPromptInstall = doc.RootElement.TryGetProperty("shouldPromptInstall", out var installEl) && installEl.GetBoolean();
             var profileName = doc.RootElement.TryGetProperty("profileName", out var nameEl) ? nameEl.GetString() : id;
             var missingMods = new List<string>();
@@ -712,13 +714,13 @@ public partial class LibraryViewModel : ViewModelBase
             {
                 if (missingMods.Count == 0)
                 {
-                    StatusMessage = $"Profile '{profileName}' has missing mods, but none were returned by the service.";
+                    StatusMessage = $"Profile '{profileName}' needs sync, but no mod IDs were returned by the service.";
                     return;
                 }
 
-                var promptMessage = !string.IsNullOrWhiteSpace(prompt)
-                    ? prompt
-                    : $"Profile '{profileName}' has {missingMods.Count} missing mod(s). Install them now?";
+                var promptMessage =
+                    $"Profile '{profileName}' is not fully synced on this PC. " +
+                    $"Sync now by queueing {missingMods.Count} mod(s)?";
 
                 if (RequestSharedProfileInstallConfirmationAsync is null)
                 {
@@ -729,7 +731,7 @@ public partial class LibraryViewModel : ViewModelBase
                 var installConfirmed = await RequestSharedProfileInstallConfirmationAsync(promptMessage);
                 if (!installConfirmed)
                 {
-                    StatusMessage = $"Skipped installing missing mods from profile '{profileName}'.";
+                    StatusMessage = $"Profile sync canceled for '{profileName}'.";
                     return;
                 }
 
@@ -740,7 +742,7 @@ public partial class LibraryViewModel : ViewModelBase
                 }
 
                 await QueueSharedProfileMissingModsAsync(missingMods);
-                StatusMessage = $"Queued {missingMods.Count} missing mod(s) from profile '{profileName}'.";
+                StatusMessage = $"Syncing profile '{profileName}': queued {missingMods.Count} mod(s).";
                 return;
             }
 

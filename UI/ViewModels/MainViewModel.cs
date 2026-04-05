@@ -666,7 +666,11 @@ public partial class MainViewModel : ViewModelBase
                 item.IsActive = false;
                 item.CanCancel = false;
             });
-            RunOnUiThread(() => StatusMessage = $"Download failed for mod {workshopId} using runtime {selectedRuntime}");
+            var hasFailureReason = _downloader.TryGetLastFailureReason(workshopId, out var failureReason);
+            var message = hasFailureReason
+                ? $"Download failed for mod {workshopId}: {failureReason}"
+                : $"Download failed for mod {workshopId} using runtime {selectedRuntime}";
+            RunOnUiThread(() => StatusMessage = message);
             return InstallRunResult.Failed;
         }
 

@@ -4,7 +4,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
         x:Class="StellarisModManager.UI.Views.SharedProfileInstallPromptWindow"
-        Title="Install Missing Mods"
+        Title="Sync Shared Profile"
         Width="560"
         SizeToContent="Height"
         CanResize="False"
@@ -19,7 +19,7 @@
             BorderThickness="1"
             CornerRadius="12">
         <StackPanel Spacing="12">
-            <TextBlock Text="This shared profile has mods you don't have installed."
+            <TextBlock Text="This shared profile is not fully synced on this PC."
                        Foreground="{DynamicResource Theme.TextPrimary}"
                        FontSize="18"
                        FontWeight="SemiBold" />
@@ -48,7 +48,7 @@
                         Padding="12,8"
                         Foreground="White"
                         FontWeight="SemiBold"
-                        Content="Install Missing Mods"
+                        Content="Sync Profile"
                         Click="InstallButton_Click" />
             </Grid>
         </StackPanel>

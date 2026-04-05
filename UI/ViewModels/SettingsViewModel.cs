@@ -29,6 +29,7 @@ public partial class SettingsViewModel : ViewModelBase
 
     private bool _isRefreshingRuntimePreference;
     private AppReleaseInfo? _availableAppRelease;
+    private string _lastUpdaterLaunchFailure = string.Empty;
 
     public event EventHandler<AppReleaseInfo>? UpdateAvailableNotificationRequested;
 
@@ -396,7 +397,10 @@ public partial class SettingsViewModel : ViewModelBase
             {
                 IsApplyingAppUpdate = false;
                 AppUpdateStep = "Failed";
-                AppUpdateDetails = "Could not start Python updater process.";
+                AppUpdateDetails = string.IsNullOrWhiteSpace(_lastUpdaterLaunchFailure)
+                    ? "Could not start updater process. Check antivirus restrictions and updater files, then retry."
+                    : _lastUpdaterLaunchFailure;
+                StatusMessage = AppUpdateDetails;
                 return;
             }
 
@@ -669,20 +673,22 @@ public partial class SettingsViewModel : ViewModelBase
 
     private async Task<bool> StartBackgroundUpdaterAsync(AppReleaseInfo release)
     {
+        _lastUpdaterLaunchFailure = string.Empty;
+        var launchIssues = new List<string>();
+
         var currentExe = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
+        {
+            _lastUpdaterLaunchFailure = "Could not start updater process: current app executable path is invalid.";
             return false;
+        }
 
         var appDir = Path.GetDirectoryName(currentExe);
         if (string.IsNullOrWhiteSpace(appDir))
+        {
+            _lastUpdaterLaunchFailure = "Could not start updater process: application directory is unavailable.";
             return false;
-
-        var updaterSourcePath = Path.Combine(appDir, "Updater", "python_updater.py");
-        if (!File.Exists(updaterSourcePath))
-            updaterSourcePath = Path.Combine(appDir, "python_updater.py");
-
-        if (!File.Exists(updaterSourcePath))
-            return false;
+        }
 
         var tempRoot = Path.Combine(
             Path.GetTempPath(),
@@ -692,9 +698,6 @@ public partial class SettingsViewModel : ViewModelBase
 
         var tempUpdaterDir = Path.Combine(tempRoot, "Updater");
         Directory.CreateDirectory(tempUpdaterDir);
-
-        var updaterScriptPath = Path.Combine(tempUpdaterDir, "python_updater.py");
-        File.Copy(updaterSourcePath, updaterScriptPath, true);
 
         var startupSignalPath = Path.Combine(tempRoot, "updater-started.signal");
         if (File.Exists(startupSignalPath))
@@ -709,28 +712,318 @@ public partial class SettingsViewModel : ViewModelBase
             }
         }
 
+        var nativeUpdaterSourcePath = ResolveNativeUpdaterExecutablePath(appDir);
+        if (!string.IsNullOrWhiteSpace(nativeUpdaterSourcePath))
+        {
+            try
+            {
+                var nativeUpdaterPath = CopyUpdaterBundleToTemp(nativeUpdaterSourcePath, tempUpdaterDir);
+
+                AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                {
+                    Step = "launching",
+                    Success = false,
+                    TargetVersion = release.Version,
+                    Message = $"Starting bundled updater for v{release.Version}."
+                });
+
+                var nativeProcess = TryStartNativeUpdaterProcess(
+                    tempRoot,
+                    nativeUpdaterPath,
+                    currentExe,
+                    release,
+                    startupSignalPath,
+                    tempRoot);
+
+                if (nativeProcess is not null)
+                {
+                    var nativeStarted = await WaitForUpdaterStartupSignalAsync(nativeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
+                    if (nativeStarted)
+                        return true;
+
+                    launchIssues.Add("Bundled updater started but did not report readiness.");
+                    TryKillProcess(nativeProcess);
+                }
+                else
+                {
+                    launchIssues.Add("Bundled updater process could not be started.");
+                }
+            }
+            catch (Exception ex)
+            {
+                launchIssues.Add($"Bundled updater preparation failed: {ex.Message}");
+            }
+        }
+        else
+        {
+            launchIssues.Add("Bundled updater executable was not found in the installation folder.");
+        }
+
+        var pythonUpdaterExeSourcePath = ResolvePythonUpdaterExecutablePath(appDir);
+        if (!string.IsNullOrWhiteSpace(pythonUpdaterExeSourcePath))
+        {
+            try
+            {
+                var pythonUpdaterExePath = CopyUpdaterBundleToTemp(pythonUpdaterExeSourcePath, tempUpdaterDir);
+
+                AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                {
+                    Step = "launching",
+                    Success = false,
+                    TargetVersion = release.Version,
+                    Message = $"Starting Python updater executable for v{release.Version}."
+                });
+
+                var pythonExeProcess = TryStartPythonUpdaterExecutableProcess(
+                    tempRoot,
+                    pythonUpdaterExePath,
+                    currentExe,
+                    release,
+                    startupSignalPath,
+                    tempRoot);
+
+                if (pythonExeProcess is not null)
+                {
+                    var pythonExeStarted = await WaitForUpdaterStartupSignalAsync(pythonExeProcess, startupSignalPath, TimeSpan.FromSeconds(8));
+                    if (pythonExeStarted)
+                        return true;
+
+                    launchIssues.Add("Python updater executable started but did not report readiness.");
+                    TryKillProcess(pythonExeProcess);
+                }
+                else
+                {
+                    launchIssues.Add("Python updater executable could not be started.");
+                }
+            }
+            catch (Exception ex)
+            {
+                launchIssues.Add($"Python updater executable preparation failed: {ex.Message}");
+            }
+        }
+        else
+        {
+            launchIssues.Add("Python updater executable was not found in the installation folder.");
+        }
+
+        var updaterSourcePath = Path.Combine(appDir, "Updater", "python_updater.py");
+        if (!File.Exists(updaterSourcePath))
+            updaterSourcePath = Path.Combine(appDir, "python_updater.py");
+
+        if (File.Exists(updaterSourcePath))
+        {
+            try
+            {
+                var updaterScriptPath = Path.Combine(tempUpdaterDir, "python_updater.py");
+                File.Copy(updaterSourcePath, updaterScriptPath, true);
+
+                AppUpdateStatusStore.Write(new AppUpdateApplyStatus
+                {
+                    Step = "launching",
+                    Success = false,
+                    TargetVersion = release.Version,
+                    Message = $"Starting Python updater for v{release.Version}."
+                });
+
+                var process = TryStartPythonUpdaterProcess(
+                    tempRoot,
+                    updaterScriptPath,
+                    currentExe,
+                    release,
+                    startupSignalPath,
+                    tempRoot);
+
+                if (process is not null)
+                {
+                    var started = await WaitForUpdaterStartupSignalAsync(process, startupSignalPath, TimeSpan.FromSeconds(8));
+                    if (started)
+                        return true;
+
+                    launchIssues.Add("Python updater started but did not report readiness.");
+                    TryKillProcess(process);
+                }
+                else
+                {
+                    launchIssues.Add("Python updater process could not be started (python/pythonw/py unavailable).");
+                }
+            }
+            catch (Exception ex)
+            {
+                launchIssues.Add($"Python updater preparation failed: {ex.Message}");
+            }
+        }
+        else
+        {
+            launchIssues.Add("Python updater script was not found in the installation folder.");
+        }
+
+        _lastUpdaterLaunchFailure = "Could not start updater process. " + string.Join(" ", launchIssues);
         AppUpdateStatusStore.Write(new AppUpdateApplyStatus
         {
-            Step = "launching",
+            Step = "failed",
             Success = false,
             TargetVersion = release.Version,
-            Message = $"Starting python updater for v{release.Version}."
+            Message = _lastUpdaterLaunchFailure,
         });
+        AppendDeveloperLog($"[updater] {_lastUpdaterLaunchFailure}");
+        return false;
+    }
 
-        var process = TryStartPythonUpdaterProcess(
-            tempRoot,
-            updaterScriptPath,
-            currentExe,
-            release,
-            startupSignalPath,
-            tempRoot);
+    private static string? ResolveNativeUpdaterExecutablePath(string appDir)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(appDir, "Updater", "StellarisModManager.Updater.exe"),
+            Path.Combine(appDir, "StellarisModManager.Updater.exe"),
+        };
 
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string? ResolvePythonUpdaterExecutablePath(string appDir)
+    {
+        var candidates = new[]
+        {
+            Path.Combine(appDir, "Updater", "python_updater.exe"),
+            Path.Combine(appDir, "python_updater.exe"),
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string CopyUpdaterBundleToTemp(string sourceUpdaterExePath, string tempUpdaterDir)
+    {
+        var sourceDir = Path.GetDirectoryName(sourceUpdaterExePath);
+        if (string.IsNullOrWhiteSpace(sourceDir))
+            throw new InvalidOperationException("Updater executable source directory could not be determined.");
+
+        Directory.CreateDirectory(tempUpdaterDir);
+
+        var updaterBaseName = Path.GetFileNameWithoutExtension(sourceUpdaterExePath);
+        foreach (var sourceFile in Directory.EnumerateFiles(sourceDir, $"{updaterBaseName}*"))
+        {
+            var destinationFile = Path.Combine(tempUpdaterDir, Path.GetFileName(sourceFile));
+            File.Copy(sourceFile, destinationFile, true);
+        }
+
+        var copiedExePath = Path.Combine(tempUpdaterDir, Path.GetFileName(sourceUpdaterExePath));
+        if (!File.Exists(copiedExePath))
+            File.Copy(sourceUpdaterExePath, copiedExePath, true);
+
+        return copiedExePath;
+    }
+
+    private static Process? TryStartNativeUpdaterProcess(
+        string workingDirectory,
+        string updaterExePath,
+        string appExePath,
+        AppReleaseInfo release,
+        string startupSignalPath,
+        string cleanupRoot)
+    {
+        var parentPid = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = updaterExePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory,
+        };
+
+        startInfo.ArgumentList.Add("--apply-update");
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(parentPid);
+        startInfo.ArgumentList.Add("--app-exe");
+        startInfo.ArgumentList.Add(appExePath);
+        startInfo.ArgumentList.Add("--download-url");
+        startInfo.ArgumentList.Add(release.DownloadUrl);
+        startInfo.ArgumentList.Add("--release-url");
+        startInfo.ArgumentList.Add(release.ReleaseUrl);
+        startInfo.ArgumentList.Add("--target-version");
+        startInfo.ArgumentList.Add(release.Version);
+        startInfo.ArgumentList.Add("--startup-signal");
+        startInfo.ArgumentList.Add(startupSignalPath);
+        startInfo.ArgumentList.Add("--cleanup-root");
+        startInfo.ArgumentList.Add(cleanupRoot);
+
+        try
+        {
+            return Process.Start(startInfo);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Process? TryStartPythonUpdaterExecutableProcess(
+        string workingDirectory,
+        string updaterExePath,
+        string appExePath,
+        AppReleaseInfo release,
+        string startupSignalPath,
+        string cleanupRoot)
+    {
+        var parentPid = Process.GetCurrentProcess().Id.ToString(CultureInfo.InvariantCulture);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = updaterExePath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = workingDirectory,
+        };
+
+        startInfo.ArgumentList.Add("--apply-update");
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(parentPid);
+        startInfo.ArgumentList.Add("--app-exe");
+        startInfo.ArgumentList.Add(appExePath);
+        startInfo.ArgumentList.Add("--download-url");
+        startInfo.ArgumentList.Add(release.DownloadUrl);
+        startInfo.ArgumentList.Add("--release-url");
+        startInfo.ArgumentList.Add(release.ReleaseUrl);
+        startInfo.ArgumentList.Add("--target-version");
+        startInfo.ArgumentList.Add(release.Version);
+        startInfo.ArgumentList.Add("--startup-signal");
+        startInfo.ArgumentList.Add(startupSignalPath);
+        startInfo.ArgumentList.Add("--cleanup-root");
+        startInfo.ArgumentList.Add(cleanupRoot);
+
+        var apiBase = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+        if (!string.IsNullOrWhiteSpace(apiBase))
+        {
+            startInfo.ArgumentList.Add("--api-base");
+            startInfo.ArgumentList.Add(apiBase);
+        }
+
+        try
+        {
+            return Process.Start(startInfo);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void TryKillProcess(Process? process)
+    {
         if (process is null)
-            return false;
-
-        var started = await WaitForUpdaterStartupSignalAsync(process, startupSignalPath, TimeSpan.FromSeconds(6));
-        if (started)
-            return true;
+            return;
 
         try
         {
@@ -741,8 +1034,6 @@ public partial class SettingsViewModel : ViewModelBase
         {
             // Best-effort process cleanup.
         }
-
-        return false;
     }
 
     private static Process? TryStartPythonUpdaterProcess(

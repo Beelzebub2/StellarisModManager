@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -90,6 +91,8 @@ public class WorkshopDownloader
     private bool _steamCmdForceDirectMode;
     private readonly SemaphoreSlim _depotDownloaderInstallLock = new(1, 1);
     private string? _cachedDepotDownloaderExePath;
+    private readonly object _downloadOutcomeLock = new();
+    private readonly Dictionary<string, string> _lastDownloadFailures = new(StringComparer.Ordinal);
 
     private sealed record SteamCmdSessionResult(bool Success, string? DownloadedPath, string? ErrorMessage);
 
@@ -207,13 +210,33 @@ public class WorkshopDownloader
                 return steamKitAttempt.DownloadedPath;
             }
 
-            if (runtime == WorkshopDownloadRuntime.SteamKit2)
+            var steamKitError = string.IsNullOrWhiteSpace(steamKitAttempt.ErrorMessage)
+                ? "Unknown SteamKit2 error."
+                : steamKitAttempt.ErrorMessage;
+
+            var steamCmdAvailable = IsSteamCmdAvailable(steamCmdPath);
+
+            if (!steamCmdAvailable)
             {
-                RaiseComplete(modId, false, null, steamKitAttempt.ErrorMessage);
-                return null;
+                var warning =
+                    $"SteamKit2 failed for mod {modId}. SteamCMD fallback is unavailable because steamcmd.exe is not configured. " +
+                    $"Install SteamCMD in Settings, then retry. SteamKit2 error: {steamKitError}";
+
+                RaiseLog(warning);
+                RaiseProgress(modId, "", -1, "SteamKit2 failed and SteamCMD is not configured. Open Settings to install/configure SteamCMD.");
+
+                if (runtime == WorkshopDownloadRuntime.SteamKit2)
+                {
+                    RaiseComplete(modId, false, null, warning);
+                    return null;
+                }
+
+                return await DownloadModViaSteamCmdAsync(modId, steamCmdPath, downloadBasePath, ct);
             }
 
-            RaiseLog($"SteamKit2 attempt failed for mod {modId}; falling back to SteamCMD. Reason: {steamKitAttempt.ErrorMessage}");
+            RaiseLog($"SteamKit2 attempt failed for mod {modId}; falling back to SteamCMD. Reason: {steamKitError}");
+            if (runtime == WorkshopDownloadRuntime.SteamKit2)
+                RaiseProgress(modId, "", -1, "SteamKit2 failed, trying SteamCMD fallback...");
         }
 
         return await DownloadModViaSteamCmdAsync(modId, steamCmdPath, downloadBasePath, ct);
@@ -418,8 +441,14 @@ public class WorkshopDownloader
 
     private async Task<string> EnsureDepotDownloaderAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(_cachedDepotDownloaderExePath) && File.Exists(_cachedDepotDownloaderExePath))
+        if (!string.IsNullOrWhiteSpace(_cachedDepotDownloaderExePath) &&
+            File.Exists(_cachedDepotDownloaderExePath) &&
+            IsDepotDownloaderCompatibleWithCurrentProcess(_cachedDepotDownloaderExePath))
+        {
             return _cachedDepotDownloaderExePath;
+        }
+
+        _cachedDepotDownloaderExePath = null;
 
         var toolsRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -427,29 +456,38 @@ public class WorkshopDownloader
             "tools",
             "DepotDownloader");
 
-        var existing = FindDepotDownloaderExe(toolsRoot);
+        var existing = FindCompatibleDepotDownloaderExe(toolsRoot);
         if (!string.IsNullOrWhiteSpace(existing))
         {
             _cachedDepotDownloaderExePath = existing;
             return existing;
         }
 
+        if (ContainsAnyDepotDownloaderExe(toolsRoot))
+        {
+            RaiseLog("SteamKit2 backend: found incompatible DepotDownloader binary; re-downloading a compatible build.");
+            TryClearDirectoryContents(toolsRoot);
+        }
+
         await _depotDownloaderInstallLock.WaitAsync(ct);
         try
         {
-            existing = FindDepotDownloaderExe(toolsRoot);
+            existing = FindCompatibleDepotDownloaderExe(toolsRoot);
             if (!string.IsNullOrWhiteSpace(existing))
             {
                 _cachedDepotDownloaderExePath = existing;
                 return existing;
             }
 
+            if (ContainsAnyDepotDownloaderExe(toolsRoot))
+                TryClearDirectoryContents(toolsRoot);
+
             Directory.CreateDirectory(toolsRoot);
             RaiseLog("SteamKit2 backend: downloading DepotDownloader...");
 
             var assetUrl = await GetDepotDownloaderAssetUrlAsync(ct);
             if (string.IsNullOrWhiteSpace(assetUrl))
-                throw new InvalidOperationException("Could not locate a Windows x64 DepotDownloader release asset.");
+                throw new InvalidOperationException($"Could not locate a compatible DepotDownloader release asset for {RuntimeInformation.ProcessArchitecture}.");
 
             var zipPath = Path.Combine(toolsRoot, "DepotDownloader.zip");
             using (var request = new HttpRequestMessage(HttpMethod.Get, assetUrl))
@@ -480,9 +518,9 @@ public class WorkshopDownloader
             ZipFile.ExtractToDirectory(zipPath, toolsRoot, overwriteFiles: true);
             File.Delete(zipPath);
 
-            existing = FindDepotDownloaderExe(toolsRoot);
+            existing = FindCompatibleDepotDownloaderExe(toolsRoot);
             if (string.IsNullOrWhiteSpace(existing))
-                throw new FileNotFoundException("DepotDownloader.exe not found after extraction.");
+                throw new FileNotFoundException($"DepotDownloader.exe was extracted, but no executable compatible with {RuntimeInformation.ProcessArchitecture} was found.");
 
             _cachedDepotDownloaderExePath = existing;
             RaiseLog($"SteamKit2 backend ready: {existing}");
@@ -494,15 +532,102 @@ public class WorkshopDownloader
         }
     }
 
-    private static string? FindDepotDownloaderExe(string root)
+    private static string? FindCompatibleDepotDownloaderExe(string root)
     {
         if (!Directory.Exists(root))
             return null;
 
         foreach (var file in Directory.EnumerateFiles(root, "DepotDownloader.exe", SearchOption.AllDirectories))
-            return file;
+        {
+            if (IsDepotDownloaderCompatibleWithCurrentProcess(file))
+                return file;
+        }
 
         return null;
+    }
+
+    private static bool ContainsAnyDepotDownloaderExe(string root)
+    {
+        if (!Directory.Exists(root))
+            return false;
+
+        foreach (var _ in Directory.EnumerateFiles(root, "DepotDownloader.exe", SearchOption.AllDirectories))
+            return true;
+
+        return false;
+    }
+
+    private static void TryClearDirectoryContents(string root)
+    {
+        if (!Directory.Exists(root))
+            return;
+
+        try
+        {
+            foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+            {
+                if (Directory.Exists(entry))
+                    Directory.Delete(entry, recursive: true);
+                else
+                    File.Delete(entry);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup; download step may still succeed if stale files are harmless.
+        }
+    }
+
+    private static bool IsDepotDownloaderCompatibleWithCurrentProcess(string exePath)
+    {
+        var machine = TryReadPeMachine(exePath);
+        if (!machine.HasValue)
+            return true;
+
+        // PE machine constants from WinNT.h.
+        const ushort I386 = 0x014c;
+        const ushort AMD64 = 0x8664;
+        const ushort ARMNT = 0x01c4;
+        const ushort ARM64 = 0xAA64;
+
+        return RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X86 => machine.Value == I386,
+            Architecture.X64 => machine.Value == AMD64,
+            Architecture.Arm => machine.Value == ARMNT,
+            Architecture.Arm64 => machine.Value is ARM64 or AMD64,
+            _ => true,
+        };
+    }
+
+    private static ushort? TryReadPeMachine(string exePath)
+    {
+        try
+        {
+            using var stream = new FileStream(exePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new BinaryReader(stream);
+
+            if (stream.Length < 64)
+                return null;
+
+            if (reader.ReadUInt16() != 0x5A4D) // MZ
+                return null;
+
+            stream.Seek(0x3C, SeekOrigin.Begin);
+            var peOffset = reader.ReadInt32();
+            if (peOffset <= 0 || peOffset > stream.Length - 6)
+                return null;
+
+            stream.Seek(peOffset, SeekOrigin.Begin);
+            if (reader.ReadUInt32() != 0x00004550) // PE\0\0
+                return null;
+
+            return reader.ReadUInt16();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<string?> GetDepotDownloaderAssetUrlAsync(CancellationToken ct)
@@ -521,6 +646,9 @@ public class WorkshopDownloader
             return null;
 
         string? fallbackZip = null;
+        string? windowsFallbackZip = null;
+        var preferredArch = GetPreferredDepotDownloaderArchToken();
+
         foreach (var asset in assets.EnumerateArray())
         {
             var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
@@ -533,15 +661,41 @@ public class WorkshopDownloader
                 continue;
 
             fallbackZip ??= url;
+            var lowerName = name.ToLowerInvariant();
+            var isWindowsAsset = lowerName.Contains("windows") || lowerName.Contains("win");
 
-            if (name.Contains("windows", StringComparison.OrdinalIgnoreCase) &&
-                (name.Contains("x64", StringComparison.OrdinalIgnoreCase) || name.Contains("win", StringComparison.OrdinalIgnoreCase)))
+            if (isWindowsAsset)
+                windowsFallbackZip ??= url;
+
+            if (isWindowsAsset && DepotDownloaderAssetMatchesArch(lowerName, preferredArch))
             {
                 return url;
             }
         }
 
-        return fallbackZip;
+        return windowsFallbackZip ?? fallbackZip;
+    }
+
+    private static string GetPreferredDepotDownloaderArchToken()
+    {
+        return RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X86 => "x86",
+            Architecture.Arm64 => "arm64",
+            Architecture.Arm => "arm",
+            _ => "x64",
+        };
+    }
+
+    private static bool DepotDownloaderAssetMatchesArch(string lowerAssetName, string preferredArch)
+    {
+        return preferredArch switch
+        {
+            "arm64" => lowerAssetName.Contains("arm64") || lowerAssetName.Contains("aarch64"),
+            "arm" => lowerAssetName.Contains("arm") && !lowerAssetName.Contains("arm64"),
+            "x86" => lowerAssetName.Contains("x86") || lowerAssetName.Contains("win32") || lowerAssetName.Contains("i386"),
+            _ => lowerAssetName.Contains("x64") || lowerAssetName.Contains("amd64"),
+        };
     }
 
     private async Task<string?> DownloadModViaSteamCmdAsync(
@@ -554,7 +708,9 @@ public class WorkshopDownloader
         {
             _log.Error("steamcmd not found at {Path}", steamCmdPath);
             RaiseLog($"steamcmd.exe not found at '{steamCmdPath}'");
-            RaiseComplete(modId, false, null, "steamcmd.exe not found");
+            var warning = "steamcmd.exe not found. Configure SteamCMD in Settings (or click Download SteamCMD) and retry.";
+            RaiseProgress(modId, "", -1, "SteamCMD is not configured. Open Settings to configure or download SteamCMD.");
+            RaiseComplete(modId, false, null, warning);
             return null;
         }
 
@@ -620,6 +776,21 @@ public class WorkshopDownloader
     public bool IsSteamCmdAvailable(string? steamCmdPath)
     {
         return !string.IsNullOrWhiteSpace(steamCmdPath) && File.Exists(steamCmdPath);
+    }
+
+    public bool TryGetLastFailureReason(string modId, out string errorMessage)
+    {
+        lock (_downloadOutcomeLock)
+        {
+            if (_lastDownloadFailures.TryGetValue(modId, out var message) && !string.IsNullOrWhiteSpace(message))
+            {
+                errorMessage = message;
+                return true;
+            }
+        }
+
+        errorMessage = string.Empty;
+        return false;
     }
 
     /// <summary>
@@ -1484,6 +1655,14 @@ public class WorkshopDownloader
 
     private void RaiseComplete(string modId, bool success, string? path, string? error)
     {
+        lock (_downloadOutcomeLock)
+        {
+            if (success)
+                _lastDownloadFailures.Remove(modId);
+            else
+                _lastDownloadFailures[modId] = error ?? "Download failed with unknown error.";
+        }
+
         DownloadComplete?.Invoke(this, new DownloadCompleteEventArgs
         {
             ModId = modId,
