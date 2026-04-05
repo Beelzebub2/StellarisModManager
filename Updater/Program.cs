@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
@@ -7,10 +8,29 @@ namespace StellarisModManager.Updater;
 
 internal static class Program
 {
-    private static readonly HttpClient Http = new()
+    private const int DownloadBufferSize = 1024 * 1024;
+    private const int MinParallelDownloadBytes = 8 * 1024 * 1024;
+    private const int DefaultParallelDownloadParts = 4;
+    private const int MaxParallelDownloadParts = 8;
+
+    private static readonly HttpClient Http = CreateHttpClient();
+
+    private static HttpClient CreateHttpClient()
     {
-        Timeout = TimeSpan.FromSeconds(60)
-    };
+        var handler = new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+            MaxConnectionsPerServer = 16,
+            EnableMultipleHttp2Connections = true,
+        };
+
+        return new HttpClient(handler)
+        {
+            Timeout = TimeSpan.FromMinutes(10)
+        };
+    }
 
     [STAThread]
     private static async Task Main(string[] args)
@@ -247,9 +267,145 @@ internal static class Program
         using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
 
+        var totalBytes = response.Content.Headers.ContentLength;
+        var supportsRangeFromHeaders = response.Headers.AcceptRanges.Contains("bytes", StringComparer.OrdinalIgnoreCase);
+        var canTryParallel = totalBytes.HasValue && totalBytes.Value >= MinParallelDownloadBytes;
+
+        if (canTryParallel)
+        {
+            response.Dispose();
+
+            var supportsRanges = supportsRangeFromHeaders || await SupportsRangeRequestsAsync(url);
+            if (supportsRanges)
+            {
+                try
+                {
+                    await DownloadFileInParallelAsync(url, targetPath, totalBytes!.Value);
+                    return;
+                }
+                catch
+                {
+                    TryDeleteFile(targetPath);
+                    // Fallback to sequential streaming download below.
+                }
+            }
+
+            await DownloadFileSequentialAsync(url, targetPath);
+            return;
+        }
+
         await using var input = await response.Content.ReadAsStreamAsync();
-        await using var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read);
-        await input.CopyToAsync(output);
+        await using var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read, DownloadBufferSize, useAsync: true);
+        await input.CopyToAsync(output, DownloadBufferSize);
+    }
+
+    private static async Task DownloadFileSequentialAsync(string url, string targetPath)
+    {
+        using var response = await Http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+
+        await using var input = await response.Content.ReadAsStreamAsync();
+        await using var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.Read, DownloadBufferSize, useAsync: true);
+        await input.CopyToAsync(output, DownloadBufferSize);
+    }
+
+    private static async Task<bool> SupportsRangeRequestsAsync(string url)
+    {
+        using var probe = new HttpRequestMessage(HttpMethod.Get, url);
+        probe.Headers.Range = new RangeHeaderValue(0, 0);
+
+        using var response = await Http.SendAsync(probe, HttpCompletionOption.ResponseHeadersRead);
+        if (response.StatusCode != HttpStatusCode.PartialContent)
+            return false;
+
+        var contentRange = response.Content.Headers.ContentRange;
+        return contentRange is not null && contentRange.HasRange;
+    }
+
+    private static async Task DownloadFileInParallelAsync(string url, string targetPath, long totalBytes)
+    {
+        var parts = ResolveParallelPartCount(totalBytes);
+        var chunkSize = totalBytes / parts;
+
+        await using (var output = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 1, useAsync: false))
+            output.SetLength(totalBytes);
+
+        var downloadTasks = new List<Task>(parts);
+        for (var i = 0; i < parts; i++)
+        {
+            var start = i * chunkSize;
+            var end = (i == parts - 1)
+                ? totalBytes - 1
+                : (start + chunkSize - 1);
+
+            downloadTasks.Add(DownloadRangePartAsync(url, targetPath, start, end));
+        }
+
+        await Task.WhenAll(downloadTasks);
+    }
+
+    private static int ResolveParallelPartCount(long totalBytes)
+    {
+        var requested = Environment.GetEnvironmentVariable("SMM_UPDATER_DOWNLOAD_PARTS");
+        if (int.TryParse(requested, out var parsed) && parsed > 0)
+            return Math.Clamp(parsed, 1, MaxParallelDownloadParts);
+
+        if (totalBytes >= 100 * 1024 * 1024)
+            return Math.Min(MaxParallelDownloadParts, 6);
+
+        return DefaultParallelDownloadParts;
+    }
+
+    private static async Task DownloadRangePartAsync(string url, string targetPath, long start, long end)
+    {
+        const int maxAttempts = 3;
+        var attempt = 0;
+
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                request.Headers.Range = new RangeHeaderValue(start, end);
+
+                using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                response.EnsureSuccessStatusCode();
+
+                if (response.StatusCode != HttpStatusCode.PartialContent)
+                    throw new HttpRequestException($"Server does not support partial content for range {start}-{end}.");
+
+                await using var input = await response.Content.ReadAsStreamAsync();
+                await using var output = new FileStream(targetPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite, DownloadBufferSize, useAsync: true);
+                output.Seek(start, SeekOrigin.Begin);
+
+                var remaining = end - start + 1;
+                var buffer = ArrayPool<byte>.Shared.Rent(DownloadBufferSize);
+                try
+                {
+                    while (remaining > 0)
+                    {
+                        var readSize = (int)Math.Min(buffer.Length, remaining);
+                        var read = await input.ReadAsync(buffer.AsMemory(0, readSize));
+                        if (read <= 0)
+                            throw new IOException("Unexpected end of stream during ranged download.");
+
+                        await output.WriteAsync(buffer.AsMemory(0, read));
+                        remaining -= read;
+                    }
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(buffer);
+                }
+
+                return;
+            }
+            catch when (attempt < maxAttempts)
+            {
+                await Task.Delay(200 * attempt);
+            }
+        }
     }
 
     private static bool IsStaleAssetStatus(HttpStatusCode? statusCode)

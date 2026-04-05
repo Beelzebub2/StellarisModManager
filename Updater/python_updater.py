@@ -40,6 +40,8 @@ except Exception as exc:
 DEFAULT_STELLARISYNC_BASE_URL = "https://stellarisync.rrmtools.uk"
 DEFAULT_GITHUB_REPO = "Beelzebub2/StellarisModManager"
 DEFAULT_SETUP_NAME = "StellarisModManager-Setup.exe"
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+DOWNLOAD_PROGRESS_UPDATE_INTERVAL_SEC = 0.15
 
 
 class UpdateCancelled(Exception):
@@ -582,10 +584,12 @@ class UpdaterEngine:
                 total_bytes = None
 
             downloaded = 0
+            last_emit_percent = -1
+            last_emit_at = 0.0
             with open(target_path, "wb") as out:
                 while True:
                     self._check_cancelled()
-                    chunk = response.read(64 * 1024)
+                    chunk = response.read(DOWNLOAD_CHUNK_SIZE)
                     if not chunk:
                         break
 
@@ -597,7 +601,22 @@ class UpdaterEngine:
                     else:
                         percent = 0
 
-                    chunk_callback(downloaded, total_bytes, max(0, min(100, percent)))
+                    bounded = max(0, min(100, percent))
+                    now = time.monotonic()
+                    should_emit = (
+                        total_bytes is None
+                        or bounded >= 100
+                        or bounded != last_emit_percent
+                        or (now - last_emit_at) >= DOWNLOAD_PROGRESS_UPDATE_INTERVAL_SEC
+                    )
+
+                    if should_emit:
+                        chunk_callback(downloaded, total_bytes, bounded)
+                        last_emit_percent = bounded
+                        last_emit_at = now
+
+            if last_emit_percent < 100:
+                chunk_callback(downloaded, total_bytes, 100)
 
     def get_installer_log_path(self, installer_path: str) -> Path:
         installer_dir = Path(installer_path).parent
