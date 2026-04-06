@@ -71,47 +71,65 @@
                 BorderThickness="1"
                 CornerRadius="12"
                 Padding="12">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
-                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,10,0">
+            <Grid RowDefinitions="Auto,Auto"
+                  ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,0,10,0">
                     <TextBlock Classes="icon-glyph" Foreground="{DynamicResource Theme.Accent}" Text="&#xE8F1;" />
                     <TextBlock Text="Installed Mods" Foreground="{DynamicResource Theme.TextPrimary}" FontSize="16" FontWeight="SemiBold" />
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                    <TextBox Text="{Binding SearchText}"
-                             Watermark="Search by mod name or workshop ID"
-                             Width="320"
-                             Background="{DynamicResource Theme.SurfaceBg}"
-                             BorderBrush="{DynamicResource Theme.Border}"
-                             Foreground="{DynamicResource Theme.TextPrimary}"
-                             CornerRadius="8" />
-                    <CheckBox IsChecked="{Binding ShowEnabledOnly}"
-                              Content="Enabled only"
-                              Foreground="{DynamicResource Theme.TextPrimary}"
-                              VerticalAlignment="Center" />
-                </StackPanel>
+                <TextBox Grid.Row="0"
+                         Grid.Column="1"
+                         Text="{Binding SearchText}"
+                         Watermark="Search by mod name or workshop ID"
+                         MinWidth="180"
+                         Background="{DynamicResource Theme.SurfaceBg}"
+                         BorderBrush="{DynamicResource Theme.Border}"
+                         Foreground="{DynamicResource Theme.TextPrimary}"
+                         CornerRadius="8" />
 
-                <Button Grid.Column="2" Classes="toolbar" Command="{Binding CheckForUpdatesCommand}" Margin="10,0,0,0">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Classes="icon-glyph" Text="&#xE895;" IsVisible="{Binding !IsCheckingUpdates}" />
-                        <ProgressBar IsIndeterminate="True" Width="36" Height="5" IsVisible="{Binding IsCheckingUpdates}" />
-                        <TextBlock Text="Check updates" />
-                    </StackPanel>
-                </Button>
+                <CheckBox Grid.Row="1"
+                          Grid.Column="0"
+                          Margin="0,8,0,0"
+                          IsChecked="{Binding ShowEnabledOnly}"
+                          Content="Enabled only"
+                          Foreground="{DynamicResource Theme.TextPrimary}"
+                          VerticalAlignment="Center" />
 
-                <Button Grid.Column="3" Classes="toolbar" x:Name="ExportButton" Margin="8,0,0,0">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Classes="icon-glyph" Text="&#xE898;" />
-                        <TextBlock Text="Export" />
-                    </StackPanel>
-                </Button>
+                <WrapPanel Grid.Row="1" Grid.Column="1" Margin="0,8,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Classes="toolbar" Command="{Binding CheckForUpdatesCommand}" Margin="8,0,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE895;" IsVisible="{Binding !IsCheckingUpdates}" />
+                            <ProgressBar IsIndeterminate="True" Width="36" Height="5" IsVisible="{Binding IsCheckingUpdates}" />
+                            <TextBlock Text="Check updates" />
+                        </StackPanel>
+                    </Button>
 
-                <Button Grid.Column="4" Classes="toolbar" x:Name="ImportButton" Margin="8,0,0,0">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <TextBlock Classes="icon-glyph" Text="&#xE896;" />
-                        <TextBlock Text="Import" />
-                    </StackPanel>
-                </Button>
+                    <Button Classes="toolbar"
+                            Command="{Binding ReinstallAllModsCommand}"
+                            IsEnabled="{Binding !IsReinstallingAllMods}"
+                            Margin="8,0,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE777;" IsVisible="{Binding !IsReinstallingAllMods}" />
+                            <ProgressBar IsIndeterminate="True" Width="36" Height="5" IsVisible="{Binding IsReinstallingAllMods}" />
+                            <TextBlock Text="Reinstall all" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="toolbar" x:Name="ExportButton" Margin="8,0,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE898;" />
+                            <TextBlock Text="Export" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="toolbar" x:Name="ImportButton" Margin="8,0,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Classes="icon-glyph" Text="&#xE896;" />
+                            <TextBlock Text="Import" />
+                        </StackPanel>
+                    </Button>
+                </WrapPanel>
             </Grid>
         </Border>
 
@@ -432,6 +450,24 @@
 
                                     <Button Width="162"
                                             Margin="0,0,6,6"
+                                            ToolTip.Tip="Reinstall this mod from Workshop"
+                                            Background="{DynamicResource Theme.SurfaceBg}"
+                                            BorderBrush="{DynamicResource Theme.Border}"
+                                            BorderThickness="1"
+                                            Foreground="{DynamicResource Theme.Accent}"
+                                            CornerRadius="8"
+                                            Padding="10,8"
+                                            HorizontalContentAlignment="Center"
+                                            Command="{Binding #Root.((vm:LibraryViewModel)DataContext).ReinstallModCommand}"
+                                            CommandParameter="{Binding}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
+                                            <TextBlock Classes="icon-glyph" Text="&#xE777;" />
+                                            <TextBlock Text="Reinstall" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <Button Width="162"
+                                            Margin="0,0,6,6"
                                             ToolTip.Tip="Report this mod as working on your current game version"
                                             Background="{DynamicResource Theme.SurfaceBg}"
                                             BorderBrush="{DynamicResource Theme.Border}"
@@ -445,7 +481,7 @@
                                             IsEnabled="{Binding #Root.((vm:LibraryViewModel)DataContext).CanSubmitCompatibilityReport}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Classes="icon-glyph" Text="&#xE73E;" />
-                                            <TextBlock Text="Worked" />
+                                            <TextBlock Text="Works for me" />
                                         </StackPanel>
                                     </Button>
 
@@ -464,7 +500,7 @@
                                             IsEnabled="{Binding #Root.((vm:LibraryViewModel)DataContext).CanSubmitCompatibilityReport}">
                                         <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
                                             <TextBlock Classes="icon-glyph" Text="&#xE711;" />
-                                            <TextBlock Text="Not worked" />
+                                            <TextBlock Text="Broken for me" />
                                         </StackPanel>
                                     </Button>
 

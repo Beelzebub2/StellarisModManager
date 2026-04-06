@@ -25,8 +25,20 @@ public partial class LibraryViewModel : ViewModelBase
     {
         public required int LocalProfileId { get; init; }
         public required string LocalProfileName { get; init; }
+        public required string SharedProfileId { get; init; }
         public required List<string> OrderedWorkshopIds { get; init; }
         public required HashSet<string> WorkshopIdSet { get; init; }
+    }
+
+    private sealed class RemoteSharedProfileDefinition
+    {
+        public required string Id { get; init; }
+        public required string Name { get; init; }
+        public required string Creator { get; init; }
+        public required List<string> OrderedWorkshopIds { get; init; }
+        public string Signature { get; init; } = string.Empty;
+        public string? UpdatedUtc { get; init; }
+        public int? Revision { get; init; }
     }
 
     private static readonly Regex VersionTokenPattern = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
@@ -36,8 +48,14 @@ public partial class LibraryViewModel : ViewModelBase
 
     private bool _isLoadingProfiles;
     private bool _isApplyingProfileSelection;
+    private bool _isCheckingSharedProfileRemoteUpdates;
+    private bool _isApplyingSharedProfileRemoteUpdate;
+    private bool _suppressPersistEnabledState;
     private int? _currentActiveProfileId;
     private SharedProfileSyncContext? _sharedProfileSyncContext;
+    private string? _lastDeclinedSharedProfileRemoteSignature;
+    private int? _lastSharedProfilePushProfileId;
+    private string? _lastSharedProfilePushSignature;
 
     private readonly ModDatabase _db;
     private readonly ModUpdateChecker _updateChecker;
@@ -70,6 +88,7 @@ public partial class LibraryViewModel : ViewModelBase
     // Status
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _isCheckingUpdates = false;
+    [ObservableProperty] private bool _isReinstallingAllMods = false;
     [ObservableProperty] private bool _isSubmittingCompatibilityReport = false;
     [ObservableProperty] private string _compatibilityReportSummary = "";
     [ObservableProperty] private int _updatesAvailable = 0;
@@ -106,7 +125,10 @@ public partial class LibraryViewModel : ViewModelBase
     partial void OnActiveProfileChanged(ModProfile? value)
     {
         if (_sharedProfileSyncContext is not null && (value is null || value.Id != _sharedProfileSyncContext.LocalProfileId))
+        {
             _sharedProfileSyncContext = null;
+            _lastDeclinedSharedProfileRemoteSignature = null;
+        }
 
         if (value is null)
         {
@@ -243,13 +265,16 @@ public partial class LibraryViewModel : ViewModelBase
         if (_currentActiveProfileId is null)
             return;
 
-        await SaveCurrentStateToProfileAsync(_currentActiveProfileId.Value);
+        var profileId = _currentActiveProfileId.Value;
+        await SaveCurrentStateToProfileAsync(profileId);
+        _ = TryPushSharedProfileUpdateAsync(profileId);
     }
 
     private async Task SaveCurrentStateToProfileAsync(int profileId)
     {
-        var snapshot = GetLoadOrderSortedMods()
-            .Select((m, i) => (m.Model.Id, m.IsEnabled, i))
+        // Persist only enabled mods so profiles remain truly empty until mods are enabled.
+        var snapshot = GetEnabledLoadOrderSortedMods()
+            .Select((m, i) => (m.Model.Id, true, i))
             .ToList();
 
         await _db.SaveProfileEntriesAsync(profileId, snapshot);
@@ -263,7 +288,9 @@ public partial class LibraryViewModel : ViewModelBase
         if (targetProfileId.HasValue && _currentActiveProfileId.Value == targetProfileId.Value)
             return;
 
-        await SaveCurrentStateToProfileAsync(_currentActiveProfileId.Value);
+        var profileId = _currentActiveProfileId.Value;
+        await SaveCurrentStateToProfileAsync(profileId);
+        _ = TryPushSharedProfileUpdateAsync(profileId);
     }
 
     private async Task PersistEnabledStateAsync(ModViewModel mod)
@@ -421,6 +448,75 @@ public partial class LibraryViewModel : ViewModelBase
     [RelayCommand]
     private async Task UpdateModAsync(ModViewModel mod)
     {
+        await RefreshInstalledModFromWorkshopAsync(mod, isReinstall: false);
+    }
+
+    [RelayCommand]
+    private async Task ReinstallModAsync(ModViewModel mod)
+    {
+        await RefreshInstalledModFromWorkshopAsync(mod, isReinstall: true);
+    }
+
+    [RelayCommand]
+    private async Task ReinstallAllModsAsync()
+    {
+        if (IsReinstallingAllMods)
+            return;
+
+        var workshopIds = Mods
+            .Select(m => m.WorkshopId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (workshopIds.Count == 0)
+        {
+            StatusMessage = "No installed mods to reinstall.";
+            return;
+        }
+
+        IsReinstallingAllMods = true;
+        var successCount = 0;
+        var failedNames = new List<string>();
+
+        try
+        {
+            for (var i = 0; i < workshopIds.Count; i++)
+            {
+                var workshopId = workshopIds[i];
+                var mod = Mods.FirstOrDefault(m => string.Equals(m.WorkshopId, workshopId, StringComparison.Ordinal));
+                if (mod is null)
+                    continue;
+
+                StatusMessage = $"Reinstalling mods {i + 1}/{workshopIds.Count}: {mod.Name}";
+                var ok = await RefreshInstalledModFromWorkshopAsync(mod, isReinstall: true);
+                if (ok)
+                    successCount++;
+                else
+                    failedNames.Add(mod.Name);
+            }
+
+            if (failedNames.Count == 0)
+            {
+                StatusMessage = $"Reinstalled {successCount} mod(s).";
+                return;
+            }
+
+            var previewFailures = string.Join(", ", failedNames.Take(3));
+            if (failedNames.Count > 3)
+                previewFailures += $" (+{failedNames.Count - 3} more)";
+
+            StatusMessage =
+                $"Reinstalled {successCount}/{workshopIds.Count} mod(s). Failed: {previewFailures}.";
+        }
+        finally
+        {
+            IsReinstallingAllMods = false;
+        }
+    }
+
+    private async Task<bool> RefreshInstalledModFromWorkshopAsync(ModViewModel mod, bool isReinstall)
+    {
         var selectedRuntime = _settings.WorkshopDownloadRuntime;
 
         if (selectedRuntime == WorkshopDownloadRuntime.SteamCmd &&
@@ -428,7 +524,7 @@ public partial class LibraryViewModel : ViewModelBase
              !_downloader.IsSteamCmdAvailable(_settings.SteamCmdPath)))
         {
             StatusMessage = "SteamCMD runtime selected, but steamcmd.exe is not configured. Set it in Settings first.";
-            return;
+            return false;
         }
 
         var modsPath = _settings.ModsPath;
@@ -439,7 +535,8 @@ public partial class LibraryViewModel : ViewModelBase
         if (string.IsNullOrWhiteSpace(downloadBasePath))
             downloadBasePath = Path.GetDirectoryName(_settings.SteamCmdPath) ?? modsPath;
 
-        StatusMessage = $"Updating {mod.Name}...";
+        var action = isReinstall ? "Reinstall" : "Update";
+        StatusMessage = $"{action}ing {mod.Name}...";
 
         try
         {
@@ -453,9 +550,9 @@ public partial class LibraryViewModel : ViewModelBase
             {
                 var hasFailureReason = _downloader.TryGetLastFailureReason(mod.WorkshopId, out var failureReason);
                 StatusMessage = hasFailureReason
-                    ? $"Update failed for {mod.Name}: {failureReason}"
-                    : $"Update failed for {mod.Name}";
-                return;
+                    ? $"{action} failed for {mod.Name}: {failureReason}"
+                    : $"{action} failed for {mod.Name}";
+                return false;
             }
 
             var modInfo = await _downloader.GetModInfoAsync(mod.WorkshopId);
@@ -470,11 +567,15 @@ public partial class LibraryViewModel : ViewModelBase
             await LoadModsAsync();
 
             SelectedMod = FilteredMods.FirstOrDefault(m => m.WorkshopId == mod.WorkshopId);
-            StatusMessage = $"Updated {updated.Name}";
+            StatusMessage = isReinstall
+                ? $"Reinstalled {updated.Name}"
+                : $"Updated {updated.Name}";
+            return true;
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Update failed: {ex.Message}";
+            StatusMessage = $"{action} failed: {ex.Message}";
+            return false;
         }
     }
 
@@ -637,8 +738,11 @@ public partial class LibraryViewModel : ViewModelBase
 
         if (!string.IsNullOrWhiteSpace(profile.SharedProfileId))
         {
+            var pushed = await TryPushSharedProfileUpdateAsync(profile.Id, force: true, updateStatusOnSuccess: false);
             ShareIdCopiedRequested?.Invoke(this, profile.SharedProfileId);
-            StatusMessage = $"Copied existing profile ID: {profile.SharedProfileId}";
+            StatusMessage = pushed
+                ? $"Updated shared profile and copied ID: {profile.SharedProfileId}"
+                : $"Copied profile ID: {profile.SharedProfileId} (could not push latest changes).";
             return;
         }
 
@@ -657,7 +761,7 @@ public partial class LibraryViewModel : ViewModelBase
         var payload = JsonSerializer.Serialize(new
         {
             name = profile.Name,
-            creator = Environment.UserName,
+            creator = ResolveProfileCreatorName(),
             mods = workshopIds,
         });
 
@@ -694,6 +798,8 @@ public partial class LibraryViewModel : ViewModelBase
 
             await _db.SetProfileSharedIdAsync(profile.Id, id);
             profile.SharedProfileId = id;
+            _lastSharedProfilePushProfileId = profile.Id;
+            _lastSharedProfilePushSignature = BuildWorkshopSignature(workshopIds);
             ShareIdCopiedRequested?.Invoke(this, id);
             StatusMessage = $"Shared profile '{profile.Name}'. ID copied: {id}";
         }
@@ -801,10 +907,26 @@ public partial class LibraryViewModel : ViewModelBase
         if (!context.WorkshopIdSet.Contains(workshopId))
             return;
 
-        await ApplySharedSyncProfileStateAsync(context.LocalProfileId, context.OrderedWorkshopIds, context.WorkshopIdSet, context.LocalProfileName);
+        await ApplySharedSyncProfileStateAsync(
+            context.LocalProfileId,
+            context.OrderedWorkshopIds,
+            context.WorkshopIdSet,
+            context.LocalProfileName,
+            context.SharedProfileId);
+    }
+
+    public async Task CheckForSharedProfileRemoteUpdatesIfNeededAsync()
+    {
+        await CheckForSharedProfileRemoteUpdatesAsync();
     }
 
     private async Task<(string ProfileName, List<string> WorkshopIds)> FetchSharedProfileDefinitionAsync(string baseUrl, string sharedProfileId)
+    {
+        var remote = await FetchRemoteSharedProfileDefinitionAsync(baseUrl, sharedProfileId);
+        return (remote.Name, remote.OrderedWorkshopIds);
+    }
+
+    private async Task<RemoteSharedProfileDefinition> FetchRemoteSharedProfileDefinitionAsync(string baseUrl, string sharedProfileId)
     {
         var profileUrl = $"{baseUrl.TrimEnd('/')}/profiles/{Uri.EscapeDataString(sharedProfileId)}";
         using var response = await _stellarisyncHttp.GetAsync(profileUrl);
@@ -814,9 +936,25 @@ public partial class LibraryViewModel : ViewModelBase
             throw new InvalidOperationException($"Shared profile lookup failed ({(int)response.StatusCode}): {body}");
 
         using var doc = JsonDocument.Parse(body);
+        var root = doc.RootElement;
+
         var profileName = doc.RootElement.TryGetProperty("name", out var nameEl)
             ? nameEl.GetString()
             : null;
+        var creator = root.TryGetProperty("creator", out var creatorEl)
+            ? creatorEl.GetString()
+            : null;
+
+        int? revision = null;
+        if (root.TryGetProperty("revision", out var revEl) && revEl.ValueKind == JsonValueKind.Number && revEl.TryGetInt32(out var rev))
+            revision = rev;
+
+        var updatedUtc = root.TryGetProperty("updatedUtc", out var updatedEl)
+            ? updatedEl.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(updatedUtc) && root.TryGetProperty("createdUtc", out var createdEl))
+            updatedUtc = createdEl.GetString();
 
         var workshopIds = new List<string>();
         if (doc.RootElement.TryGetProperty("mods", out var modsEl) && modsEl.ValueKind == JsonValueKind.Array)
@@ -839,7 +977,272 @@ public partial class LibraryViewModel : ViewModelBase
         if (workshopIds.Count > 1)
             workshopIds = workshopIds.Distinct(StringComparer.Ordinal).ToList();
 
-        return (string.IsNullOrWhiteSpace(profileName) ? sharedProfileId : profileName.Trim(), workshopIds);
+        return new RemoteSharedProfileDefinition
+        {
+            Id = sharedProfileId,
+            Name = string.IsNullOrWhiteSpace(profileName) ? sharedProfileId : profileName.Trim(),
+            Creator = string.IsNullOrWhiteSpace(creator) ? "Unknown" : creator.Trim(),
+            OrderedWorkshopIds = workshopIds,
+            Signature = BuildWorkshopSignature(workshopIds),
+            UpdatedUtc = updatedUtc,
+            Revision = revision,
+        };
+    }
+
+    private static string BuildWorkshopSignature(IEnumerable<string> workshopIds)
+    {
+        return string.Join("|", workshopIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id.Trim()));
+    }
+
+    private string ResolveProfileCreatorName()
+    {
+        var configured = _settings.PublicProfileUsername?.Trim();
+        if (!string.IsNullOrWhiteSpace(configured))
+            return configured;
+
+        return "Anonymous";
+    }
+
+    private List<string> GetEnabledWorkshopIdsInCurrentOrder()
+    {
+        return GetEnabledLoadOrderSortedMods()
+            .Select(m => m.WorkshopId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private async Task<bool> TryPushSharedProfileUpdateAsync(
+        int profileId,
+        bool force = false,
+        bool updateStatusOnSuccess = false)
+    {
+        var profile = Profiles.FirstOrDefault(p => p.Id == profileId);
+        if (profile is null || string.IsNullOrWhiteSpace(profile.SharedProfileId))
+            return false;
+
+        var workshopIds = await _db.GetEnabledWorkshopIdsForProfileAsync(profileId);
+        var signature = BuildWorkshopSignature(workshopIds);
+
+        if (!force &&
+            _lastSharedProfilePushProfileId == profileId &&
+            string.Equals(_lastSharedProfilePushSignature, signature, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var baseUrl = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            baseUrl = StellarisyncBaseUrl;
+
+        var requestUrl = $"{baseUrl.TrimEnd('/')}/profiles/{Uri.EscapeDataString(profile.SharedProfileId)}/update";
+        var payload = JsonSerializer.Serialize(new
+        {
+            name = profile.Name,
+            creator = ResolveProfileCreatorName(),
+            mods = workshopIds,
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl)
+        {
+            Content = new StringContent(payload, Encoding.UTF8, "application/json"),
+        };
+
+        var apiKey = Environment.GetEnvironmentVariable("STELLARISYNC_API_KEY");
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            request.Headers.TryAddWithoutValidation("X-Stellarisync-Key", apiKey);
+
+        try
+        {
+            using var response = await _stellarisyncHttp.SendAsync(request);
+            var responseBody = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode)
+            {
+                _log.Warning(
+                    "Shared profile update failed for {ProfileName} ({ProfileId}/{SharedId}): {StatusCode} {Body}",
+                    profile.Name,
+                    profile.Id,
+                    profile.SharedProfileId,
+                    (int)response.StatusCode,
+                    responseBody);
+
+                if (force)
+                {
+                    StatusMessage = response.StatusCode == System.Net.HttpStatusCode.NotFound
+                        ? "Share ID exists, but this Stellarisync server does not support profile updates yet."
+                        : $"Failed to push shared profile update ({(int)response.StatusCode}).";
+                }
+
+                return false;
+            }
+
+            _lastSharedProfilePushProfileId = profileId;
+            _lastSharedProfilePushSignature = signature;
+
+            if (updateStatusOnSuccess)
+                StatusMessage = $"Updated shared profile '{profile.Name}'.";
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Shared profile update failed for {ProfileName} ({ProfileId}/{SharedId})", profile.Name, profile.Id, profile.SharedProfileId);
+            if (force)
+                StatusMessage = $"Failed to push shared profile update: {ex.Message}";
+
+            return false;
+        }
+    }
+
+    private string BuildSharedProfileChangeSummary(RemoteSharedProfileDefinition remote, IReadOnlyList<string> localEnabledOrdered)
+    {
+        var localSet = new HashSet<string>(localEnabledOrdered, StringComparer.Ordinal);
+        var remoteSet = new HashSet<string>(remote.OrderedWorkshopIds, StringComparer.Ordinal);
+
+        var added = remote.OrderedWorkshopIds
+            .Where(id => !localSet.Contains(id))
+            .ToList();
+
+        var removed = localEnabledOrdered
+            .Where(id => !remoteSet.Contains(id))
+            .ToList();
+
+        var localIndex = localEnabledOrdered
+            .Select((id, index) => (id, index))
+            .ToDictionary(x => x.id, x => x.index, StringComparer.Ordinal);
+
+        var moved = remote.OrderedWorkshopIds
+            .Select((id, index) => (id, index))
+            .Where(x => localIndex.TryGetValue(x.id, out var existingIndex) && existingIndex != x.index)
+            .Select(x => x.id)
+            .ToList();
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"Shared profile '{remote.Name}' has new changes from {remote.Creator}.");
+        if (remote.Revision is not null)
+            sb.AppendLine($"Revision: {remote.Revision}");
+
+        if (!string.IsNullOrWhiteSpace(remote.UpdatedUtc) && DateTime.TryParse(remote.UpdatedUtc, out var updatedAt))
+            sb.AppendLine($"Updated: {updatedAt.ToLocalTime():yyyy-MM-dd HH:mm}");
+
+        sb.AppendLine();
+        sb.AppendLine($"Added mods: {added.Count}");
+        sb.AppendLine($"Removed mods: {removed.Count}");
+        sb.AppendLine($"Load-order moves: {moved.Count}");
+
+        if (added.Count > 0)
+            sb.AppendLine($"Added IDs: {string.Join(", ", added.Take(6))}{(added.Count > 6 ? " ..." : string.Empty)}");
+
+        if (removed.Count > 0)
+            sb.AppendLine($"Removed IDs: {string.Join(", ", removed.Take(6))}{(removed.Count > 6 ? " ..." : string.Empty)}");
+
+        sb.AppendLine();
+        sb.Append("Apply these changes to your local synced profile now?");
+        return sb.ToString();
+    }
+
+    private async Task CheckForSharedProfileRemoteUpdatesAsync()
+    {
+        if (_isCheckingSharedProfileRemoteUpdates || _isApplyingSharedProfileRemoteUpdate)
+            return;
+
+        var context = _sharedProfileSyncContext;
+        if (context is null)
+            return;
+
+        if (_currentActiveProfileId != context.LocalProfileId)
+            return;
+
+        var activeProfile = ActiveProfile;
+        if (activeProfile is null || activeProfile.Id != context.LocalProfileId)
+            return;
+
+        var sharedProfileId = !string.IsNullOrWhiteSpace(activeProfile.SharedProfileId)
+            ? activeProfile.SharedProfileId.Trim()
+            : context.SharedProfileId;
+
+        if (string.IsNullOrWhiteSpace(sharedProfileId))
+            return;
+
+        _isCheckingSharedProfileRemoteUpdates = true;
+        try
+        {
+            var baseUrl = Environment.GetEnvironmentVariable("STELLARISYNC_BASE_URL");
+            if (string.IsNullOrWhiteSpace(baseUrl))
+                baseUrl = StellarisyncBaseUrl;
+
+            var remote = await FetchRemoteSharedProfileDefinitionAsync(baseUrl, sharedProfileId);
+            var localEnabledOrdered = GetEnabledWorkshopIdsInCurrentOrder();
+            var localSignature = BuildWorkshopSignature(localEnabledOrdered);
+
+            if (string.Equals(remote.Signature, localSignature, StringComparison.Ordinal))
+            {
+                _lastDeclinedSharedProfileRemoteSignature = null;
+                return;
+            }
+
+            if (string.Equals(_lastDeclinedSharedProfileRemoteSignature, remote.Signature, StringComparison.Ordinal))
+                return;
+
+            var prompt = BuildSharedProfileChangeSummary(remote, localEnabledOrdered);
+            if (RequestSharedProfileInstallConfirmationAsync is null)
+            {
+                StatusMessage = "Shared profile has updates available. Open profile sync prompt support to apply them.";
+                return;
+            }
+
+            var apply = await RequestSharedProfileInstallConfirmationAsync(prompt);
+            if (!apply)
+            {
+                _lastDeclinedSharedProfileRemoteSignature = remote.Signature;
+                StatusMessage = "Shared profile update postponed.";
+                return;
+            }
+
+            _lastDeclinedSharedProfileRemoteSignature = null;
+            var desiredSet = new HashSet<string>(remote.OrderedWorkshopIds, StringComparer.Ordinal);
+            var installedSet = new HashSet<string>(
+                Mods.Select(m => m.WorkshopId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id)),
+                StringComparer.Ordinal);
+
+            var missingMods = remote.OrderedWorkshopIds
+                .Where(id => !installedSet.Contains(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            _isApplyingSharedProfileRemoteUpdate = true;
+            try
+            {
+                await ApplySharedSyncProfileStateAsync(
+                    activeProfile.Id,
+                    remote.OrderedWorkshopIds,
+                    desiredSet,
+                    activeProfile.Name,
+                    sharedProfileId);
+            }
+            finally
+            {
+                _isApplyingSharedProfileRemoteUpdate = false;
+            }
+
+            if (missingMods.Count > 0 && QueueSharedProfileMissingModsAsync is not null)
+                await QueueSharedProfileMissingModsAsync(missingMods);
+
+            StatusMessage = missingMods.Count == 0
+                ? $"Applied shared profile update: {remote.Name}."
+                : $"Applied shared profile update: {remote.Name}. Queued {missingMods.Count} missing mod(s).";
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "Shared profile remote update check failed.");
+        }
+        finally
+        {
+            _isCheckingSharedProfileRemoteUpdates = false;
+        }
     }
 
     private async Task<ModProfile> CreateAndActivateSharedSyncProfileAsync(
@@ -856,7 +1259,7 @@ public partial class LibraryViewModel : ViewModelBase
 
         profile.SharedProfileId = sharedProfileId;
 
-        await ApplySharedSyncProfileStateAsync(profile.Id, orderedWorkshopIds, desiredWorkshopIds, localProfileName);
+        await ApplySharedSyncProfileStateAsync(profile.Id, orderedWorkshopIds, desiredWorkshopIds, localProfileName, sharedProfileId);
         return profile;
     }
 
@@ -864,7 +1267,8 @@ public partial class LibraryViewModel : ViewModelBase
         int profileId,
         IReadOnlyList<string> orderedWorkshopIds,
         HashSet<string> desiredWorkshopIds,
-        string localProfileName)
+        string localProfileName,
+        string? sharedProfileId = null)
     {
         var orderByWorkshopId = orderedWorkshopIds
             .Select((id, index) => (id, index))
@@ -891,9 +1295,12 @@ public partial class LibraryViewModel : ViewModelBase
         {
             LocalProfileId = profileId,
             LocalProfileName = localProfileName,
+            SharedProfileId = sharedProfileId ?? ActiveProfile?.SharedProfileId ?? string.Empty,
             OrderedWorkshopIds = orderedWorkshopIds.ToList(),
             WorkshopIdSet = new HashSet<string>(desiredWorkshopIds, StringComparer.Ordinal),
         };
+
+        _lastDeclinedSharedProfileRemoteSignature = null;
 
         await LoadModsAsync();
     }
@@ -1106,6 +1513,9 @@ public partial class LibraryViewModel : ViewModelBase
         {
             StatusMessage = $"Detected and merged {duplicatesRemoved} duplicate mod record(s).";
         }
+
+        if (!_isApplyingSharedProfileRemoteUpdate)
+            _ = CheckForSharedProfileRemoteUpdatesAsync();
     }
 
     // Called when a new mod is installed
@@ -1120,7 +1530,38 @@ public partial class LibraryViewModel : ViewModelBase
             return;
 
         if (e.PropertyName == nameof(ModViewModel.IsEnabled))
+        {
+            if (_suppressPersistEnabledState)
+                return;
+
             await PersistEnabledStateAsync(mod);
+        }
+    }
+
+    public async Task<(bool found, bool enabledNow, string modName)> EnsureInstalledModEnabledAsync(string workshopId)
+    {
+        if (string.IsNullOrWhiteSpace(workshopId))
+            return (false, false, string.Empty);
+
+        var mod = Mods.FirstOrDefault(m => string.Equals(m.WorkshopId, workshopId.Trim(), StringComparison.Ordinal));
+        if (mod is null)
+            return (false, false, string.Empty);
+
+        if (mod.IsEnabled)
+            return (true, false, mod.Name);
+
+        _suppressPersistEnabledState = true;
+        try
+        {
+            mod.IsEnabled = true;
+        }
+        finally
+        {
+            _suppressPersistEnabledState = false;
+        }
+
+        await PersistEnabledStateAsync(mod);
+        return (true, true, mod.Name);
     }
 
     // Opens the Steam Workshop page in the app's Workshop tab.
@@ -1180,8 +1621,8 @@ public partial class LibraryViewModel : ViewModelBase
             await StellarisyncClient.FetchCommunityCompatibilityAsync();
             RefreshCompatibilityReportSummary(target);
             StatusMessage = worked
-                ? $"Thanks! Marked {target.Name} as working on {gameVersion}."
-                : $"Thanks! Marked {target.Name} as not working on {gameVersion}.";
+                ? $"Thanks! Marked {target.Name} as working for you on {gameVersion}."
+                : $"Thanks! Marked {target.Name} as broken for you on {gameVersion}.";
         }
         finally
         {

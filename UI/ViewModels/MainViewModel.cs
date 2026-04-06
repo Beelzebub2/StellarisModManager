@@ -140,7 +140,11 @@ public partial class MainViewModel : ViewModelBase
         RefreshGameRunningState();
         _gameStateTimer.Start();
 
-        _serviceStatusTimer.Tick += async (_, _) => await RefreshStellarisyncStatusAsync();
+        _serviceStatusTimer.Tick += async (_, _) =>
+        {
+            await RefreshStellarisyncStatusAsync();
+            await LibraryViewModel.CheckForSharedProfileRemoteUpdatesIfNeededAsync();
+        };
         _serviceStatusTimer.Start();
 
         // Wire workshop install requests to download + install flow
@@ -230,6 +234,7 @@ public partial class MainViewModel : ViewModelBase
         StatusMessage = "Ready";
         RefreshGameRunningState();
         _ = RefreshStellarisyncStatusAsync();
+        _ = LibraryViewModel.CheckForSharedProfileRemoteUpdatesIfNeededAsync();
         _ = TryWarmUpSteamCmdAsync(settings);
     }
 
@@ -431,33 +436,42 @@ public partial class MainViewModel : ViewModelBase
             return;
 
         workshopId = workshopId.Trim();
+        var alreadyInstalled = false;
 
         lock (_installStateLock)
         {
             if (LibraryViewModel.GetInstalledWorkshopIds().Contains(workshopId, StringComparer.Ordinal))
             {
-                SetOverlayModState(workshopId, "installed");
-                RunOnUiThread(() => StatusMessage = $"Mod {workshopId} is already installed.");
-                return;
+                _overlayModStates[workshopId] = "installed";
+                alreadyInstalled = true;
             }
-
-            if (_queuedOrInstallingIds.Contains(workshopId))
+            else if (_queuedOrInstallingIds.Contains(workshopId))
             {
                 RunOnUiThread(() => StatusMessage = $"Mod {workshopId} is already queued.");
                 return;
             }
 
-            if (_installQueueCompleted >= _installQueueTotal && _activeInstallIds.Count == 0 && _pendingInstallQueue.Count == 0)
+            else
             {
-                _installQueueTotal = 0;
-                _installQueueCompleted = 0;
-                _activeProgressByModId.Clear();
-            }
+                if (_installQueueCompleted >= _installQueueTotal && _activeInstallIds.Count == 0 && _pendingInstallQueue.Count == 0)
+                {
+                    _installQueueTotal = 0;
+                    _installQueueCompleted = 0;
+                    _activeProgressByModId.Clear();
+                }
 
-            _pendingInstallQueue.Enqueue(workshopId);
-            _queuedOrInstallingIds.Add(workshopId);
-            _installQueueTotal++;
-            _overlayModStates[workshopId] = "queued";
+                _pendingInstallQueue.Enqueue(workshopId);
+                _queuedOrInstallingIds.Add(workshopId);
+                _installQueueTotal++;
+                _overlayModStates[workshopId] = "queued";
+            }
+        }
+
+        if (alreadyInstalled)
+        {
+            UpdateWorkshopOverlayState();
+            _ = HandleAlreadyInstalledInstallRequestAsync(workshopId, updateQueueItem: false);
+            return;
         }
 
         UpsertInstallQueueItem(workshopId, item =>
@@ -478,6 +492,57 @@ public partial class MainViewModel : ViewModelBase
 
         StartPendingInstalls();
         UpdateInstallUiFromState();
+    }
+
+    private async Task<bool> HandleAlreadyInstalledInstallRequestAsync(string workshopId, bool updateQueueItem)
+    {
+        try
+        {
+            SetOverlayModState(workshopId, "installed");
+
+            var (found, enabledNow, modName) = await LibraryViewModel.EnsureInstalledModEnabledAsync(workshopId);
+            var displayName = !string.IsNullOrWhiteSpace(modName) ? modName : workshopId;
+
+            if (updateQueueItem)
+            {
+                UpsertInstallQueueItem(workshopId, item =>
+                {
+                    item.Stage = enabledNow ? "Enabled in profile" : "Already enabled";
+                    item.Progress = 100;
+                    item.CanCancel = false;
+                });
+            }
+
+            RunOnUiThread(() =>
+            {
+                if (!found)
+                {
+                    StatusMessage = $"Mod {workshopId} is already installed.";
+                    return;
+                }
+
+                StatusMessage = enabledNow
+                    ? $"Enabled installed mod: {displayName}"
+                    : $"{displayName} is already installed and enabled.";
+            });
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (updateQueueItem)
+            {
+                UpsertInstallQueueItem(workshopId, item =>
+                {
+                    item.Stage = "Enable failed";
+                    item.CanCancel = false;
+                });
+            }
+
+            SetOverlayModState(workshopId, "error");
+            RunOnUiThread(() => StatusMessage = $"Could not enable installed mod {workshopId}: {ex.Message}");
+            return false;
+        }
     }
 
     private Task QueueSharedProfileMissingModsForInstallAsync(IReadOnlyList<string> workshopIds)
@@ -582,7 +647,8 @@ public partial class MainViewModel : ViewModelBase
                 QueueProgressText = string.Empty;
 
                 if (StatusMessage.StartsWith("Installed", StringComparison.OrdinalIgnoreCase) ||
-                    StatusMessage.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase))
+                    StatusMessage.StartsWith("Skipped", StringComparison.OrdinalIgnoreCase) ||
+                    StatusMessage.StartsWith("Enabled", StringComparison.OrdinalIgnoreCase))
                 {
                     StatusMessage = "Install queue complete";
                 }
@@ -610,15 +676,8 @@ public partial class MainViewModel : ViewModelBase
 
         if (LibraryViewModel.GetInstalledWorkshopIds().Contains(workshopId, StringComparer.Ordinal))
         {
-            SetOverlayModState(workshopId, "installed");
-            UpsertInstallQueueItem(workshopId, item =>
-            {
-                item.Stage = "Already installed";
-                item.Progress = 100;
-                item.CanCancel = false;
-            });
-            RunOnUiThread(() => StatusMessage = $"Skipped {workshopId}: already installed");
-            return InstallRunResult.Success;
+            var enabled = await HandleAlreadyInstalledInstallRequestAsync(workshopId, updateQueueItem: true);
+            return enabled ? InstallRunResult.Success : InstallRunResult.Failed;
         }
 
         var selectedRuntime = _settings.WorkshopDownloadRuntime;

@@ -42,6 +42,7 @@ public class AppSettings
     public string? LastAppUpdateCheckUtc { get; set; }
     public string? LastOfferedAppVersion { get; set; }
     public string? SkippedAppVersion { get; set; }
+    public string? PublicProfileUsername { get; set; }
 
     // -------------------------------------------------------------------------
     // Load / Save

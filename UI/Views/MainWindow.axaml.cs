@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using StellarisModManager.Core.Services;
@@ -8,6 +9,9 @@ namespace StellarisModManager.UI.Views;
 
 public partial class MainWindow : Window
 {
+    private readonly AppSettings _settings;
+    private readonly MainViewModel _vm;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -27,7 +31,17 @@ public partial class MainWindow : Window
             RequestSharedProfileInstallConfirmationAsync = ShowSharedProfileInstallConfirmationAsync,
         };
 
+        _settings = settings;
+        _vm = vm;
         DataContext = vm;
+
+        Opened += MainWindow_Opened;
+    }
+
+    private async void MainWindow_Opened(object? sender, EventArgs e)
+    {
+        Opened -= MainWindow_Opened;
+        await EnsurePublicUsernameAsync();
     }
 
     private async Task<(bool installNow, bool skipVersion)> ShowUpdatePromptAsync(string versionMsg)
@@ -49,6 +63,26 @@ public partial class MainWindow : Window
         var prompt = new SharedProfileInstallPromptWindow(message);
         var result = await prompt.ShowDialog<bool?>(this);
         return result == true;
+    }
+
+    private async Task EnsurePublicUsernameAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(_settings.PublicProfileUsername))
+            return;
+
+        var prompt = new PublicUsernamePromptWindow();
+        var result = await prompt.ShowDialog<string?>(this);
+        var username = (result ?? string.Empty).Trim();
+
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            _vm.StatusMessage = "Tip: Add a public username to personalize shared profiles.";
+            return;
+        }
+
+        _settings.PublicProfileUsername = username;
+        _settings.Save();
+        _vm.StatusMessage = $"Public username set to {username}.";
     }
 
     private void TrySetWindowIcon()
