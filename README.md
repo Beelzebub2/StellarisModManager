@@ -55,7 +55,3 @@ npm start
 ## Contributing
 
 Issues and pull requests are welcome. For larger changes, open an issue first so the design can be discussed before implementation.
-
-## Open source notes
-
-This repository is prepared for open source collaboration. If you want a specific license, add a `LICENSE` file (for example MIT) and the license badge will update automatically.
