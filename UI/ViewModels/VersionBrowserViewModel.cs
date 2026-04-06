@@ -34,6 +34,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
     private static readonly Regex AnyVersionRegex = new(@"(?<!\d)\d+\.\d+(?:\.\d+)?(?!\d)", RegexOptions.Compiled);
     private static readonly HttpClient WorkshopHttp = BuildWorkshopHttpClient();
     private static readonly Regex WorkshopIdRegex = new(@"sharedfiles/filedetails/\?id=(?<id>\d+)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex WorkshopIdTokenRegex = new(@"(?<!\d)(?<id>\d{6,})(?!\d)", RegexOptions.Compiled);
     private static readonly IReadOnlyList<string> RelevanceBrowseSorts = new[] { "trend", "totaluniquesubscribers" };
     private static readonly IReadOnlyList<string> MostSubscribedBrowseSorts = new[] { "totaluniquesubscribers", "trend" };
     private static readonly IReadOnlyList<string> MostPopularBrowseSorts = new[] { "trend", "totaluniquesubscribers" };
@@ -806,6 +807,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         var cancellationToken = refreshCts.Token;
         var searchText = SearchText.Trim();
+        var explicitWorkshopId = TryExtractWorkshopIdSearch(searchText);
         var hasSearchText = !string.IsNullOrWhiteSpace(searchText);
         var cacheQueryKey = hasSearchText ? searchText : null;
         var hadExistingResults = _fetchedMods.Count > 0 || DisplayedMods.Count > 0;
@@ -845,7 +847,38 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
             if (hasSearchText)
             {
-                await EnrichSearchResultsInBackgroundAsync(versionQuery, searchText, searchQueries, cancellationToken);
+                if (IsDirectWorkshopIdQuery(searchText, explicitWorkshopId))
+                {
+                    var directCards = string.IsNullOrWhiteSpace(explicitWorkshopId)
+                        ? new List<VersionModCard>()
+                        : await ResolveWorkshopCardsAsync(
+                            versionQuery,
+                            new List<string> { explicitWorkshopId },
+                            cancellationToken,
+                            maxCount: 1,
+                            bypassVersionGate: true);
+
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    _fetchedMods.Clear();
+                    _fetchedMods.AddRange(directCards);
+
+                    HasNoMods = _fetchedMods.Count == 0;
+                    StatusText = HasNoMods
+                        ? $"No mod found for ID '{searchText}'."
+                        : $"Loaded mod {explicitWorkshopId}.";
+
+                    ApplyModStateToCards();
+                    ApplyFilter();
+                    QueueThumbnailWarm(_fetchedMods.ToList());
+
+                    if (_fetchedMods.Count > 0)
+                        await SaveCachedVersionCardsAsync(versionQuery, _fetchedMods, cancellationToken, cacheQueryKey);
+
+                    return;
+                }
+
+                await EnrichSearchResultsInBackgroundAsync(versionQuery, searchText, searchQueries, explicitWorkshopId, cancellationToken);
                 return;
             }
 
@@ -911,9 +944,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
         string versionQuery,
         string searchText,
         IReadOnlyList<string> searchQueries,
+        string? explicitWorkshopId,
         CancellationToken cancellationToken)
     {
-        await AppendSearchMatchesAsync(versionQuery, searchText, searchQueries, cancellationToken);
+        await AppendSearchMatchesAsync(versionQuery, searchText, searchQueries, explicitWorkshopId, cancellationToken);
 
         HasNoMods = _fetchedMods.Count == 0;
         StatusText = WithReleaseCutoffHint(DisplayedModCount == 0
@@ -925,11 +959,31 @@ public partial class VersionBrowserViewModel : ViewModelBase
         string versionQuery,
         string searchText,
         IReadOnlyList<string> searchQueries,
+        string? explicitWorkshopId,
         CancellationToken cancellationToken)
     {
         var knownIds = new HashSet<string>(_fetchedMods.Select(m => m.WorkshopId), StringComparer.Ordinal);
         var appendedSinceCacheSave = 0;
         var emptyPageStreak = 0;
+
+        if (!string.IsNullOrWhiteSpace(explicitWorkshopId) && knownIds.Add(explicitWorkshopId))
+        {
+            var directCards = await ResolveWorkshopCardsAsync(
+                versionQuery,
+                new List<string> { explicitWorkshopId },
+                cancellationToken,
+                maxCount: 1,
+                bypassVersionGate: true);
+
+            var appendedDirect = AppendCards(directCards, targetCount: null);
+            if (appendedDirect.Count > 0)
+            {
+                appendedSinceCacheSave += appendedDirect.Count;
+                ApplyModStateToCards();
+                ApplyFilter();
+                QueueThumbnailWarm(appendedDirect);
+            }
+        }
 
         for (var page = 1; page <= SearchBackgroundPageLimit; page++)
         {
@@ -1141,7 +1195,8 @@ public partial class VersionBrowserViewModel : ViewModelBase
         string versionQuery,
         List<string> ids,
         CancellationToken cancellationToken,
-        int? maxCount = null)
+        int? maxCount = null,
+        bool bypassVersionGate = false)
     {
         if (ids.Count == 0)
             return new List<VersionModCard>();
@@ -1190,9 +1245,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
         var releaseCutoffExcludedInBatch = 0;
         var excludePatchPinned = ShouldExcludePatchPinnedForSelection(versionQuery);
 
-        var filtered = cards
+        var orderedCards = cards
             .OrderBy(c => c.Index)
-            .Select(c => c.Card)
+            .Select(c => c.Card);
+
+        if (bypassVersionGate)
+            return orderedCards.Take(maxCount ?? int.MaxValue).ToList();
+
+        var filtered = orderedCards
             .Where(c => ShouldIncludeForSelectedVersion(versionQuery, c, excludePatchPinned, out var excludedByReleaseCutoff)
                 ? true
                 : CountReleaseCutoffExclusion(ref releaseCutoffExcludedInBatch, excludedByReleaseCutoff))
@@ -1393,8 +1453,14 @@ public partial class VersionBrowserViewModel : ViewModelBase
         IEnumerable<VersionModCard> filtered = _fetchedMods;
         if (!string.IsNullOrWhiteSpace(SearchText))
         {
-            var lower = SearchText.ToLowerInvariant();
-            filtered = filtered.Where(m => m.Name.ToLowerInvariant().Contains(lower));
+            var search = SearchText.Trim();
+            var lower = search.ToLowerInvariant();
+            var explicitWorkshopId = TryExtractWorkshopIdSearch(search);
+
+            filtered = filtered.Where(m =>
+                m.Name.ToLowerInvariant().Contains(lower) ||
+                (!string.IsNullOrWhiteSpace(m.WorkshopId) && m.WorkshopId.Contains(lower, StringComparison.OrdinalIgnoreCase)) ||
+                (!string.IsNullOrWhiteSpace(explicitWorkshopId) && string.Equals(m.WorkshopId, explicitWorkshopId, StringComparison.Ordinal)));
         }
 
         _orderedFilteredMods = OrderFilteredMods(filtered, SearchText).ToList();
@@ -1443,7 +1509,7 @@ public partial class VersionBrowserViewModel : ViewModelBase
                 .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(m => m.WorkshopId, StringComparer.Ordinal),
             _ when hasSearch => mods
-                .OrderByDescending(m => ComputeRelevanceScore(m.Name, trimmedSearch))
+                .OrderByDescending(m => ComputeRelevanceScore(m, trimmedSearch))
                 .ThenByDescending(m => m.PopularitySignal)
                 .ThenByDescending(m => m.TotalSubscribers)
                 .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
@@ -1456,10 +1522,33 @@ public partial class VersionBrowserViewModel : ViewModelBase
         };
     }
 
-    private static int ComputeRelevanceScore(string name, string search)
+    private static int ComputeRelevanceScore(VersionModCard card, string search)
     {
+        var name = card.Name;
+        var workshopId = card.WorkshopId;
+
         if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(search))
             return 0;
+
+        var directId = TryExtractWorkshopIdSearch(search);
+        if (!string.IsNullOrWhiteSpace(directId))
+        {
+            if (string.Equals(workshopId, directId, StringComparison.Ordinal))
+                return 1000;
+
+            if (!string.IsNullOrWhiteSpace(workshopId) && workshopId.Contains(directId, StringComparison.Ordinal))
+                return 600;
+        }
+
+        var searchDigits = search.Trim();
+        if (!string.IsNullOrWhiteSpace(searchDigits) && !string.IsNullOrWhiteSpace(workshopId))
+        {
+            if (string.Equals(workshopId, searchDigits, StringComparison.Ordinal))
+                return 900;
+
+            if (workshopId.Contains(searchDigits, StringComparison.Ordinal))
+                return 500;
+        }
 
         var nameLower = name.ToLowerInvariant();
         var searchLower = search.ToLowerInvariant();
@@ -1477,6 +1566,35 @@ public partial class VersionBrowserViewModel : ViewModelBase
             return 200 + tokenScore;
 
         return nameLower.Contains(searchLower, StringComparison.Ordinal) ? 100 : 0;
+    }
+
+    private static string? TryExtractWorkshopIdSearch(string? searchText)
+    {
+        if (string.IsNullOrWhiteSpace(searchText))
+            return null;
+
+        var trimmed = searchText.Trim();
+        if (WorkshopIdTokenRegex.IsMatch(trimmed) && Regex.IsMatch(trimmed, @"^\d{6,}$"))
+            return trimmed;
+
+        var urlMatch = WorkshopIdRegex.Match(trimmed);
+        if (urlMatch.Success)
+            return urlMatch.Groups["id"].Value;
+
+        var tokenMatch = WorkshopIdTokenRegex.Match(trimmed);
+        return tokenMatch.Success ? tokenMatch.Groups["id"].Value : null;
+    }
+
+    private static bool IsDirectWorkshopIdQuery(string searchText, string? extractedWorkshopId)
+    {
+        if (string.IsNullOrWhiteSpace(extractedWorkshopId))
+            return false;
+
+        var trimmed = searchText.Trim();
+        if (string.Equals(trimmed, extractedWorkshopId, StringComparison.Ordinal))
+            return true;
+
+        return WorkshopIdRegex.IsMatch(trimmed);
     }
 
     private static double ComputePopularitySignal(WorkshopModInfo? info)
@@ -1685,6 +1803,10 @@ public partial class VersionBrowserViewModel : ViewModelBase
 
         var queries = new List<string>();
         var versionToken = ExtractVersionToken(versionQuery) ?? versionQuery.Trim();
+        var explicitWorkshopId = TryExtractWorkshopIdSearch(name);
+
+        if (!string.IsNullOrWhiteSpace(explicitWorkshopId))
+            queries.Add(explicitWorkshopId);
 
         // Run name-only first so exact-title searches are not crowded out by broader version tokens.
         queries.Add(name);

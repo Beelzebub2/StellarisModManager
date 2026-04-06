@@ -46,6 +46,7 @@ public partial class SettingsViewModel : ViewModelBase
     [ObservableProperty] private bool _developerMode = false;
     [ObservableProperty] private bool _warnBeforeRestartGame = true;
     [ObservableProperty] private string _developerLogText = "";
+    [ObservableProperty] private string _publicProfileUsername = "";
 
     [ObservableProperty] private bool _autoCheckAppUpdates = true;
     [ObservableProperty] private string _appVersion = "";
@@ -85,6 +86,7 @@ public partial class SettingsViewModel : ViewModelBase
         DeveloperMode = settings.DeveloperMode;
         WarnBeforeRestartGame = settings.WarnBeforeRestartGame;
         AutoCheckAppUpdates = settings.AutoCheckAppUpdates;
+        PublicProfileUsername = settings.PublicProfileUsername ?? "";
         SelectedPalette = string.IsNullOrWhiteSpace(settings.ThemePalette)
             ? "Obsidian Ember"
             : settings.ThemePalette;
@@ -143,6 +145,7 @@ public partial class SettingsViewModel : ViewModelBase
     }
 
     partial void OnSteamCmdDownloadPathChanged(string value) => HasUnsavedChanges = true;
+    partial void OnPublicProfileUsernameChanged(string value) => HasUnsavedChanges = true;
     partial void OnSelectedDownloadRuntimeChanged(WorkshopDownloadRuntime value)
     {
         HasUnsavedChanges = true;
@@ -445,6 +448,9 @@ public partial class SettingsViewModel : ViewModelBase
         _settings.DeveloperMode = DeveloperMode;
         _settings.WarnBeforeRestartGame = WarnBeforeRestartGame;
         _settings.AutoCheckAppUpdates = AutoCheckAppUpdates;
+        _settings.PublicProfileUsername = string.IsNullOrWhiteSpace(PublicProfileUsername)
+            ? null
+            : PublicProfileUsername.Trim();
         _settings.LastDetectedGameVersion = string.IsNullOrWhiteSpace(GameVersion) ? null : GameVersion;
         _settings.ThemePalette = string.IsNullOrWhiteSpace(SelectedPalette)
             ? "Obsidian Ember"

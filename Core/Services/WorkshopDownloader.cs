@@ -402,8 +402,15 @@ public class WorkshopDownloader
         if (!ContainsAnyContent(steamKitRoot))
             return (false, null, "SteamKit2 backend completed but no files were downloaded.");
 
+        var resolvedRoot = ResolveSteamKitModRoot(steamKitRoot, appId, modId);
+        if (!Directory.Exists(resolvedRoot) || !ContainsAnyContent(resolvedRoot))
+            return (false, null, "SteamKit2 backend completed but no usable mod content was found.");
+
+        if (!string.Equals(resolvedRoot, steamKitRoot, StringComparison.OrdinalIgnoreCase))
+            RaiseLog($"SteamKit2 normalized mod root: {resolvedRoot}");
+
         RaiseProgress(modId, "", 100, "SteamKit2 download complete");
-        return (true, steamKitRoot, null);
+        return (true, resolvedRoot, null);
     }
 
     private static bool ContainsAnyContent(string path)
@@ -421,6 +428,99 @@ public class WorkshopDownloader
         {
             return false;
         }
+    }
+
+    private static string ResolveSteamKitModRoot(string steamKitRoot, string appId, string modId)
+    {
+        var preferredCandidates = new[]
+        {
+            Path.Combine(steamKitRoot, "steamapps", "workshop", "content", appId, modId),
+            Path.Combine(steamKitRoot, modId),
+            steamKitRoot,
+        };
+
+        foreach (var candidate in preferredCandidates)
+        {
+            if (LooksLikeModRoot(candidate))
+                return candidate;
+        }
+
+        var descriptorPath = FindDescriptorFileRecursive(steamKitRoot, maxDepth: 6);
+        if (!string.IsNullOrWhiteSpace(descriptorPath))
+        {
+            var descriptorDir = Path.GetDirectoryName(descriptorPath);
+            if (!string.IsNullOrWhiteSpace(descriptorDir))
+                return descriptorDir;
+        }
+
+        return steamKitRoot;
+    }
+
+    private static bool LooksLikeModRoot(string path)
+    {
+        if (!Directory.Exists(path))
+            return false;
+
+        if (File.Exists(Path.Combine(path, "descriptor.mod")))
+            return true;
+
+        try
+        {
+            using var modFiles = Directory.EnumerateFiles(path, "*.mod", SearchOption.TopDirectoryOnly).GetEnumerator();
+            if (modFiles.MoveNext())
+                return true;
+
+            // Some mods omit descriptor.mod in unusual workshop payloads.
+            foreach (var marker in new[] { "common", "events", "gfx", "interface", "localisation", "map" })
+            {
+                if (Directory.Exists(Path.Combine(path, marker)))
+                    return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static string? FindDescriptorFileRecursive(string rootPath, int maxDepth)
+    {
+        if (!Directory.Exists(rootPath))
+            return null;
+
+        var queue = new Queue<(string Path, int Depth)>();
+        queue.Enqueue((rootPath, 0));
+
+        while (queue.Count > 0)
+        {
+            var (currentPath, depth) = queue.Dequeue();
+            try
+            {
+                var descriptorPath = Path.Combine(currentPath, "descriptor.mod");
+                if (File.Exists(descriptorPath))
+                    return descriptorPath;
+
+                if (depth >= maxDepth)
+                    continue;
+
+                foreach (var child in Directory.EnumerateDirectories(currentPath))
+                {
+                    var name = Path.GetFileName(child);
+                    if (name.StartsWith(".", StringComparison.Ordinal))
+                        continue;
+
+                    queue.Enqueue((child, depth + 1));
+                }
+            }
+            catch
+            {
+                // Best-effort scan only.
+            }
+        }
+
+        return null;
     }
 
     private static int BuildDepotDownloaderLoginId(string modId)
@@ -1602,7 +1702,27 @@ public class WorkshopDownloader
             }
             catch
             {
-                // Best-effort cleanup only; SteamCMD may still repair/overwrite existing content.
+                // Best-effort cleanup only.
+            }
+        }
+
+        // Fix SteamCMD stale cache bug where older downloaded versions are retained
+        // because appworkshop_<appid>.acf marks the item as fully downloaded and valid.
+        var acfPaths = new[]
+        {
+            Path.Combine(downloadBasePath, "steamapps", "workshop", $"appworkshop_{appId}.acf"),
+            Path.Combine(steamCmdDir, "steamapps", "workshop", $"appworkshop_{appId}.acf")
+        };
+
+        foreach (var acf in acfPaths)
+        {
+            if (File.Exists(acf))
+            {
+                try
+                {
+                    File.Delete(acf);
+                }
+                catch { }
             }
         }
     }

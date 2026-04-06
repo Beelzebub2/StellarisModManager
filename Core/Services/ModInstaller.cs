@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -30,6 +31,7 @@ public class ModDescriptor
 public class ModInstaller
 {
     private static readonly Serilog.ILogger _log = Log.ForContext<ModInstaller>();
+    private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
     /// <summary>
     /// Copies downloaded mod files into the Stellaris mods folder and
@@ -50,6 +52,10 @@ public class ModInstaller
         string modsPath,
         WorkshopModInfo? modInfo = null)
     {
+        var sourceDir = ResolveDownloadedModRoot(downloadedPath, workshopId);
+        if (!string.Equals(sourceDir, downloadedPath, StringComparison.OrdinalIgnoreCase))
+            _log.Information("Normalized mod source for {Id}: {Old} -> {New}", workshopId, downloadedPath, sourceDir);
+
         var targetDir = System.IO.Path.Combine(modsPath, workshopId);
         Directory.CreateDirectory(modsPath);
 
@@ -59,13 +65,13 @@ public class ModInstaller
 
         Directory.CreateDirectory(targetDir);
 
-        _log.Information("Installing mod {Id} from {Src} to {Dst}", workshopId, downloadedPath, targetDir);
+        _log.Information("Installing mod {Id} from {Src} to {Dst}", workshopId, sourceDir, targetDir);
 
         // Copy files (overwrites existing)
-        await Task.Run(() => CopyDirectory(downloadedPath, targetDir));
+        await Task.Run(() => CopyDirectory(sourceDir, targetDir));
 
         // Find/parse descriptor inside the downloaded directory
-        var srcDescriptorPath = FindDescriptorFile(downloadedPath);
+        var srcDescriptorPath = FindDescriptorFile(sourceDir);
         ModDescriptor descriptor;
 
         if (srcDescriptorPath is not null)
@@ -100,6 +106,13 @@ public class ModInstaller
         // Write the .mod descriptor alongside the mod folder
         var descriptorFilePath = System.IO.Path.Combine(modsPath, $"{workshopId}.mod");
         WriteDescriptor(descriptor, descriptorFilePath);
+
+        // Ensure mod folder also has a descriptor.mod for tooling parity across runtimes/sources.
+        var folderDescriptorPath = System.IO.Path.Combine(targetDir, "descriptor.mod");
+        if (!File.Exists(folderDescriptorPath))
+            WriteDescriptor(descriptor, folderDescriptorPath);
+
+        await EnsureThumbnailAsync(targetDir, sourceDir, descriptor, modInfo);
 
         _log.Information("Wrote descriptor to {Path}", descriptorFilePath);
 
@@ -223,6 +236,167 @@ public class ModInstaller
         // Also check for any .mod file in the root
         foreach (var f in Directory.GetFiles(directory, "*.mod"))
             return f;
+
+        var nestedDescriptor = FindDescriptorFileRecursive(directory, maxDepth: 6);
+        if (!string.IsNullOrWhiteSpace(nestedDescriptor))
+            return nestedDescriptor;
+
+        return null;
+    }
+
+    private static string ResolveDownloadedModRoot(string downloadedPath, string workshopId)
+    {
+        if (LooksLikeModRoot(downloadedPath))
+            return downloadedPath;
+
+        var nestedIdPath = System.IO.Path.Combine(downloadedPath, workshopId);
+        if (LooksLikeModRoot(nestedIdPath))
+            return nestedIdPath;
+
+        var nestedWorkshopPath = System.IO.Path.Combine(downloadedPath, "mod", workshopId);
+        if (LooksLikeModRoot(nestedWorkshopPath))
+            return nestedWorkshopPath;
+
+        var descriptorPath = FindDescriptorFileRecursive(downloadedPath, maxDepth: 6);
+        if (!string.IsNullOrWhiteSpace(descriptorPath))
+        {
+            var descriptorDir = System.IO.Path.GetDirectoryName(descriptorPath);
+            if (!string.IsNullOrWhiteSpace(descriptorDir))
+                return descriptorDir;
+        }
+
+        return downloadedPath;
+    }
+
+    private static bool LooksLikeModRoot(string path)
+    {
+        if (!Directory.Exists(path))
+            return false;
+
+        if (File.Exists(System.IO.Path.Combine(path, "descriptor.mod")))
+            return true;
+
+        try
+        {
+            foreach (var _ in Directory.EnumerateFiles(path, "*.mod", SearchOption.TopDirectoryOnly))
+                return true;
+
+            foreach (var marker in new[] { "common", "events", "gfx", "interface", "localisation", "map" })
+            {
+                if (Directory.Exists(System.IO.Path.Combine(path, marker)))
+                    return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static string? FindDescriptorFileRecursive(string rootPath, int maxDepth)
+    {
+        if (!Directory.Exists(rootPath))
+            return null;
+
+        var queue = new Queue<(string Path, int Depth)>();
+        queue.Enqueue((rootPath, 0));
+
+        while (queue.Count > 0)
+        {
+            var (currentPath, depth) = queue.Dequeue();
+            try
+            {
+                var descriptorPath = System.IO.Path.Combine(currentPath, "descriptor.mod");
+                if (File.Exists(descriptorPath))
+                    return descriptorPath;
+
+                if (depth >= maxDepth)
+                    continue;
+
+                foreach (var child in Directory.EnumerateDirectories(currentPath))
+                {
+                    var name = System.IO.Path.GetFileName(child);
+                    if (name.StartsWith(".", StringComparison.Ordinal))
+                        continue;
+
+                    queue.Enqueue((child, depth + 1));
+                }
+            }
+            catch
+            {
+                // Best-effort scan only.
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task EnsureThumbnailAsync(
+        string targetDir,
+        string sourceDir,
+        ModDescriptor descriptor,
+        WorkshopModInfo? modInfo)
+    {
+        var desiredPictureName = string.IsNullOrWhiteSpace(descriptor.Picture)
+            ? "thumbnail.png"
+            : descriptor.Picture!;
+
+        var targetPicturePath = System.IO.Path.Combine(targetDir, desiredPictureName);
+        if (File.Exists(targetPicturePath))
+            return;
+
+        var sourcePicturePath = System.IO.Path.Combine(sourceDir, desiredPictureName);
+        if (File.Exists(sourcePicturePath))
+        {
+            File.Copy(sourcePicturePath, targetPicturePath, overwrite: true);
+            return;
+        }
+
+        var fallbackSourceThumbnail = FindThumbnailFile(sourceDir);
+        if (!string.IsNullOrWhiteSpace(fallbackSourceThumbnail))
+        {
+            File.Copy(fallbackSourceThumbnail, targetPicturePath, overwrite: true);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(modInfo?.PreviewImageUrl))
+            return;
+
+        try
+        {
+            var bytes = await _http.GetByteArrayAsync(modInfo.PreviewImageUrl);
+            if (bytes.Length > 0)
+                await File.WriteAllBytesAsync(targetPicturePath, bytes);
+        }
+        catch
+        {
+            // Best-effort thumbnail fetch only.
+        }
+    }
+
+    private static string? FindThumbnailFile(string rootDir)
+    {
+        if (!Directory.Exists(rootDir))
+            return null;
+
+        foreach (var name in new[] { "thumbnail.png", "thumbnail.jpg", "thumbnail.jpeg", "thumbnail.webp" })
+        {
+            var direct = System.IO.Path.Combine(rootDir, name);
+            if (File.Exists(direct))
+                return direct;
+        }
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(rootDir, "thumbnail.*", SearchOption.AllDirectories))
+                return file;
+        }
+        catch
+        {
+            // Best-effort search only.
+        }
 
         return null;
     }
