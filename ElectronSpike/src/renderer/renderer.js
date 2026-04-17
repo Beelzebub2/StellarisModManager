@@ -135,6 +135,12 @@ function formatUtc(value) {
 
 function formatInteger(value) { return Number(value || 0).toLocaleString(); }
 
+function formatVersionBadgeValue(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "-";
+    return /^v/i.test(raw) ? raw : `v${raw}`;
+}
+
 function normalizeThemePaletteName(value) {
     const raw = String(value || "").trim().toLowerCase();
     if (raw === "graphite moss") return "Graphite Moss";
@@ -1711,6 +1717,7 @@ function renderLibraryList() {
         const sel = mod.id === state.library.selectedModId ? " is-selected" : "";
         const updateBadge = mod.hasUpdate ? "<span class='badge badge-version'>Update</span>" : "";
         const mpBadge = mod.isMultiplayerSafe ? "<span class='badge badge-community'>MP safe</span>" : "";
+        const versionLabel = formatVersionBadgeValue(mod.version);
         return `
             <article class="library-row${sel}" data-mod-id="${mod.id}" draggable="${mod.isEnabled ? "true" : "false"}">
                 <div class="library-cell library-enabled">
@@ -1719,7 +1726,7 @@ function renderLibraryList() {
                 <div class="library-cell library-name">
                     <p class="library-row-title">${escapeHtml(mod.name)}</p>
                     <div class="library-row-badges">
-                        <span class="badge">v${escapeHtml(mod.version || "-")}</span>
+                        <span class="badge">${escapeHtml(versionLabel)}</span>
                         ${mpBadge}${updateBadge}
                     </div>
                 </div>

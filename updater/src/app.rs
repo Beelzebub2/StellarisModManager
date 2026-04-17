@@ -161,12 +161,12 @@ fn render_window(ui: &mut egui::Ui, app: &mut UpdaterApp, frame: &mut eframe::Fr
 
     // Outer padded container for a "card" feel on top of BG_BASE.
     egui::Frame::none()
-        .inner_margin(Margin::symmetric(28.0, 20.0))
+        .inner_margin(Margin::symmetric(24.0, 14.0))
         .show(ui, |ui| {
             render_header(ui, app);
-            ui.add_space(18.0);
+            ui.add_space(12.0);
             render_body(ui, app);
-            ui.add_space(16.0);
+            ui.add_space(12.0);
             render_footer(ui, app, frame);
         });
 }
@@ -194,24 +194,27 @@ fn render_custom_topbar(ui: &mut egui::Ui) {
             .max_rect(bar_rect.shrink2(egui::vec2(8.0, 3.0)))
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Stellaris Mod Manager Updater")
-                    .color(theme::TEXT_MUTED)
-                    .font(FontId::proportional(12.0)),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new("Stellaris Mod Manager Updater")
+                        .color(theme::TEXT_MUTED)
+                        .font(FontId::proportional(12.0)),
+                );
 
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if chrome_button(ui, "X").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                let remaining = ui.available_width();
+                if remaining > 0.0 {
+                    ui.add_space(remaining);
                 }
+
                 if chrome_button(ui, "-").clicked() {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 }
+                if chrome_button(ui, "X").clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             });
-        });
-    },
+        },
     );
 }
 
@@ -248,9 +251,9 @@ fn render_body(ui: &mut egui::Ui, app: &UpdaterApp) {
         .fill(theme::BG_1)
         .stroke(Stroke::new(1.0, theme::BORDER))
         .rounding(Rounding::same(10.0))
-        .inner_margin(Margin::symmetric(20.0, 18.0))
+        .inner_margin(Margin::symmetric(18.0, 14.0))
         .show(ui, |ui| {
-            ui.set_min_height(130.0);
+            ui.set_min_height(116.0);
             match &app.state {
                 UiState::Connecting => render_connecting(ui),
                 UiState::Downloading {
