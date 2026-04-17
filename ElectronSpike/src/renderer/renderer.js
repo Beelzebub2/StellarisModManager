@@ -41,6 +41,13 @@ const state = {
     }
 };
 
+const THEME_PALETTE_TO_KEY = Object.freeze({
+    "Obsidian Ember": "obsidian-ember",
+    "Graphite Moss": "graphite-moss",
+    "Nocturne Slate": "nocturne-slate",
+    "Starlight White": "starlight-white"
+});
+
 const ICON_PATHS = Object.freeze({
     versions: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
     library: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
@@ -127,6 +134,20 @@ function formatUtc(value) {
 }
 
 function formatInteger(value) { return Number(value || 0).toLocaleString(); }
+
+function normalizeThemePaletteName(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (raw === "graphite moss") return "Graphite Moss";
+    if (raw === "nocturne slate") return "Nocturne Slate";
+    if (raw === "starlight white") return "Starlight White";
+    return "Obsidian Ember";
+}
+
+function applyThemePalette(paletteName) {
+    const normalized = normalizeThemePaletteName(paletteName);
+    const themeKey = THEME_PALETTE_TO_KEY[normalized] || THEME_PALETTE_TO_KEY["Obsidian Ember"];
+    document.body.setAttribute("data-theme", themeKey);
+}
 
 /* ---- Status management ---- */
 function setGlobalStatus(text) { setText("statusbarText", text); }
@@ -1103,6 +1124,32 @@ function getDefaultSettingsModel() {
     };
 }
 
+async function resolveUnsavedSettingsBeforeLeave() {
+    if (!(state.selectedTab === "settings" && state.settingsDirty)) {
+        return true;
+    }
+
+    const shouldSave = await showModal(
+        "Unsaved settings changes",
+        "You made changes in Settings that are not saved. Save changes before leaving?",
+        "Save changes",
+        "Leave anyway"
+    );
+
+    if (shouldSave) {
+        const saved = await saveSettingsPage();
+        if (!saved) {
+            setSettingsStatus("Could not save settings. Fix the issue before leaving this page.");
+            return false;
+        }
+        return true;
+    }
+
+    applySettingsToForm(state.settingsModel || getDefaultSettingsModel());
+    setSettingsStatus("Discarded unsaved settings changes.");
+    return true;
+}
+
 function setInputValue(id, v) { const el = byId(id); if (el && "value" in el) el.value = v ?? ""; }
 function setCheckboxValue(id, v) { const el = byId(id); if (el && "checked" in el) el.checked = v === true; }
 function getInputValue(id) { const el = byId(id); return (!el || !("value" in el)) ? "" : String(el.value || "").trim(); }
@@ -1167,6 +1214,7 @@ function applySettingsToForm(settings) {
 
     syncSettingsRuntimeVisibility();
     syncDeveloperDiagnosticsVisibility();
+    applyThemePalette(m.themePalette || "Obsidian Ember");
     markSettingsDirty(false);
 }
 
@@ -1238,9 +1286,10 @@ async function validateSettingsPage() {
 async function saveSettingsPage() {
     const current = buildSettingsFromForm();
     const result = await window.spikeApi.saveSettings(current);
-    if (!result.ok) { setSettingsStatus(result.message); return; }
+    if (!result.ok) { setSettingsStatus(result.message); return false; }
     applySettingsToForm(result.settings);
     setSettingsStatus(result.message);
+    return true;
 }
 
 async function autoDetectSettingsPage() {
@@ -2220,6 +2269,18 @@ function activateTab(name) {
     setGlobalStatus(statusMap[name] || "Ready.");
 }
 
+async function activateTabGuarded(name) {
+    if (name !== "settings") {
+        const canLeave = await resolveUnsavedSettingsBeforeLeave();
+        if (!canLeave) {
+            return false;
+        }
+    }
+
+    activateTab(name);
+    return true;
+}
+
 /* ============================================================
    EVENT HOOKS
    ============================================================ */
@@ -2277,7 +2338,18 @@ function hookVersionControls() {
 }
 
 function hookSettingsControls() {
-    byId("refreshSettings")?.addEventListener("click", () => void refreshSettingsPage());
+    byId("refreshSettings")?.addEventListener("click", async () => {
+        if (state.settingsDirty) {
+            const proceed = await showModal(
+                "Unsaved settings changes",
+                "Refreshing will discard your unsaved settings changes. Continue?",
+                "Refresh anyway",
+                "Cancel"
+            );
+            if (!proceed) return;
+        }
+        await refreshSettingsPage();
+    });
     byId("validateSettings")?.addEventListener("click", () => void validateSettingsPage());
     byId("saveSettings")?.addEventListener("click", () => void saveSettingsPage());
 
@@ -2297,8 +2369,14 @@ function hookSettingsControls() {
         byId(id)?.addEventListener("input", () => {
             markSettingsDirty(true);
             if (id === "settingsWorkshopRuntimeInput") syncSettingsRuntimeVisibility();
+            if (id === "settingsThemeInput") applyThemePalette(getInputValue("settingsThemeInput"));
         });
     }
+
+    byId("settingsThemeInput")?.addEventListener("change", () => {
+        markSettingsDirty(true);
+        applyThemePalette(getInputValue("settingsThemeInput"));
+    });
 
     const dirtyCheckboxes = [
         "settingsWarnBeforeRestartInput",
@@ -2632,13 +2710,13 @@ function hookAppUpdateControls() {
 }
 
 function hookGlobalControls() {
-    byId("tabVersion")?.addEventListener("click", () => activateTab("version"));
-    byId("tabLibrary")?.addEventListener("click", () => activateTab("library"));
+    byId("tabVersion")?.addEventListener("click", () => void activateTabGuarded("version"));
+    byId("tabLibrary")?.addEventListener("click", () => void activateTabGuarded("library"));
     byId("tabWorkshop")?.addEventListener("click", () => {
         state.workshopReturnContext = null;
-        activateTab("workshop");
+        void activateTabGuarded("workshop");
     });
-    byId("tabSettings")?.addEventListener("click", () => activateTab("settings"));
+    byId("tabSettings")?.addEventListener("click", () => void activateTabGuarded("settings"));
     byId("launchGameBtn")?.addEventListener("click", () => void handleLaunchGame());
     byId("queueCancelAll")?.addEventListener("click", () => void cancelAllQueueActions());
     byId("queueClearFinished")?.addEventListener("click", () => void clearQueueHistory());
@@ -2695,6 +2773,14 @@ function hookGlobalControls() {
                 if (input) { e.preventDefault(); input.focus(); }
             }
         }
+    });
+
+    window.addEventListener("beforeunload", (e) => {
+        if (!state.settingsDirty) {
+            return;
+        }
+        e.preventDefault();
+        e.returnValue = "";
     });
 }
 

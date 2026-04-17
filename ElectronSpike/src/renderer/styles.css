@@ -66,6 +66,91 @@
     --duration: 150ms;
 }
 
+body[data-theme="graphite-moss"] {
+    --bg-base: #0c0f12;
+    --bg-1: #12171b;
+    --bg-2: #1a2125;
+    --bg-3: #24302d;
+    --bg-4: #2b3935;
+
+    --surface: #27332f;
+    --surface-hover: #2f3d39;
+    --surface-active: #374740;
+
+    --border: rgba(158, 186, 164, 0.20);
+    --border-hover: rgba(158, 186, 164, 0.34);
+    --border-strong: rgba(158, 186, 164, 0.46);
+
+    --text: #e8f2ea;
+    --text-2: #9aac9d;
+    --text-3: #6a7c70;
+
+    --accent: #22c55e;
+    --accent-hover: #4ade80;
+    --accent-soft: rgba(34, 197, 94, 0.15);
+    --accent-border: rgba(74, 222, 128, 0.34);
+}
+
+body[data-theme="nocturne-slate"] {
+    --bg-base: #0b0d14;
+    --bg-1: #101423;
+    --bg-2: #171d30;
+    --bg-3: #202942;
+    --bg-4: #2b3554;
+
+    --surface: #25304d;
+    --surface-hover: #2e3a5b;
+    --surface-active: #36456a;
+
+    --border: rgba(151, 168, 214, 0.22);
+    --border-hover: rgba(151, 168, 214, 0.34);
+    --border-strong: rgba(151, 168, 214, 0.48);
+
+    --text: #e8ecfb;
+    --text-2: #a0accb;
+    --text-3: #6f7a9a;
+
+    --accent: #60a5fa;
+    --accent-hover: #93c5fd;
+    --accent-soft: rgba(96, 165, 250, 0.16);
+    --accent-border: rgba(147, 197, 253, 0.34);
+}
+
+body[data-theme="starlight-white"] {
+    --bg-base: #f2f5fb;
+    --bg-1: #ffffff;
+    --bg-2: #f7f9fc;
+    --bg-3: #ecf1f8;
+    --bg-4: #dfe7f3;
+
+    --surface: #e8eef8;
+    --surface-hover: #dee8f5;
+    --surface-active: #d3e0f1;
+
+    --border: rgba(27, 42, 70, 0.16);
+    --border-hover: rgba(27, 42, 70, 0.26);
+    --border-strong: rgba(27, 42, 70, 0.36);
+
+    --text: #0f172a;
+    --text-2: #334155;
+    --text-3: #64748b;
+
+    --accent: #0369a1;
+    --accent-hover: #0284c7;
+    --accent-soft: rgba(3, 105, 161, 0.14);
+    --accent-border: rgba(3, 105, 161, 0.30);
+
+    --success: #15803d;
+    --success-soft: rgba(21, 128, 61, 0.10);
+    --success-border: rgba(21, 128, 61, 0.24);
+    --warning: #b45309;
+    --warning-soft: rgba(180, 83, 9, 0.12);
+    --warning-border: rgba(180, 83, 9, 0.24);
+    --danger: #b91c1c;
+    --danger-soft: rgba(185, 28, 28, 0.10);
+    --danger-border: rgba(185, 28, 28, 0.22);
+}
+
 /* ============================================================
    RESET & BASE
    ============================================================ */
