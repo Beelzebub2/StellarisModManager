@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, clipboard, dialog, ipcMain, shell } from "electron";
 import type {
+    DownloadActionRequest,
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
     LibraryReorderRequest,
@@ -12,7 +13,6 @@ import type {
     SteamCmdProbeRequest,
     SystemSummary,
     VersionBrowserQuery,
-    VersionModActionRequest,
     WorkshopBrowserQuery
 } from "../shared/types";
 import { loadDbSummary } from "./services/database";
@@ -52,16 +52,20 @@ import {
     stopSteamCmdProbe
 } from "./services/steamCmdProbe";
 import {
-    cancelAllVersionModActions,
-    cancelVersionModAction,
-    clearVersionQueueHistory,
     clearVersionResultCache,
     getVersionModDetail,
-    getVersionQueueSnapshot,
     getVersionOptions,
-    queryVersionMods,
-    queueVersionModAction
+    queryVersionMods
 } from "./services/versionBrowser";
+import {
+    cancelAllDownloads,
+    cancelDownload,
+    clearDownloadHistory,
+    getDownloadQueueSnapshot,
+    getInstalledWorkshopIdsList,
+    queueDownload,
+    setDownloadEventEmitter
+} from "./services/downloadManager";
 import {
     clearWorkshopCache,
     queryWorkshopMods
@@ -100,12 +104,14 @@ const CHANNELS = {
     versionOptions: "spike:getVersionOptions",
     versionClearCache: "spike:clearVersionResultCache",
     versionQuery: "spike:queryVersionMods",
-    versionAction: "spike:queueVersionModAction",
-    versionActionCancel: "spike:cancelVersionModAction",
-    versionActionCancelAll: "spike:cancelAllVersionModActions",
-    versionQueue: "spike:getVersionQueueSnapshot",
-    versionQueueClearHistory: "spike:clearVersionQueueHistory",
     versionDetail: "spike:getVersionModDetail",
+    downloadQueue: "spike:queueDownload",
+    downloadCancel: "spike:cancelDownload",
+    downloadCancelAll: "spike:cancelAllDownloads",
+    downloadSnapshot: "spike:getDownloadQueueSnapshot",
+    downloadClearHistory: "spike:clearDownloadHistory",
+    downloadInstalledIds: "spike:getInstalledWorkshopIds",
+    downloadQueueEvent: "spike:downloadQueueEvent",
     launchGame: "spike:launchGame",
     gameRunningStatus: "spike:getGameRunningStatus",
     stellarisyncStatus: "spike:getStellarisyncStatus",
@@ -191,12 +197,13 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.versionOptions);
     ipcMain.removeHandler(CHANNELS.versionClearCache);
     ipcMain.removeHandler(CHANNELS.versionQuery);
-    ipcMain.removeHandler(CHANNELS.versionAction);
-    ipcMain.removeHandler(CHANNELS.versionActionCancel);
-    ipcMain.removeHandler(CHANNELS.versionActionCancelAll);
-    ipcMain.removeHandler(CHANNELS.versionQueue);
-    ipcMain.removeHandler(CHANNELS.versionQueueClearHistory);
     ipcMain.removeHandler(CHANNELS.versionDetail);
+    ipcMain.removeHandler(CHANNELS.downloadQueue);
+    ipcMain.removeHandler(CHANNELS.downloadCancel);
+    ipcMain.removeHandler(CHANNELS.downloadCancelAll);
+    ipcMain.removeHandler(CHANNELS.downloadSnapshot);
+    ipcMain.removeHandler(CHANNELS.downloadClearHistory);
+    ipcMain.removeHandler(CHANNELS.downloadInstalledIds);
     ipcMain.removeHandler(CHANNELS.launchGame);
     ipcMain.removeHandler(CHANNELS.gameRunningStatus);
     ipcMain.removeHandler(CHANNELS.stellarisyncStatus);
@@ -381,28 +388,35 @@ export function registerIpcHandlers(): void {
         return queryVersionMods(query);
     });
 
-    ipcMain.handle(CHANNELS.versionAction, async (_event, request: VersionModActionRequest) => {
-        return queueVersionModAction(request);
-    });
-
-    ipcMain.handle(CHANNELS.versionActionCancel, async (_event, workshopId: string) => {
-        return cancelVersionModAction(workshopId);
-    });
-
-    ipcMain.handle(CHANNELS.versionActionCancelAll, async () => {
-        return cancelAllVersionModActions();
-    });
-
-    ipcMain.handle(CHANNELS.versionQueue, async () => {
-        return getVersionQueueSnapshot();
-    });
-
-    ipcMain.handle(CHANNELS.versionQueueClearHistory, async (_event, workshopIds?: string[]) => {
-        return clearVersionQueueHistory(workshopIds);
-    });
-
     ipcMain.handle(CHANNELS.versionDetail, async (_event, workshopId: string, selectedVersion: string) => {
         return getVersionModDetail(workshopId, selectedVersion);
+    });
+
+    ipcMain.handle(CHANNELS.downloadQueue, async (event, request: DownloadActionRequest) => {
+        setDownloadEventEmitter((downloadEvent) => {
+            event.sender.send(CHANNELS.downloadQueueEvent, downloadEvent);
+        });
+        return queueDownload(request);
+    });
+
+    ipcMain.handle(CHANNELS.downloadCancel, async (_event, workshopId: string) => {
+        return cancelDownload(workshopId);
+    });
+
+    ipcMain.handle(CHANNELS.downloadCancelAll, async () => {
+        return cancelAllDownloads();
+    });
+
+    ipcMain.handle(CHANNELS.downloadSnapshot, async () => {
+        return getDownloadQueueSnapshot();
+    });
+
+    ipcMain.handle(CHANNELS.downloadClearHistory, async (_event, workshopIds?: string[]) => {
+        return clearDownloadHistory(workshopIds);
+    });
+
+    ipcMain.handle(CHANNELS.downloadInstalledIds, async () => {
+        return getInstalledWorkshopIdsList();
     });
 
     ipcMain.handle(CHANNELS.launchGame, async () => {

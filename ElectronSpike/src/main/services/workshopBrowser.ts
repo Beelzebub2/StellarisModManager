@@ -1,8 +1,6 @@
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import Database from "better-sqlite3";
 import type {
     WorkshopBrowserQuery,
     WorkshopBrowserResult,
@@ -11,6 +9,7 @@ import type {
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
 import { logError, logInfo } from "./logger";
+import { getActionStateForCard } from "./downloadManager";
 
 const STELLARIS_APP_ID = "281990";
 const STEAM_WORKSHOP_BROWSE_URL = "https://steamcommunity.com/workshop/browse/";
@@ -58,7 +57,6 @@ const thumbnailsDir = path.join(cacheRoot, "thumbnails");
 let initialized = false;
 const detailCache = new Map<string, CachedDetail>();
 const browseCache = new Map<string, BrowseCacheEntry>();
-const installStateCache = new Map<string, string>();
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -282,47 +280,6 @@ async function ensureThumbnailCached(workshopId: string, previewUrl: string | nu
     }
 }
 
-function getInstalledWorkshopIds(): Set<string> {
-    const installedIds = new Set<string>();
-    const dbPath = getLegacyPaths().modsDbPath;
-
-    if (!fs.existsSync(dbPath)) return installedIds;
-
-    let db: Database.Database | null = null;
-    try {
-        db = new Database(dbPath, { readonly: true, fileMustExist: true });
-        const columns = db.prepare("PRAGMA table_info(Mods)").all() as Array<{ name: string }>;
-        const workshopColumn = columns.some((c) => c.name === "SteamWorkshopId")
-            ? "SteamWorkshopId"
-            : columns.some((c) => c.name === "WorkshopId")
-                ? "WorkshopId"
-                : null;
-
-        if (!workshopColumn) return installedIds;
-
-        const rows = db
-            .prepare(`SELECT DISTINCT ${workshopColumn} AS WorkshopId FROM Mods WHERE ${workshopColumn} IS NOT NULL AND ${workshopColumn} <> ''`)
-            .all() as Array<{ WorkshopId: string }>;
-
-        for (const row of rows) {
-            if (row.WorkshopId?.trim()) installedIds.add(row.WorkshopId.trim());
-        }
-    } catch {
-        // ignore
-    } finally {
-        db?.close();
-    }
-
-    for (const id of installStateCache.keys()) {
-        installedIds.add(id);
-    }
-
-    return installedIds;
-}
-
-function getActionState(workshopId: string, installedIds: Set<string>): WorkshopModCard["actionState"] {
-    return installedIds.has(workshopId) ? "installed" : "not-installed";
-}
 
 export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<WorkshopBrowserResult> {
     await ensureInitialized();
@@ -340,7 +297,6 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
     if (searchText && /^\d{6,}$/.test(searchText)) {
         const details = await fetchPublishedFileDetails([searchText]);
         const detail = details.get(searchText);
-        const installedIds = getInstalledWorkshopIds();
 
         if (detail) {
             const title = (detail.title ?? "").trim() || `Workshop Mod ${searchText}`;
@@ -360,7 +316,7 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
                     previewImageUrl,
                     totalSubscribers: Number.isFinite(subs) ? subs : 0,
                     tags,
-                    actionState: getActionState(searchText, installedIds)
+                    actionState: getActionStateForCard(searchText)
                 }],
                 statusText: `Found mod ${searchText}: ${detail.title ?? "Unknown"}`,
                 hasMore: false
@@ -397,7 +353,6 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
 
     // Fetch metadata for all scraped IDs
     const details = await fetchPublishedFileDetails(workshopIds);
-    const installedIds = getInstalledWorkshopIds();
     const cards: WorkshopModCard[] = [];
 
     for (const workshopId of workshopIds) {
@@ -416,7 +371,7 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
             previewImageUrl,
             totalSubscribers: Number.isFinite(subs) ? subs : 0,
             tags,
-            actionState: getActionState(workshopId, installedIds)
+            actionState: getActionStateForCard(workshopId)
         });
     }
 

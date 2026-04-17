@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
     DbSummary,
+    DownloadActionRequest,
+    DownloadActionResult,
+    DownloadQueueCommandResult,
+    DownloadQueueEvent,
+    DownloadQueueSnapshot,
     LaunchGameResult,
     LibraryActionResult,
     LibraryCompatibilityReportRequest,
@@ -21,11 +26,7 @@ import type {
     VersionBrowserQuery,
     VersionBrowserResult,
     VersionModDetail,
-    VersionModActionRequest,
-    VersionModActionResult,
     VersionOption,
-    VersionQueueCommandResult,
-    VersionQueueSnapshot,
     SteamDiscoverySummary,
     SteamCmdProbeEvent,
     SteamCmdProbeRequest,
@@ -95,16 +96,17 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:clearVersionResultCache") as Promise<void>,
     queryVersionMods: (query: VersionBrowserQuery) =>
         ipcRenderer.invoke("spike:queryVersionMods", query) as Promise<VersionBrowserResult>,
-    queueVersionModAction: (request: VersionModActionRequest) =>
-        ipcRenderer.invoke("spike:queueVersionModAction", request) as Promise<VersionModActionResult>,
+    // Legacy wrappers — delegate to the unified download manager
+    queueVersionModAction: (request: { workshopId: string; action: "install" | "uninstall" }) =>
+        ipcRenderer.invoke("spike:queueDownload", request) as Promise<DownloadActionResult>,
     cancelVersionModAction: (workshopId: string) =>
-        ipcRenderer.invoke("spike:cancelVersionModAction", workshopId) as Promise<VersionModActionResult>,
+        ipcRenderer.invoke("spike:cancelDownload", workshopId) as Promise<DownloadActionResult>,
     cancelAllVersionModActions: () =>
-        ipcRenderer.invoke("spike:cancelAllVersionModActions") as Promise<VersionQueueCommandResult>,
+        ipcRenderer.invoke("spike:cancelAllDownloads") as Promise<DownloadQueueCommandResult>,
     getVersionQueueSnapshot: () =>
-        ipcRenderer.invoke("spike:getVersionQueueSnapshot") as Promise<VersionQueueSnapshot>,
+        ipcRenderer.invoke("spike:getDownloadQueueSnapshot") as Promise<DownloadQueueSnapshot>,
     clearVersionQueueHistory: (workshopIds?: string[]) =>
-        ipcRenderer.invoke("spike:clearVersionQueueHistory", workshopIds) as Promise<VersionQueueCommandResult>,
+        ipcRenderer.invoke("spike:clearDownloadHistory", workshopIds) as Promise<DownloadQueueCommandResult>,
     getVersionModDetail: (workshopId: string, selectedVersion: string) =>
         ipcRenderer.invoke("spike:getVersionModDetail", workshopId, selectedVersion) as Promise<VersionModDetail | null>,
     queryWorkshopMods: (query: WorkshopBrowserQuery) =>
@@ -135,6 +137,28 @@ const api: SpikeApi = {
         ipcRenderer.on("spike:steamCmdProbeEvent", listener);
         return () => {
             ipcRenderer.removeListener("spike:steamCmdProbeEvent", listener);
+        };
+    },
+    queueDownload: (request: DownloadActionRequest) =>
+        ipcRenderer.invoke("spike:queueDownload", request) as Promise<DownloadActionResult>,
+    cancelDownload: (workshopId: string) =>
+        ipcRenderer.invoke("spike:cancelDownload", workshopId) as Promise<DownloadActionResult>,
+    cancelAllDownloads: () =>
+        ipcRenderer.invoke("spike:cancelAllDownloads") as Promise<DownloadQueueCommandResult>,
+    getDownloadQueueSnapshot: () =>
+        ipcRenderer.invoke("spike:getDownloadQueueSnapshot") as Promise<DownloadQueueSnapshot>,
+    clearDownloadHistory: (workshopIds?: string[]) =>
+        ipcRenderer.invoke("spike:clearDownloadHistory", workshopIds) as Promise<DownloadQueueCommandResult>,
+    getInstalledWorkshopIds: () =>
+        ipcRenderer.invoke("spike:getInstalledWorkshopIds") as Promise<string[]>,
+    onDownloadQueueEvent: (handler: (event: DownloadQueueEvent) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+            handler(payload as DownloadQueueEvent);
+        };
+
+        ipcRenderer.on("spike:downloadQueueEvent", listener);
+        return () => {
+            ipcRenderer.removeListener("spike:downloadQueueEvent", listener);
         };
     }
 };

@@ -20,7 +20,7 @@ import type {
 import { getLegacyPaths } from "./paths";
 import { loadSettingsSnapshot, saveSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
-import { queueVersionModAction } from "./versionBrowser";
+import { queueDownload } from "./downloadManager";
 
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
 const STELLARISYNC_BASE_URL = process.env.STELLARISYNC_BASE_URL?.trim() || "https://stellarisync.rrmtools.uk";
@@ -1037,7 +1037,7 @@ export function exportLibraryMods(filePath: string): LibraryActionResult {
     }
 }
 
-export function importLibraryMods(filePath: string): LibraryImportResult {
+export async function importLibraryMods(filePath: string): Promise<LibraryImportResult> {
     const sourcePath = (filePath ?? "").trim();
     if (!sourcePath) {
         return {
@@ -1076,7 +1076,11 @@ export function importLibraryMods(filePath: string): LibraryImportResult {
                 continue;
             }
 
-            const result = queueVersionModAction({ workshopId, action: "install" });
+            const result = await queueDownload({
+                workshopId,
+                modName: String(entry.Name ?? entry.name ?? workshopId),
+                action: "install"
+            });
             if (result.ok) {
                 queuedCount += 1;
             } else {

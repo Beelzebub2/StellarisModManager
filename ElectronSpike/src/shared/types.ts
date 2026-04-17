@@ -326,6 +326,49 @@ export interface StellarisyncStatus {
     checkedAtUtc: string;
 }
 
+export type ModActionState = "not-installed" | "queued" | "installing" | "installed" | "uninstalling" | "error";
+
+export interface DownloadQueueItem {
+    workshopId: string;
+    modName: string;
+    action: "install" | "uninstall";
+    status: "queued" | "running" | "completed" | "failed" | "cancelled";
+    progress: number;
+    message: string;
+    updatedAtUtc: string;
+}
+
+export interface DownloadQueueSnapshot {
+    items: DownloadQueueItem[];
+    hasActiveWork: boolean;
+    runningCount: number;
+    queuedCount: number;
+}
+
+export interface DownloadQueueEvent {
+    kind: "item-updated" | "snapshot";
+    snapshot: DownloadQueueSnapshot;
+}
+
+export interface DownloadActionRequest {
+    workshopId: string;
+    modName?: string;
+    action: "install" | "uninstall";
+}
+
+export interface DownloadActionResult {
+    ok: boolean;
+    workshopId: string;
+    actionState: ModActionState;
+    message: string;
+}
+
+export interface DownloadQueueCommandResult {
+    ok: boolean;
+    message: string;
+    affected: number;
+}
+
 export interface SpikeApi {
     ping: () => Promise<string>;
     getSystemSummary: () => Promise<SystemSummary>;
@@ -375,4 +418,11 @@ export interface SpikeApi {
     openPathInFileExplorer: (targetPath: string) => Promise<boolean>;
     copyText: (value: string) => Promise<boolean>;
     onSteamCmdProbeEvent: (handler: (event: SteamCmdProbeEvent) => void) => () => void;
+    queueDownload: (request: DownloadActionRequest) => Promise<DownloadActionResult>;
+    cancelDownload: (workshopId: string) => Promise<DownloadActionResult>;
+    cancelAllDownloads: () => Promise<DownloadQueueCommandResult>;
+    getDownloadQueueSnapshot: () => Promise<DownloadQueueSnapshot>;
+    clearDownloadHistory: (workshopIds?: string[]) => Promise<DownloadQueueCommandResult>;
+    getInstalledWorkshopIds: () => Promise<string[]>;
+    onDownloadQueueEvent: (handler: (event: DownloadQueueEvent) => void) => () => void;
 }

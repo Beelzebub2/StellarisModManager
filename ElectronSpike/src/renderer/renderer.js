@@ -13,7 +13,7 @@ const state = {
     isLoading: false,
     selectedTab: "version",
     settingsTab: "general",
-    queuePollingHandle: null,
+    downloadEventUnsubscribe: null,
     searchDebounceHandle: null,
     activeDetailWorkshopId: null,
     activeCards: [],
@@ -181,7 +181,10 @@ async function applyAppIcon() {
 function setLoadingState(isLoading) {
     state.isLoading = isLoading;
     const btn = byId("versionRefresh");
-    if (btn) btn.disabled = isLoading;
+    if (btn) {
+        btn.disabled = isLoading;
+        btn.classList.toggle("is-spinning", isLoading);
+    }
     const prev = byId("pagePrev");
     if (prev) prev.disabled = isLoading || state.page <= 1;
     const next = byId("pageNext");
@@ -811,7 +814,7 @@ function updateQueueRow(view, item) {
 
     view.root.setAttribute("data-status", status);
 
-    const name = getModNameByWorkshopId(item.workshopId);
+    const name = item.modName || getModNameByWorkshopId(item.workshopId);
     view.idEl.textContent = name;
     view.idEl.title = `${name} (${item.workshopId})`;
 
@@ -939,43 +942,47 @@ function renderQueueList(snapshot) {
 
 async function refreshQueueSnapshot() {
     try {
-        const snapshot = await window.spikeApi.getVersionQueueSnapshot();
-        state.queueSnapshot = snapshot;
-        renderQueueList(snapshot);
-        syncVisibleVersionCardActionStates();
+        const snapshot = await window.spikeApi.getDownloadQueueSnapshot();
+        applyQueueSnapshot(snapshot);
+    } catch { /* ignore */ }
+}
 
-        const completedOps = (snapshot.items || [])
-            .filter((item) => item.status === "completed" && (item.action === "install" || item.action === "uninstall"))
-            .map((item) => `${item.workshopId}:${item.action}:${item.updatedAtUtc}`)
-            .sort();
-        const completedOpsKey = completedOps.join("|");
+function applyQueueSnapshot(snapshot) {
+    state.queueSnapshot = snapshot;
+    renderQueueList(snapshot);
+    syncVisibleVersionCardActionStates();
 
-        if (completedOpsKey && completedOpsKey !== state.queueLibrarySyncKey && !state.queueLibrarySyncInFlight) {
-            state.queueLibrarySyncKey = completedOpsKey;
-            state.queueLibrarySyncInFlight = true;
+    const completedOps = (snapshot.items || [])
+        .filter((item) => item.status === "completed" && (item.action === "install" || item.action === "uninstall"))
+        .map((item) => `${item.workshopId}:${item.action}:${item.updatedAtUtc}`)
+        .sort();
+    const completedOpsKey = completedOps.join("|");
+
+    if (completedOpsKey && completedOpsKey !== state.queueLibrarySyncKey && !state.queueLibrarySyncInFlight) {
+        state.queueLibrarySyncKey = completedOpsKey;
+        state.queueLibrarySyncInFlight = true;
+        void (async () => {
             try {
-                // Re-scan local/workshop descriptors after queue completion so Library reflects installs without restart.
                 await window.spikeApi.scanLocalMods();
                 await refreshLibrarySnapshot();
             } finally {
                 state.queueLibrarySyncInFlight = false;
             }
-        }
+        })();
+    }
 
-        const hasActiveWork = snapshot.hasActiveWork === true;
-        const finishedActiveWork = state.queueHadActiveWork && !hasActiveWork;
-        state.queueHadActiveWork = hasActiveWork;
+    const hasActiveWork = snapshot.hasActiveWork === true;
+    const finishedActiveWork = state.queueHadActiveWork && !hasActiveWork;
+    state.queueHadActiveWork = hasActiveWork;
 
-        // Avoid reloading the entire version page while installs are active.
-        // Do one sync refresh after active work completes so button states settle.
-        if (finishedActiveWork && !state.isLoading && state.selectedTab === "version") {
-            void refreshVersionResults();
-        }
-    } catch { /* ignore */ }
+    if (finishedActiveWork && !state.isLoading && state.selectedTab === "version") {
+        void refreshVersionResults();
+    }
 }
 
 async function queueAction(workshopId, action, source = "version") {
-    const result = await window.spikeApi.queueVersionModAction({ workshopId, action });
+    const modName = getModNameByWorkshopId(workshopId);
+    const result = await window.spikeApi.queueDownload({ workshopId, modName, action });
     if (source === "library") setLibraryStatus(result.message);
     else setVersionStatus(result.message);
     await refreshQueueSnapshot();
@@ -984,7 +991,7 @@ async function queueAction(workshopId, action, source = "version") {
 }
 
 async function cancelQueueAction(workshopId) {
-    const result = await window.spikeApi.cancelVersionModAction(workshopId);
+    const result = await window.spikeApi.cancelDownload(workshopId);
     setGlobalStatus(result.message);
     await refreshQueueSnapshot();
     await refreshVersionResults();
@@ -992,14 +999,14 @@ async function cancelQueueAction(workshopId) {
 }
 
 async function cancelAllQueueActions() {
-    const result = await window.spikeApi.cancelAllVersionModActions();
+    const result = await window.spikeApi.cancelAllDownloads();
     setGlobalStatus(result.message);
     await refreshQueueSnapshot();
     await refreshVersionResults();
 }
 
 async function clearQueueHistory(workshopIds) {
-    const result = await window.spikeApi.clearVersionQueueHistory(workshopIds);
+    const result = await window.spikeApi.clearDownloadHistory(workshopIds);
     setGlobalStatus(result.message);
     await refreshQueueSnapshot();
 }
@@ -1509,7 +1516,7 @@ async function reinstallAllLibraryMods() {
     if (!snapshot || snapshot.mods.length === 0) { setLibraryStatus("No installed mods to reinstall."); return; }
     let queued = 0;
     for (const mod of snapshot.mods) {
-        const result = await window.spikeApi.queueVersionModAction({ workshopId: mod.workshopId, action: "install" });
+        const result = await window.spikeApi.queueDownload({ workshopId: mod.workshopId, modName: mod.name, action: "install" });
         if (result.ok) queued += 1;
     }
     setLibraryStatus(`Queued ${queued} mod(s) for reinstall.`);
@@ -1530,7 +1537,7 @@ async function getWorkshopOverlayActionState(workshopId) {
     try {
         const [librarySnapshot, queueSnapshot] = await Promise.all([
             window.spikeApi.getLibrarySnapshot(),
-            window.spikeApi.getVersionQueueSnapshot()
+            window.spikeApi.getDownloadQueueSnapshot()
         ]);
 
         const activeQueueItem = (queueSnapshot.items || []).find((item) => {
@@ -1716,7 +1723,8 @@ function initWorkshop() {
                 ? "uninstall"
                 : "install";
 
-            const result = await window.spikeApi.queueVersionModAction({ workshopId, action });
+            const modName = getModNameByWorkshopId(workshopId);
+            const result = await window.spikeApi.queueDownload({ workshopId, modName, action });
             setLibraryStatus(result.message);
 
             await Promise.all([
@@ -2158,9 +2166,11 @@ async function init() {
     syncSearchClearButton();
     activateTab("version");
 
-    // Polling: queue every 1.8s, game status every 3s, stellarisync every 2 min
-    if (state.queuePollingHandle) clearInterval(state.queuePollingHandle);
-    state.queuePollingHandle = setInterval(() => void refreshQueueSnapshot(), 1800);
+    // Push-based queue events from main process
+    if (state.downloadEventUnsubscribe) state.downloadEventUnsubscribe();
+    state.downloadEventUnsubscribe = window.spikeApi.onDownloadQueueEvent((event) => {
+        if (event.snapshot) applyQueueSnapshot(event.snapshot);
+    });
 
     if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
     state.gamePollingHandle = setInterval(() => void refreshGameRunningStatus(), 3000);
