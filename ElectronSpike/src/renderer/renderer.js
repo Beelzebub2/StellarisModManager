@@ -19,6 +19,7 @@ const state = {
     activeCards: [],
     settingsModel: null,
     settingsDirty: false,
+    usernamePromptShown: false,
     gameRunning: false,
     gamePollingHandle: null,
     stellarisyncPollingHandle: null,
@@ -1121,7 +1122,8 @@ function buildSettingsFromForm() {
         steamCmdDownloadPath: getInputValue("settingsSteamCmdDownloadPathInput"),
         workshopDownloadRuntime: getInputValue("settingsWorkshopRuntimeInput") || "Auto",
         lastDetectedGameVersion: state.settingsModel?.lastDetectedGameVersion || "",
-        autoDetectGame: getCheckboxValue("settingsAutoDetectGameInput"),
+        // Keep persisted value because the startup auto-detect toggle is intentionally hidden from UI.
+        autoDetectGame: state.settingsModel?.autoDetectGame === true,
         developerMode: getCheckboxValue("settingsDeveloperModeInput"),
         warnBeforeRestartGame: getCheckboxValue("settingsWarnBeforeRestartInput"),
         themePalette: getInputValue("settingsThemeInput") || "Obsidian Ember",
@@ -1147,7 +1149,6 @@ function applySettingsToForm(settings) {
     setInputValue("settingsWorkshopRuntimeInput", m.workshopDownloadRuntime || "Auto");
     setInputValue("settingsReporterIdInput", m.compatibilityReporterId);
 
-    setCheckboxValue("settingsAutoDetectGameInput", m.autoDetectGame === true);
     setCheckboxValue("settingsWarnBeforeRestartInput", m.warnBeforeRestartGame === true);
     setCheckboxValue("settingsDeveloperModeInput", m.developerMode === true);
     setCheckboxValue("settingsAutoUpdatesInput", m.autoCheckAppUpdates === true);
@@ -1165,6 +1166,7 @@ function applySettingsToForm(settings) {
     }
 
     syncSettingsRuntimeVisibility();
+    syncDeveloperDiagnosticsVisibility();
     markSettingsDirty(false);
 }
 
@@ -1178,6 +1180,15 @@ function syncSettingsRuntimeVisibility() {
             if (container) container.classList.toggle("hidden", hide);
         }
     }
+}
+
+function syncDeveloperDiagnosticsVisibility() {
+    const showDiagnostics = getCheckboxValue("settingsDeveloperModeInput");
+    const diagnosticsContent = byId("settingsDiagnosticsContent");
+    if (diagnosticsContent) diagnosticsContent.classList.toggle("hidden", !showDiagnostics);
+
+    const diagnosticsHint = byId("settingsDiagnosticsHint");
+    if (diagnosticsHint) diagnosticsHint.classList.toggle("hidden", showDiagnostics);
 }
 
 function renderSettingsSubtabs() {
@@ -1237,6 +1248,90 @@ async function autoDetectSettingsPage() {
     applySettingsToForm(result.settings);
     markSettingsDirty(true);
     setSettingsStatus(result.message);
+}
+
+async function detectModsPathSettings() {
+    const result = await window.spikeApi.autoDetectSettings();
+    const detectedModsPath = String(result?.settings?.modsPath || "").trim();
+    if (!detectedModsPath) {
+        setSettingsStatus("Could not detect a Stellaris mods path.");
+        return;
+    }
+
+    setInputValue("settingsModsPathInput", detectedModsPath);
+    markSettingsDirty(true);
+    setSettingsStatus(`Detected mods path: ${detectedModsPath}`);
+}
+
+async function detectWorkshopRuntimeSettings() {
+    const result = await window.spikeApi.autoDetectSettings();
+    const detectedRuntime = String(result?.settings?.workshopDownloadRuntime || "").trim();
+    if (!detectedRuntime) {
+        setSettingsStatus("Could not detect a workshop download runtime.");
+        return;
+    }
+
+    setInputValue("settingsWorkshopRuntimeInput", detectedRuntime);
+    syncSettingsRuntimeVisibility();
+    markSettingsDirty(true);
+    setSettingsStatus(`Detected workshop runtime: ${detectedRuntime}`);
+}
+
+async function autoConfigureSteamCmdSettings() {
+    const result = await window.spikeApi.autoDetectSettings();
+    const detectedSteamCmdPath = String(result?.settings?.steamCmdPath || "").trim();
+    const detectedSteamCmdDownloadPath = String(result?.settings?.steamCmdDownloadPath || "").trim();
+
+    if (!detectedSteamCmdPath && !detectedSteamCmdDownloadPath) {
+        setSettingsStatus("Could not auto-configure SteamCMD from detected locations.");
+        return;
+    }
+
+    if (detectedSteamCmdPath) setInputValue("settingsSteamCmdPathInput", detectedSteamCmdPath);
+    if (detectedSteamCmdDownloadPath) setInputValue("settingsSteamCmdDownloadPathInput", detectedSteamCmdDownloadPath);
+
+    const detectedRuntime = String(result?.settings?.workshopDownloadRuntime || "").trim();
+    if (detectedRuntime) setInputValue("settingsWorkshopRuntimeInput", detectedRuntime);
+
+    syncSettingsRuntimeVisibility();
+    markSettingsDirty(true);
+    setSettingsStatus("SteamCMD auto-configuration applied. Review and save settings.");
+}
+
+async function ensurePublicUsernameConfigured() {
+    if (state.usernamePromptShown) {
+        return;
+    }
+
+    const configuredUsername = String(state.settingsModel?.publicProfileUsername || "").trim();
+    if (configuredUsername) {
+        state.usernamePromptShown = true;
+        return;
+    }
+
+    state.usernamePromptShown = true;
+
+    const enteredUsername = await showPrompt(
+        "Configure Public Username",
+        "A public username is required for profile sharing and community reporting. Enter one now:",
+        ""
+    );
+
+    if (enteredUsername === null) {
+        setSettingsStatus("Public username is not configured yet.");
+        return;
+    }
+
+    const normalizedUsername = enteredUsername.trim();
+    if (!normalizedUsername) {
+        setSettingsStatus("Public username is required. You can set it in Settings > General.");
+        return;
+    }
+
+    setInputValue("settingsPublicProfileInput", normalizedUsername);
+    markSettingsDirty(true);
+    await saveSettingsPage();
+    setSettingsStatus("Public username configured.");
 }
 
 /* ============================================================
@@ -2183,7 +2278,6 @@ function hookVersionControls() {
 
 function hookSettingsControls() {
     byId("refreshSettings")?.addEventListener("click", () => void refreshSettingsPage());
-    byId("autoDetectSettings")?.addEventListener("click", () => void autoDetectSettingsPage());
     byId("validateSettings")?.addEventListener("click", () => void validateSettingsPage());
     byId("saveSettings")?.addEventListener("click", () => void saveSettingsPage());
 
@@ -2207,11 +2301,14 @@ function hookSettingsControls() {
     }
 
     const dirtyCheckboxes = [
-        "settingsAutoDetectGameInput", "settingsWarnBeforeRestartInput",
+        "settingsWarnBeforeRestartInput",
         "settingsDeveloperModeInput", "settingsAutoUpdatesInput"
     ];
     for (const id of dirtyCheckboxes) {
-        byId(id)?.addEventListener("change", () => markSettingsDirty(true));
+        byId(id)?.addEventListener("change", () => {
+            markSettingsDirty(true);
+            if (id === "settingsDeveloperModeInput") syncDeveloperDiagnosticsVisibility();
+        });
     }
 
     byId("settingsGamePathBrowse")?.addEventListener("click", async () => {
@@ -2227,6 +2324,10 @@ function hookSettingsControls() {
         setInputValue("settingsGamePathInput", selectedPath);
         markSettingsDirty(true);
     });
+
+    byId("settingsDetectModsPath")?.addEventListener("click", () => void detectModsPathSettings());
+    byId("settingsDetectWorkshopRuntime")?.addEventListener("click", () => void detectWorkshopRuntimeSettings());
+    byId("settingsAutoConfigureSteamCmd")?.addEventListener("click", () => void autoConfigureSteamCmdSettings());
 }
 
 function hookLibraryControls() {
@@ -2517,6 +2618,9 @@ function hookAppUpdateControls() {
     byId("updateBannerDismiss")?.addEventListener("click", () => {
         byId("updateBanner")?.classList.add("hidden");
     });
+    byId("updateBannerBackdrop")?.addEventListener("click", () => {
+        byId("updateBanner")?.classList.add("hidden");
+    });
 
     byId("settingsCheckUpdateBtn")?.addEventListener("click", () => void checkForAppUpdates("manual"));
     byId("settingsDownloadUpdateBtn")?.addEventListener("click", () => void launchAppUpdateFlow());
@@ -2573,6 +2677,11 @@ function hookGlobalControls() {
             const overlay = byId("modalOverlay");
             if (overlay && !overlay.classList.contains("hidden")) {
                 overlay.classList.add("hidden");
+            } else {
+                const updatePopup = byId("updateBanner");
+                if (updatePopup && !updatePopup.classList.contains("hidden")) {
+                    updatePopup.classList.add("hidden");
+                }
             }
             return;
         }
@@ -2624,6 +2733,8 @@ async function init() {
         refreshStellarisyncStatus(),
         refreshGameRunningStatus()
     ]);
+
+    await ensurePublicUsernameConfigured();
 
     // Auto-scan local mods on startup
     setLibraryStatus("Auto-scanning local mods...");

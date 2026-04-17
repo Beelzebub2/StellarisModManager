@@ -156,6 +156,97 @@ function getDefaultModsPath(): string {
     return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
 }
 
+function dedupePaths(paths: Array<string | undefined>): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const value of paths) {
+        if (!value) {
+            continue;
+        }
+
+        const normalized = path.normalize(value);
+        const key = process.platform === "win32" ? normalized.toLowerCase() : normalized;
+        if (seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        result.push(normalized);
+    }
+
+    return result;
+}
+
+function findSteamCmdExecutable(discovery: ReturnType<typeof discoverSteamLibraries>): string | undefined {
+    const envDirect = dedupePaths([
+        coerceString(process.env.STEAMCMD_PATH),
+        coerceString(process.env.STEAMCMD),
+        coerceString(process.env.STEAMCMDEXE)
+    ]);
+
+    for (const candidate of envDirect) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    const roots = dedupePaths([
+        ...discovery.existingSteamRoots,
+        ...discovery.libraries.map((entry) => entry.path),
+        getLegacyPaths().productDir,
+        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Steam"),
+        path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Steam")
+    ]);
+
+    const executableNames = process.platform === "win32"
+        ? ["steamcmd.exe"]
+        : ["steamcmd.sh", "steamcmd"];
+
+    for (const root of roots) {
+        const folders = [
+            root,
+            path.join(root, "steamcmd"),
+            path.join(root, "steamapps", "common", "Steamworks SDK", "tools", "ContentBuilder", "builder"),
+            path.join(root, "tools", "ContentBuilder", "builder")
+        ];
+
+        for (const folder of folders) {
+            for (const executable of executableNames) {
+                const candidate = path.join(folder, executable);
+                if (fs.existsSync(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function resolveSteamCmdDownloadPath(
+    currentPath: string | undefined,
+    steamCmdPath: string | undefined,
+    discovery: ReturnType<typeof discoverSteamLibraries>
+): string | undefined {
+    const existing = coerceString(currentPath);
+    if (existing) {
+        return existing;
+    }
+
+    const executableDir = steamCmdPath ? path.dirname(steamCmdPath) : undefined;
+    if (executableDir && fs.existsSync(executableDir)) {
+        return executableDir;
+    }
+
+    const firstSteamRoot = discovery.existingSteamRoots[0];
+    if (firstSteamRoot) {
+        return firstSteamRoot;
+    }
+
+    return undefined;
+}
+
 function readSettingsRaw(): unknown | null {
     const { settingsPath } = getLegacyPaths();
     if (!fs.existsSync(settingsPath)) {
@@ -245,28 +336,26 @@ export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
         current.modsPath = getDefaultModsPath();
     }
 
-    if (!coerceString(current.steamCmdDownloadPath)) {
-        const firstSteamRoot = discovery.existingSteamRoots[0];
-        if (firstSteamRoot) {
-            current.steamCmdDownloadPath = firstSteamRoot;
-        }
+    const currentSteamCmdPath = coerceString(current.steamCmdPath);
+    const detectedSteamCmdPath = (currentSteamCmdPath && fs.existsSync(currentSteamCmdPath))
+        ? currentSteamCmdPath
+        : findSteamCmdExecutable(discovery);
+
+    if (detectedSteamCmdPath) {
+        current.steamCmdPath = detectedSteamCmdPath;
     }
 
-    if (!coerceString(current.steamCmdPath)) {
-        const searchRoots = [
-            discovery.existingSteamRoots[0],
-            getLegacyPaths().productDir,
-            path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Steam"),
-            path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Steam")
-        ].filter((entry): entry is string => Boolean(entry));
+    const detectedSteamCmdDownloadPath = resolveSteamCmdDownloadPath(
+        current.steamCmdDownloadPath,
+        detectedSteamCmdPath,
+        discovery
+    );
+    if (detectedSteamCmdDownloadPath) {
+        current.steamCmdDownloadPath = detectedSteamCmdDownloadPath;
+    }
 
-        for (const root of searchRoots) {
-            const candidate = path.join(root, "steamcmd.exe");
-            if (fs.existsSync(candidate)) {
-                current.steamCmdPath = candidate;
-                break;
-            }
-        }
+    if (detectedSteamCmdPath && normalizeRuntime(coerceString(current.workshopDownloadRuntime)) === "Auto") {
+        current.workshopDownloadRuntime = "SteamCmd";
     }
 
     return {

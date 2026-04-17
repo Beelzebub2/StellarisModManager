@@ -83,14 +83,50 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     }
 
     let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    match install::launch(&dl.file_path) {
-        Ok(()) => {
-            let _ = tx.send(UpdateEvent::Done);
-        }
+    std::thread::sleep(std::time::Duration::from_millis(350));
+
+    let mut installer = match install::launch_background(&dl.file_path) {
+        Ok(p) => p,
         Err(e) => {
             log::error(&format!("installer launch failed: {e}"));
             let _ = tx.send(UpdateEvent::Failed(e));
+            return;
+        }
+    };
+
+    let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
+    let wait_result = installer.wait_with_progress(&cancel, |elapsed_secs| {
+        let progress = synthetic_install_progress(elapsed_secs);
+        let _ = tx.send(UpdateEvent::InstallProgress {
+            progress,
+            elapsed_secs,
+        });
+    });
+
+    match wait_result {
+        Ok(0) => {
+            let _ = tx.send(UpdateEvent::InstallProgress {
+                progress: 1.0,
+                elapsed_secs: 0,
+            });
+            let _ = tx.send(UpdateEvent::Done);
+        }
+        Ok(code) => {
+            let msg = format!("Installer exited with code {code}.");
+            log::error(&msg);
+            let _ = tx.send(UpdateEvent::Failed(msg));
+        }
+        Err(e) => {
+            log::error(&format!("installer execution failed: {e}"));
+            let _ = tx.send(UpdateEvent::Failed(e));
         }
     }
+}
+
+fn synthetic_install_progress(elapsed_secs: u64) -> f32 {
+    // We cannot query Inno's internal step percent, so we show a smooth asymptotic ramp
+    // that keeps moving until process completion, then jumps to 100% on success.
+    let t = elapsed_secs as f32;
+    let eased = 1.0 - f32::exp(-t / 16.0);
+    (0.06 + eased * 0.88).clamp(0.06, 0.94)
 }

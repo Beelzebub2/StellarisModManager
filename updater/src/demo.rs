@@ -74,6 +74,21 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
     sleep_cancellable(scale(1000), &cancel);
 
+    // Installing (~5s, synthetic process tracking)
+    let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
+    let isteps = 50u64;
+    for i in 0..=isteps {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let p = (i as f32) / (isteps as f32);
+        let _ = tx.send(UpdateEvent::InstallProgress {
+            progress: p,
+            elapsed_secs: i / 10,
+        });
+        sleep_cancellable(scale(100), &cancel);
+    }
+
     let _ = tx.send(UpdateEvent::Done);
 }
 
@@ -97,6 +112,13 @@ fn pin_phase(phase: DemoPhase, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>)
         }
         DemoPhase::Launching => {
             let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
+        }
+        DemoPhase::Installing => {
+            let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
+            let _ = tx.send(UpdateEvent::InstallProgress {
+                progress: 0.52,
+                elapsed_secs: 18,
+            });
         }
         DemoPhase::Done => {
             let _ = tx.send(UpdateEvent::Done);

@@ -42,6 +42,7 @@ pub enum DemoPhase {
     Downloading,
     Verifying,
     Launching,
+    Installing,
     Done,
     Failed,
 }

@@ -6,6 +6,7 @@ pub enum Phase {
     Downloading,
     Verifying,
     Launching,
+    Installing,
 }
 
 #[derive(Debug, Clone)]
@@ -18,6 +19,10 @@ pub enum UpdateEvent {
         eta_secs: u64,
     },
     VerifyProgress(f32),
+    InstallProgress {
+        progress: f32,
+        elapsed_secs: u64,
+    },
     Done,
     Failed(String),
 }

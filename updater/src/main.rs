@@ -13,6 +13,7 @@ mod verify;
 mod worker;
 
 use std::sync::mpsc;
+use std::{fs, io::Cursor};
 
 use clap::Parser;
 use eframe::egui;
@@ -46,16 +47,17 @@ fn main() -> eframe::Result<()> {
         worker::spawn_real(cli.clone(), tx)
     };
 
-    let icon = load_window_icon();
-
-    let viewport = egui::ViewportBuilder::default()
+    let mut viewport = egui::ViewportBuilder::default()
         .with_title("Stellaris Mod Manager — Update")
         .with_inner_size([520.0, 330.0])
         .with_min_inner_size([520.0, 330.0])
         .with_resizable(false)
-        .with_decorations(true)
-        .with_maximize_button(false)
-        .with_icon(icon.unwrap_or_default());
+        .with_decorations(false)
+        .with_maximize_button(false);
+
+    if let Some(icon) = load_window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
 
     let options = eframe::NativeOptions {
         viewport,
@@ -73,19 +75,26 @@ fn main() -> eframe::Result<()> {
 }
 
 fn load_window_icon() -> Option<egui::IconData> {
-    // The .ico is embedded in the binary via assets/app.rc for the taskbar,
-    // but egui needs raw RGBA for its viewport icon. We attempt to read the
-    // bundled icon from alongside the exe; if missing, skip.
-    let exe = std::env::current_exe().ok()?;
-    let ico = exe.parent()?.join("app.ico");
-    let bytes = std::fs::read(&ico).ok()?;
-    decode_ico(&bytes)
+    decode_ico(include_bytes!("../assets/app.ico")).or_else(|| {
+        // Fallback to sidecar app.ico for local/dev launches.
+        let exe = std::env::current_exe().ok()?;
+        let ico = exe.parent()?.join("app.ico");
+        let bytes = fs::read(&ico).ok()?;
+        decode_ico(&bytes)
+    })
 }
 
-fn decode_ico(_bytes: &[u8]) -> Option<egui::IconData> {
-    // egui does not ship an .ico decoder. Leaving this as None means the
-    // Windows embedded RT_ICON (from app.rc) still provides the exe icon and
-    // taskbar icon. We skip setting a runtime viewport icon to avoid pulling
-    // in the `image` crate for ~nothing.
-    None
+fn decode_ico(bytes: &[u8]) -> Option<egui::IconData> {
+    let image = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?
+        .to_rgba8();
+
+    Some(egui::IconData {
+        width: image.width(),
+        height: image.height(),
+        rgba: image.into_raw(),
+    })
 }

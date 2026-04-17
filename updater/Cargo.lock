@@ -2509,6 +2509,7 @@ dependencies = [
  "egui",
  "embed-resource",
  "hex",
+ "image",
  "log",
  "sha2",
  "ureq",

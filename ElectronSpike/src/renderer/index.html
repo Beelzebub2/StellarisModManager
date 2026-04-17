@@ -37,20 +37,24 @@
             </div>
         </header>
 
-        <!-- ==================== UPDATE BANNER ==================== -->
-        <div id="updateBanner" class="update-banner hidden" role="alert">
-            <div class="update-banner-content">
-                <span class="update-banner-icon" data-icon="download"></span>
-                <span class="update-banner-text">
-                    <strong id="updateBannerVersion">Update available</strong>
-                    <span id="updateBannerMessage" class="muted">A new version is ready to install.</span>
-                </span>
-            </div>
-            <div class="update-banner-actions">
-                <button id="updateBannerUpdate" type="button">Update now</button>
-                <button id="updateBannerSkip" type="button" class="button-secondary">Skip this version</button>
-                <button id="updateBannerDismiss" type="button" class="button-secondary">Dismiss</button>
-            </div>
+        <!-- ==================== UPDATE POPUP ==================== -->
+        <div id="updateBanner" class="update-popup hidden" role="alertdialog" aria-modal="true"
+            aria-labelledby="updateBannerVersion" aria-describedby="updateBannerMessage">
+            <div id="updateBannerBackdrop" class="update-popup-backdrop"></div>
+            <section class="update-popup-dialog">
+                <header class="update-popup-header">
+                    <span class="update-popup-icon" data-icon="download"></span>
+                    <div class="update-popup-heading">
+                        <strong id="updateBannerVersion">Update available</strong>
+                        <span id="updateBannerMessage" class="muted">A new version is ready to install.</span>
+                    </div>
+                </header>
+                <div class="update-popup-actions">
+                    <button id="updateBannerUpdate" type="button">Update now</button>
+                    <button id="updateBannerSkip" type="button" class="button-secondary">Skip this version</button>
+                    <button id="updateBannerDismiss" type="button" class="button-secondary">Dismiss</button>
+                </div>
+            </section>
         </div>
 
         <!-- ==================== WORKSPACE ==================== -->
@@ -462,7 +466,6 @@
                         </div>
                         <div class="hero-metrics">
                             <button id="refreshSettings" type="button" class="button-secondary">Refresh</button>
-                            <button id="autoDetectSettings" type="button" class="button-secondary">Auto detect</button>
                         </div>
                     </header>
 
@@ -501,14 +504,14 @@
                                     </div>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsModsPathInput">Mods path</label>
-                                        <input id="settingsModsPathInput" class="field-input mono" type="text"
-                                            placeholder="Path to Paradox mods folder" />
+                                        <div class="path-picker-row">
+                                            <input id="settingsModsPathInput" class="field-input mono" type="text"
+                                                placeholder="Path to Paradox mods folder" />
+                                            <button id="settingsDetectModsPath" type="button"
+                                                class="button-secondary">Detect</button>
+                                        </div>
                                     </div>
                                     <div class="settings-inline-actions">
-                                        <label class="toggle-row" for="settingsAutoDetectGameInput">
-                                            <input id="settingsAutoDetectGameInput" type="checkbox" />
-                                            <span>Auto detect on startup</span>
-                                        </label>
                                         <label class="toggle-row" for="settingsWarnBeforeRestartInput">
                                             <input id="settingsWarnBeforeRestartInput" type="checkbox" />
                                             <span>Show restart warning</span>
@@ -532,6 +535,12 @@
                             <section id="settingsTabWorkshop" class="settings-panel hidden">
                                 <article class="settings-card">
                                     <h3>Workshop Download Runtime</h3>
+                                    <div class="settings-inline-actions">
+                                        <button id="settingsDetectWorkshopRuntime" type="button"
+                                            class="button-secondary">Detect runtime</button>
+                                        <button id="settingsAutoConfigureSteamCmd" type="button"
+                                            class="button-secondary">Auto configure SteamCMD</button>
+                                    </div>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsWorkshopRuntimeInput">Runtime</label>
                                         <select id="settingsWorkshopRuntimeInput" class="field-input"></select>
@@ -597,6 +606,10 @@
                                         <p id="settingsSkippedVersionText" class="settings-value">--</p>
                                     </div>
                                 </article>
+                            </section>
+
+                            <!-- Advanced Tab -->
+                            <section id="settingsTabAdvanced" class="settings-panel hidden">
                                 <article class="settings-card">
                                     <h3>Compatibility Reporter</h3>
                                     <div class="field-col">
@@ -605,18 +618,18 @@
                                             placeholder="Compatibility reporter ID" />
                                     </div>
                                 </article>
-                            </section>
-
-                            <!-- Advanced Tab -->
-                            <section id="settingsTabAdvanced" class="settings-panel hidden">
                                 <article class="settings-card">
                                     <h3>Diagnostics</h3>
                                     <label class="toggle-row" for="settingsDeveloperModeInput">
                                         <input id="settingsDeveloperModeInput" type="checkbox" />
                                         <span>Developer mode</span>
                                     </label>
-                                    <pre id="runtime">Loading...</pre>
-                                    <pre id="db">Loading...</pre>
+                                    <p id="settingsDiagnosticsHint" class="muted">Enable Developer mode to view runtime
+                                        diagnostics.</p>
+                                    <div id="settingsDiagnosticsContent" class="hidden">
+                                        <pre id="runtime">Loading...</pre>
+                                        <pre id="db">Loading...</pre>
+                                    </div>
                                 </article>
                             </section>
                         </div>

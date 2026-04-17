@@ -14,8 +14,9 @@ This process owns the download, integrity check, and installer hand-off.
   three times with exponential backoff.
 - **Integrity:** SHA-256 (`sha2` crate). If no hash is supplied, the check is
   skipped and a warning is logged.
-- **Installer launch:** The Inno Setup installer is spawned detached; UAC is
-  triggered by the installer's own manifest. The updater exits shortly after.
+- **Installer execution:** The Inno Setup installer is launched in silent
+  background mode; the updater keeps the window open and shows install-phase
+  progress until the installer process exits.
 - **Logs:** `%LOCALAPPDATA%\StellarisModManager\updater.log`.
 
 ## Usage
@@ -45,6 +46,7 @@ smm-updater.exe --demo --phase connecting
 smm-updater.exe --demo --phase downloading
 smm-updater.exe --demo --phase verifying
 smm-updater.exe --demo --phase launching
+smm-updater.exe --demo --phase installing
 smm-updater.exe --demo --phase done
 smm-updater.exe --demo --phase failed
 ```
@@ -60,7 +62,7 @@ cargo run --release -- --demo
 Pass criteria:
 
 - The updater window appears and advances through Connecting, Downloading,
-  Verifying, Launching, then Done.
+  Verifying, Launching, Installing, then Done.
 - The window auto-closes shortly after Done.
 - `%LOCALAPPDATA%\StellarisModManager\updater.log` contains a fresh
   `mode=demo` startup line.
