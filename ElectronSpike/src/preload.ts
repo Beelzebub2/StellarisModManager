@@ -35,7 +35,10 @@ import type {
     SteamCmdProbeStatus,
     SystemSummary,
     WorkshopBrowserQuery,
-    WorkshopBrowserResult
+    WorkshopBrowserResult,
+    AppUpdateCheckResult,
+    AppUpdateDownloadProgress,
+    AppUpdateDownloadResult
 } from "./shared/types";
 
 const api: SpikeApi = {
@@ -162,6 +165,24 @@ const api: SpikeApi = {
         ipcRenderer.on("spike:downloadQueueEvent", listener);
         return () => {
             ipcRenderer.removeListener("spike:downloadQueueEvent", listener);
+        };
+    },
+    checkAppUpdate: () =>
+        ipcRenderer.invoke("spike:checkAppUpdate") as Promise<AppUpdateCheckResult>,
+    downloadAppUpdate: (downloadUrl: string, version: string) =>
+        ipcRenderer.invoke("spike:downloadAppUpdate", downloadUrl, version) as Promise<AppUpdateDownloadResult>,
+    launchAppUpdate: (installerPath: string) =>
+        ipcRenderer.invoke("spike:launchAppUpdate", installerPath) as Promise<boolean>,
+    skipAppVersion: (version: string) =>
+        ipcRenderer.invoke("spike:skipAppVersion", version) as Promise<SettingsSaveResult>,
+    onAppUpdateProgress: (handler: (progress: AppUpdateDownloadProgress) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+            handler(payload as AppUpdateDownloadProgress);
+        };
+
+        ipcRenderer.on("spike:appUpdateProgress", listener);
+        return () => {
+            ipcRenderer.removeListener("spike:appUpdateProgress", listener);
         };
     }
 };

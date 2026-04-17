@@ -37,6 +37,29 @@
             </div>
         </header>
 
+        <!-- ==================== UPDATE BANNER ==================== -->
+        <div id="updateBanner" class="update-banner hidden" role="alert">
+            <div class="update-banner-content">
+                <span class="update-banner-icon" data-icon="download"></span>
+                <span class="update-banner-text">
+                    <strong id="updateBannerVersion">Update available</strong>
+                    <span id="updateBannerMessage" class="muted">A new version is ready to download.</span>
+                </span>
+            </div>
+            <div class="update-banner-actions">
+                <button id="updateBannerDownload" type="button">Download</button>
+                <button id="updateBannerDismiss" type="button" class="button-secondary">Dismiss</button>
+            </div>
+            <!-- Inline download progress -->
+            <div id="updateBannerProgress" class="update-banner-progress hidden">
+                <div class="update-progress-bar update-progress-bar-compact">
+                    <span id="updateBannerProgressFill" style="width: 0%"></span>
+                </div>
+                <span id="updateBannerProgressText" class="update-banner-progress-text">0%</span>
+                <button id="updateBannerInstall" type="button" class="hidden">Install now</button>
+            </div>
+        </div>
+
         <!-- ==================== WORKSPACE ==================== -->
         <section class="workspace">
             <!-- ---- SIDEBAR ---- -->
@@ -529,17 +552,60 @@
                                     <div class="settings-inline-actions">
                                         <label class="toggle-row" for="settingsAutoUpdatesInput">
                                             <input id="settingsAutoUpdatesInput" type="checkbox" />
-                                            <span>Auto-check updates</span>
+                                            <span>Auto-check for updates on startup</span>
                                         </label>
+                                        <button id="settingsCheckUpdateBtn" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="check"></span> Check now
+                                        </button>
                                     </div>
+                                    <p id="settingsUpdateStatus" class="muted">Not checked yet.</p>
+
+                                    <!-- Update available card (hidden by default) -->
+                                    <div id="settingsUpdateAvailable" class="update-available-card hidden">
+                                        <div class="update-available-header">
+                                            <span class="badge badge-version" id="settingsUpdateVersionBadge">--</span>
+                                            <span class="update-available-title">New version available</span>
+                                        </div>
+                                        <pre id="settingsUpdateChangelog" class="update-changelog"></pre>
+                                        <div class="update-available-actions">
+                                            <button id="settingsDownloadUpdateBtn" type="button">
+                                                <span class="nav-icon" data-icon="download"></span> Download &amp; Install
+                                            </button>
+                                            <button id="settingsSkipVersionBtn" type="button" class="button-secondary">Skip this version</button>
+                                            <button id="settingsViewReleaseBtn" type="button" class="button-secondary">View release</button>
+                                        </div>
+
+                                        <!-- Download progress (hidden until downloading) -->
+                                        <div id="settingsUpdateProgress" class="update-progress hidden">
+                                            <div class="update-progress-header">
+                                                <span id="settingsUpdateProgressText">Downloading...</span>
+                                                <span id="settingsUpdateProgressPercent">0%</span>
+                                            </div>
+                                            <div class="update-progress-bar">
+                                                <span id="settingsUpdateProgressFill" style="width: 0%"></span>
+                                            </div>
+                                            <div class="update-progress-stats">
+                                                <span id="settingsUpdateProgressSpeed">--</span>
+                                                <span id="settingsUpdateProgressEta">--</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div class="settings-kv">
-                                        <p class="settings-key">Last Check (UTC)</p>
+                                        <p class="settings-key">Current version</p>
+                                        <p id="settingsCurrentVersionText" class="settings-value">--</p>
+                                        <p class="settings-key">Last check</p>
                                         <p id="settingsLastCheckUtcText" class="settings-value">Never</p>
-                                        <p class="settings-key">Last Offered Version</p>
-                                        <p id="settingsLastOfferedVersionText" class="settings-value">Not set</p>
-                                        <p class="settings-key">Skipped Version</p>
-                                        <p id="settingsSkippedVersionText" class="settings-value">Not set</p>
-                                        <p class="settings-key">Reporter ID</p>
+                                        <p class="settings-key">Last offered version</p>
+                                        <p id="settingsLastOfferedVersionText" class="settings-value">--</p>
+                                        <p class="settings-key">Skipped version</p>
+                                        <p id="settingsSkippedVersionText" class="settings-value">--</p>
+                                    </div>
+                                </article>
+                                <article class="settings-card">
+                                    <h3>Compatibility Reporter</h3>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsReporterIdInput">Reporter ID</label>
                                         <input id="settingsReporterIdInput" class="field-input mono" type="text"
                                             placeholder="Compatibility reporter ID" />
                                     </div>

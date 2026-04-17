@@ -385,6 +385,41 @@ export interface StellarisyncStatus {
     checkedAtUtc: string;
 }
 
+export interface AppReleaseInfo {
+    version: string;
+    changelog: string | null;
+    critical: boolean;
+    downloadUrl: string;
+    releaseUrl: string;
+    releasedAt: string;
+}
+
+export interface AppUpdateCheckResult {
+    ok: boolean;
+    message: string;
+    hasUpdate: boolean;
+    release: AppReleaseInfo | null;
+    currentVersion: string;
+    checkedAtUtc: string;
+}
+
+export interface AppUpdateDownloadProgress {
+    phase: "downloading" | "completed" | "failed";
+    percent: number;
+    downloadedBytes: number;
+    totalBytes: number;
+    bytesPerSecond: number;
+    etaSeconds: number;
+    message: string;
+    installerPath: string | null;
+}
+
+export interface AppUpdateDownloadResult {
+    ok: boolean;
+    message: string;
+    installerPath: string | null;
+}
+
 export type ModActionState = "not-installed" | "queued" | "installing" | "installed" | "uninstalling" | "error";
 
 export interface DownloadQueueItem {
@@ -485,4 +520,9 @@ export interface SpikeApi {
     clearDownloadHistory: (workshopIds?: string[]) => Promise<DownloadQueueCommandResult>;
     getInstalledWorkshopIds: () => Promise<string[]>;
     onDownloadQueueEvent: (handler: (event: DownloadQueueEvent) => void) => () => void;
+    checkAppUpdate: () => Promise<AppUpdateCheckResult>;
+    downloadAppUpdate: (downloadUrl: string, version: string) => Promise<AppUpdateDownloadResult>;
+    launchAppUpdate: (installerPath: string) => Promise<boolean>;
+    skipAppVersion: (version: string) => Promise<SettingsSaveResult>;
+    onAppUpdateProgress: (handler: (progress: AppUpdateDownloadProgress) => void) => () => void;
 }
