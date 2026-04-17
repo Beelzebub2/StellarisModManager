@@ -4,6 +4,8 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https: http://127.0.0.1:* http://localhost:*; frame-src https://steamcommunity.com https://store.steampowered.com; object-src 'none'; base-uri 'self'; form-action 'self'" />
     <title>Stellaris Mod Manager</title>
     <link rel="stylesheet" href="styles.css" />
 </head>
@@ -170,18 +172,27 @@
                             <button id="libraryCheckUpdates" type="button" class="button-secondary">
                                 <span class="nav-icon" data-icon="check"></span> Check updates
                             </button>
-                            <button id="libraryReinstallAll" type="button" class="button-secondary">
-                                <span class="nav-icon" data-icon="reinstall"></span> Reinstall all
-                            </button>
-                            <button id="libraryExport" type="button" class="button-secondary">
-                                <span class="nav-icon" data-icon="export"></span> Export
-                            </button>
-                            <button id="libraryImport" type="button" class="button-secondary">
-                                <span class="nav-icon" data-icon="import"></span> Import
-                            </button>
-                            <button id="libraryScanLocal" type="button" class="button-secondary">
-                                <span class="nav-icon" data-icon="scan"></span> Scan local
-                            </button>
+                            <details class="library-menu" id="libraryBulkActionsMenu">
+                                <summary class="library-menu-trigger button-secondary">
+                                    <span class="nav-icon" data-icon="settings"></span>
+                                    Library actions
+                                    <span class="library-menu-caret" data-icon="chevronDown"></span>
+                                </summary>
+                                <div class="library-menu-panel">
+                                    <button id="libraryReinstallAll" type="button" class="button-secondary">
+                                        <span class="nav-icon" data-icon="reinstall"></span> Reinstall all
+                                    </button>
+                                    <button id="libraryExport" type="button" class="button-secondary">
+                                        <span class="nav-icon" data-icon="export"></span> Export list
+                                    </button>
+                                    <button id="libraryImport" type="button" class="button-secondary">
+                                        <span class="nav-icon" data-icon="import"></span> Import list
+                                    </button>
+                                    <button id="libraryScanLocal" type="button" class="button-secondary">
+                                        <span class="nav-icon" data-icon="scan"></span> Scan local mods
+                                    </button>
+                                </div>
+                            </details>
                         </div>
                     </section>
 
@@ -192,30 +203,50 @@
                                 <select id="libraryProfileSelect" class="field-input"></select>
                             </div>
                             <div class="library-profile-actions">
-                                <button id="libraryNewProfile" type="button" class="button-secondary">
-                                    <span class="nav-icon" data-icon="plus"></span> New
-                                </button>
-                                <button id="libraryRenameProfile" type="button" class="button-secondary">
-                                    <span class="nav-icon" data-icon="edit"></span> Rename
-                                </button>
-                                <button id="libraryDeleteProfile" type="button" class="button-secondary">
-                                    <span class="nav-icon" data-icon="trash"></span> Delete
-                                </button>
+                                <details class="library-menu" id="libraryProfileActionsMenu">
+                                    <summary class="library-menu-trigger button-secondary">
+                                        <span class="nav-icon" data-icon="edit"></span>
+                                        Profile actions
+                                        <span class="library-menu-caret" data-icon="chevronDown"></span>
+                                    </summary>
+                                    <div class="library-menu-panel">
+                                        <button id="libraryNewProfile" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="plus"></span> New profile
+                                        </button>
+                                        <button id="libraryRenameProfile" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="edit"></span> Rename profile
+                                        </button>
+                                        <button id="libraryDeleteProfile" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="trash"></span> Delete profile
+                                        </button>
+                                    </div>
+                                </details>
                             </div>
                         </div>
-                        <div class="library-profile-row">
+                        <div class="library-profile-row library-profile-row-shared">
                             <div class="field-col grow">
-                                <label class="field-label" for="librarySharedProfileId">Shared profile ID</label>
-                                <input id="librarySharedProfileId" class="field-input" type="text"
-                                    placeholder="Paste a shared profile ID to import" />
+                                <label class="field-label">Shared profile ID</label>
+                                <div id="librarySharedProfileValue" class="library-shared-value mono is-empty"
+                                    title="No shared profile ID set">
+                                    No shared profile ID set
+                                </div>
                             </div>
                             <div class="library-profile-actions">
-                                <button id="libraryUseSharedId" type="button" class="button-secondary">
-                                    <span class="nav-icon" data-icon="link"></span> Use ID
-                                </button>
-                                <button id="libraryShareProfile" type="button" class="button-secondary">
-                                    <span class="nav-icon" data-icon="share"></span> Share
-                                </button>
+                                <details class="library-menu" id="librarySharedActionsMenu">
+                                    <summary class="library-menu-trigger button-secondary">
+                                        <span class="nav-icon" data-icon="share"></span>
+                                        Shared ID
+                                        <span class="library-menu-caret" data-icon="chevronDown"></span>
+                                    </summary>
+                                    <div class="library-menu-panel">
+                                        <button id="libraryUseSharedId" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="link"></span> Use shared ID
+                                        </button>
+                                        <button id="libraryShareProfile" type="button" class="button-secondary">
+                                            <span class="nav-icon" data-icon="share"></span> Copy shared ID
+                                        </button>
+                                    </div>
+                                </details>
                             </div>
                         </div>
                     </section>
@@ -331,8 +362,7 @@
                         </div>
                         <webview id="workshopWebview"
                             src="https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90"
-                            class="workshop-webview" partition="persist:workshop" allowpopups
-                            preload="../webviewPreload.js"
+                            class="workshop-webview" partition="persist:workshop" preload="../webviewPreload.js"
                             useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36">
                         </webview>
                     </div>

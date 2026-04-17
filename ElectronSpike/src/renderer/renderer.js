@@ -345,8 +345,63 @@ function actionIntent(actionState) {
     return actionState === "installed" ? "uninstall" : "install";
 }
 
+function actionButtonClass(actionState) {
+    switch (actionState) {
+        case "installed":
+            return "mod-action-btn mod-action-installed";
+        case "queued":
+        case "installing":
+            return "mod-action-btn mod-action-installing";
+        case "uninstalling":
+            return "mod-action-btn mod-action-uninstalling";
+        case "error":
+            return "mod-action-btn mod-action-error";
+        default:
+            return "mod-action-btn mod-action-install";
+    }
+}
+
 function actionIsDisabled(actionState) {
     return actionState === "queued" || actionState === "installing" || actionState === "uninstalling";
+}
+
+function normalizeDetectedGameVersion(rawVersion) {
+    const value = String(rawVersion || "").trim();
+    if (!value) return null;
+
+    const match = value.match(/(\d+)\.(\d+)(?:\.\d+)?/);
+    if (!match) return null;
+
+    return `${match[1]}.${match[2]}`;
+}
+
+async function bootstrapSelectedVersionFromSettings() {
+    try {
+        const settings = await window.spikeApi.getSettings();
+        const detected = normalizeDetectedGameVersion(settings?.lastDetectedGameVersion);
+        if (detected) {
+            state.selectedVersion = detected;
+        }
+    } catch {
+        // keep default selected version
+    }
+}
+
+function applyInstalledHoverLabel(button, actionState) {
+    if (!button) return;
+
+    if (actionState === "installed" && !button.disabled) {
+        button.onmouseenter = () => {
+            button.textContent = "Uninstall";
+        };
+        button.onmouseleave = () => {
+            button.textContent = "Installed";
+        };
+        return;
+    }
+
+    button.onmouseenter = null;
+    button.onmouseleave = null;
 }
 
 function cardTemplate(card) {
@@ -370,8 +425,9 @@ function cardTemplate(card) {
                 <p class="mod-meta">${card.totalSubscribers.toLocaleString()} subscribers</p>
                 <div class="mod-footer">
                     <button type="button" data-action="toggle-mod" data-workshop-id="${card.workshopId}"
+                        data-action-state="${card.actionState}"
                         data-intent="${actionIntent(card.actionState)}"
-                        class="${card.actionState === "error" ? "button-secondary" : ""}"
+                        class="${actionButtonClass(card.actionState)}"
                         ${actionIsDisabled(card.actionState) ? "disabled" : ""}>
                         ${actionLabel(card.actionState)}
                     </button>
@@ -415,6 +471,8 @@ function renderCards(cards) {
         });
     }
     for (const btn of container.querySelectorAll("button[data-action='toggle-mod']")) {
+        const actionState = btn.getAttribute("data-action-state") || "not-installed";
+        applyInstalledHoverLabel(btn, actionState);
         btn.addEventListener("click", () => {
             const id = btn.getAttribute("data-workshop-id") || "";
             const intent = btn.getAttribute("data-intent") === "uninstall" ? "uninstall" : "install";
@@ -608,9 +666,16 @@ async function refreshDetailDrawer(workshopId) {
 
     const actionBtn = byId("detailActionButton");
     if (actionBtn) {
-        const intent = detail.actionState === "installed" ? "uninstall" : "install";
-        actionBtn.textContent = intent === "install" ? "Install" : "Uninstall";
+        const intent = actionIntent(detail.actionState);
+        actionBtn.textContent = actionLabel(detail.actionState);
+        actionBtn.className = actionButtonClass(detail.actionState);
         actionBtn.disabled = actionIsDisabled(detail.actionState);
+        actionBtn.title = actionIsDisabled(detail.actionState)
+            ? "Action in progress"
+            : intent === "uninstall"
+                ? "Click to uninstall this mod"
+                : "Click to install this mod";
+        applyInstalledHoverLabel(actionBtn, detail.actionState);
         actionBtn.onclick = () => void queueAction(workshopId, intent, "version");
     }
 
@@ -1008,7 +1073,7 @@ function renderLibraryList() {
 function renderLibraryProfiles() {
     const snapshot = state.library.snapshot;
     const select = byId("libraryProfileSelect");
-    const sharedInput = byId("librarySharedProfileId");
+    const sharedValue = byId("librarySharedProfileValue");
     if (!snapshot || !select) return;
 
     select.innerHTML = snapshot.profiles
@@ -1016,7 +1081,16 @@ function renderLibraryProfiles() {
         .join("");
 
     const active = getActiveLibraryProfile();
-    if (sharedInput) sharedInput.value = active?.sharedProfileId || "";
+    if (sharedValue) {
+        const currentSharedId = (active?.sharedProfileId || "").trim();
+        sharedValue.textContent = currentSharedId || "No shared profile ID set";
+        sharedValue.classList.toggle("is-empty", !currentSharedId);
+        if (currentSharedId) {
+            sharedValue.title = currentSharedId;
+        } else {
+            sharedValue.title = "No shared profile ID set";
+        }
+    }
 
     // Disable delete button when only one profile remains
     const deleteBtn = byId("libraryDeleteProfile");
@@ -1071,6 +1145,32 @@ async function runLibraryCompatibilityReport(worked) {
     setLibraryStatus(result.message);
 }
 
+async function getWorkshopOverlayActionState(workshopId) {
+    try {
+        const [librarySnapshot, queueSnapshot] = await Promise.all([
+            window.spikeApi.getLibrarySnapshot(),
+            window.spikeApi.getVersionQueueSnapshot()
+        ]);
+
+        const activeQueueItem = (queueSnapshot.items || []).find((item) => {
+            if (item.workshopId !== workshopId) return false;
+            return item.status === "queued" || item.status === "running";
+        });
+
+        if (activeQueueItem) {
+            if (activeQueueItem.status === "queued") {
+                return "queued";
+            }
+            return activeQueueItem.action === "uninstall" ? "uninstalling" : "installing";
+        }
+
+        const isInstalled = (librarySnapshot.mods || []).some((mod) => mod.workshopId === workshopId);
+        return isInstalled ? "installed" : "not-installed";
+    } catch {
+        return "error";
+    }
+}
+
 /* ============================================================
    WORKSHOP VIEW
    ============================================================ */
@@ -1117,16 +1217,52 @@ function initWorkshop() {
     });
 
     webview.addEventListener("ipc-message", async (e) => {
-        if (e.channel === "smm-add-workshop-mod") {
-            const workshopId = e.args[0];
+        if (e.channel === "smm-open-url") {
+            const url = String(e.args?.[0] ?? "").trim();
+            if (!url || !url.startsWith("http")) return;
+
+            if (url.includes("steamcommunity.com") || url.includes("store.steampowered.com")) {
+                webview.loadURL(url);
+            } else {
+                void window.spikeApi.openExternalUrl(url);
+            }
+            return;
+        }
+
+        if (e.channel === "smm-query-mod-state") {
+            const workshopId = String(e.args?.[0] ?? "").trim();
             if (!workshopId) return;
-            setLibraryStatus(`Attempting to add mod ${workshopId}...`);
-            // For now, if we don't have a direct 'add workshop mod' endpoint in the api
-            // we can trigger the equivalent. Usually 'importLibraryMods' or 'invoke' something.
-            // Assuming we just alert or call a known steamCmd probe endpoint.
-            setLibraryStatus(`Workshop feature needs steamCmd connection to fetch: ${workshopId}`);
-            // Let's force a snapshot refresh just in case
-            await refreshLibrarySnapshot();
+
+            const actionState = await getWorkshopOverlayActionState(workshopId);
+            webview.send("smm-mod-state", { workshopId, actionState });
+            return;
+        }
+
+        if (e.channel === "smm-toggle-workshop-mod" || e.channel === "smm-add-workshop-mod") {
+            const payload = e.args?.[0];
+
+            const workshopId = typeof payload === "string"
+                ? payload.trim()
+                : String(payload?.workshopId ?? "").trim();
+
+            if (!workshopId) return;
+
+            const action = payload && typeof payload === "object" && payload.action === "uninstall"
+                ? "uninstall"
+                : "install";
+
+            const result = await window.spikeApi.queueVersionModAction({ workshopId, action });
+            setLibraryStatus(result.message);
+
+            await Promise.all([
+                refreshQueueSnapshot(),
+                refreshVersionResults(),
+                refreshLibrarySnapshot()
+            ]);
+
+            const actionState = await getWorkshopOverlayActionState(workshopId);
+            webview.send("smm-mod-state", { workshopId, actionState });
+            return;
         }
     });
 
@@ -1267,6 +1403,39 @@ function hookSettingsControls() {
 }
 
 function hookLibraryControls() {
+    const closeOpenLibraryMenus = (exceptMenu = null) => {
+        for (const menuEl of document.querySelectorAll("details.library-menu[open]")) {
+            if (!(menuEl instanceof HTMLDetailsElement)) continue;
+            if (exceptMenu && menuEl === exceptMenu) continue;
+            menuEl.removeAttribute("open");
+        }
+    };
+
+    for (const menuEl of document.querySelectorAll("details.library-menu")) {
+        if (!(menuEl instanceof HTMLDetailsElement)) continue;
+        menuEl.addEventListener("toggle", () => {
+            if (menuEl.open) {
+                closeOpenLibraryMenus(menuEl);
+            }
+        });
+    }
+
+    document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        if (target.closest("details.library-menu")) return;
+        closeOpenLibraryMenus();
+    });
+
+    for (const button of document.querySelectorAll(".library-menu-panel button")) {
+        button.addEventListener("click", () => {
+            const menu = button.closest("details.library-menu");
+            if (menu instanceof HTMLDetailsElement) {
+                menu.removeAttribute("open");
+            }
+        });
+    }
+
     byId("librarySearchInput")?.addEventListener("input", (e) => {
         state.library.searchText = e.target.value || "";
         renderLibraryList();
@@ -1328,7 +1497,12 @@ function hookLibraryControls() {
     byId("libraryUseSharedId")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
-        const sharedId = getInputValue("librarySharedProfileId");
+        const sharedId = await showPrompt(
+            "Use Shared Profile ID",
+            "Paste the shared profile ID to use for this profile:",
+            active.sharedProfileId || ""
+        );
+        if (sharedId === null) return;
         if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
         const result = await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
         setLibraryStatus(result.message);
@@ -1338,7 +1512,7 @@ function hookLibraryControls() {
     byId("libraryShareProfile")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
-        let sharedId = getInputValue("librarySharedProfileId") || active.sharedProfileId || "";
+        let sharedId = (active.sharedProfileId || "").trim();
         if (!sharedId) {
             sharedId = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
             await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
@@ -1384,7 +1558,13 @@ function hookLibraryControls() {
     byId("libraryActionBroken")?.addEventListener("click", () => void runLibraryCompatibilityReport(false));
     byId("libraryActionWorkshop")?.addEventListener("click", () => {
         const mod = getSelectedLibraryMod();
-        if (mod) void window.spikeApi.openExternalUrl(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`);
+        if (!mod) return;
+        const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`;
+        activateTab("workshop");
+        const webview = byId("workshopWebview");
+        if (webview) webview.loadURL(url);
+        const urlInput = byId("workshopUrl");
+        if (urlInput) urlInput.value = url;
     });
     byId("libraryActionLocation")?.addEventListener("click", async () => {
         const mod = getSelectedLibraryMod();
@@ -1457,6 +1637,8 @@ async function init() {
     }
 
     await applyAppIcon();
+
+    await bootstrapSelectedVersionFromSettings();
 
     // Load all data in parallel
     await Promise.all([

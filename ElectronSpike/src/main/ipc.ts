@@ -124,6 +124,34 @@ function buildSystemSummary(): SystemSummary {
     };
 }
 
+function resolveBundledAppIconPath(): string | null {
+    const candidates = [
+        path.join(app.getAppPath(), "assets", "icon.jpg"),
+        path.join(app.getAppPath(), "assets", "icon.png"),
+        path.join(app.getAppPath(), "assets", "app.ico"),
+        path.join(__dirname, "..", "assets", "icon.jpg"),
+        path.join(__dirname, "..", "assets", "icon.png"),
+        path.join(__dirname, "..", "assets", "app.ico"),
+        path.join(process.resourcesPath, "assets", "icon.jpg"),
+        path.join(process.resourcesPath, "assets", "icon.png"),
+        path.join(process.resourcesPath, "assets", "app.ico")
+    ];
+
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
+}
+
+function toImageMimeType(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === ".png") {
+        return "image/png";
+    }
+    if (ext === ".ico") {
+        return "image/x-icon";
+    }
+
+    return "image/jpeg";
+}
+
 export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.ping);
     ipcMain.removeHandler(CHANNELS.systemSummary);
@@ -373,12 +401,14 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.appIconDataUrl, async () => {
         try {
-            const icon = await app.getFileIcon(process.execPath, { size: "normal" });
-            if (icon.isEmpty()) {
+            const iconPath = resolveBundledAppIconPath();
+            if (!iconPath) {
                 return "";
             }
 
-            return icon.toDataURL();
+            const bytes = fs.readFileSync(iconPath);
+            const mimeType = toImageMimeType(iconPath);
+            return `data:${mimeType};base64,${bytes.toString("base64")}`;
         } catch {
             return "";
         }
