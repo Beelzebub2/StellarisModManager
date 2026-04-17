@@ -4,6 +4,7 @@ import { app, clipboard, dialog, ipcMain, shell } from "electron";
 import type {
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
+    LibraryReorderRequest,
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
@@ -26,6 +27,7 @@ import {
     getLibrarySnapshot,
     importLibraryMods,
     moveLibraryMod,
+    reorderLibraryMod,
     renameLibraryProfile,
     reportLibraryCompatibility,
     scanLocalMods,
@@ -81,6 +83,7 @@ const CHANNELS = {
     librarySetSharedProfileId: "spike:setLibraryProfileSharedId",
     librarySetModEnabled: "spike:setLibraryModEnabled",
     libraryMoveMod: "spike:moveLibraryMod",
+    libraryReorderMod: "spike:reorderLibraryMod",
     libraryUninstallMod: "spike:uninstallLibraryMod",
     libraryCheckUpdates: "spike:checkLibraryUpdates",
     libraryExport: "spike:exportLibraryMods",
@@ -170,6 +173,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.librarySetSharedProfileId);
     ipcMain.removeHandler(CHANNELS.librarySetModEnabled);
     ipcMain.removeHandler(CHANNELS.libraryMoveMod);
+    ipcMain.removeHandler(CHANNELS.libraryReorderMod);
     ipcMain.removeHandler(CHANNELS.libraryUninstallMod);
     ipcMain.removeHandler(CHANNELS.libraryCheckUpdates);
     ipcMain.removeHandler(CHANNELS.libraryExport);
@@ -271,6 +275,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.libraryMoveMod, async (_event, request: LibraryMoveDirectionRequest) => {
         return moveLibraryMod(request);
+    });
+
+    ipcMain.handle(CHANNELS.libraryReorderMod, async (_event, request: LibraryReorderRequest) => {
+        return reorderLibraryMod(request);
     });
 
     ipcMain.handle(CHANNELS.libraryUninstallMod, async (_event, modId: number) => {

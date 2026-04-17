@@ -329,7 +329,7 @@ body.drawer-open {
    ============================================================ */
 .workspace {
     display: grid;
-    grid-template-columns: 260px 1fr;
+    grid-template-columns: minmax(240px, 260px) minmax(0, 1fr);
     gap: 0;
     min-height: 0;
 }
@@ -343,6 +343,7 @@ body.drawer-open {
     grid-template-rows: auto auto 1fr auto;
     gap: 12px;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
 }
 
@@ -401,6 +402,8 @@ body.drawer-open {
     padding: 10px;
     display: grid;
     gap: 6px;
+    min-width: 0;
+    overflow: hidden;
 }
 
 .sidebar-title {
@@ -521,6 +524,7 @@ body.drawer-open {
 
 .queue-list {
     min-height: 0;
+    min-width: 0;
     flex: 1;
     overflow: auto;
     display: grid;
@@ -573,7 +577,8 @@ body.drawer-open {
     padding: 8px;
     display: grid;
     gap: 4px;
-    animation: itemIn 200ms var(--ease);
+    min-width: 0;
+    overflow: hidden;
 }
 
 .queue-item-top {
@@ -581,11 +586,14 @@ body.drawer-open {
     justify-content: space-between;
     gap: 8px;
     font-size: 11px;
+    min-width: 0;
 }
 
 .queue-id {
     color: var(--text);
     font-weight: 600;
+    flex: 1 1 auto;
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -615,6 +623,15 @@ body.drawer-open {
 .queue-item-workshop {
     font-size: 10px;
     opacity: 0.7;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+}
+
+.queue-item-message {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
 }
 
 .sidebar-controls {

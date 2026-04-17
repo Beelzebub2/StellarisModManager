@@ -262,6 +262,84 @@ function saveActiveProfileSnapshot(db: Database.Database): void {
     tx();
 }
 
+function syncDlcLoadFromDb(db: Database.Database): void {
+    if (!hasTable(db, "Mods")) {
+        return;
+    }
+
+    const modColumns = getTableColumns(db, "Mods");
+    const workshopColumn = getWorkshopColumn(modColumns);
+    if (!workshopColumn) {
+        return;
+    }
+
+    const settings = loadSettingsSnapshot();
+    const modsPath = settings?.modsPath?.trim() || getDefaultModsDirectory();
+    const stellarisDir = path.dirname(modsPath);
+    const dlcPath = path.join(stellarisDir, "dlc_load.json");
+
+    const enabledRows = db
+        .prepare(
+            `SELECT ${workshopColumn} AS WorkshopId, DescriptorPath
+             FROM Mods
+             WHERE IsEnabled = 1
+             ORDER BY LoadOrder ASC, Name COLLATE NOCASE ASC, Id ASC`
+        )
+        .all() as Array<{ WorkshopId: string; DescriptorPath: string }>;
+
+    const enabledMods: string[] = [];
+    const seen = new Set<string>();
+    for (const row of enabledRows) {
+        const descriptorName = path.basename(row.DescriptorPath || "").trim();
+        const workshopId = sanitizeWorkshopId(row.WorkshopId || "");
+
+        let relativeDescriptor = "";
+        if (descriptorName.toLowerCase().endsWith(".mod")) {
+            relativeDescriptor = `mod/${descriptorName}`;
+        } else if (isValidWorkshopId(workshopId)) {
+            relativeDescriptor = `mod/${workshopId}.mod`;
+        }
+
+        if (!relativeDescriptor) {
+            continue;
+        }
+
+        const normalized = relativeDescriptor.replace(/\\/g, "/");
+        if (seen.has(normalized.toLowerCase())) {
+            continue;
+        }
+
+        seen.add(normalized.toLowerCase());
+        enabledMods.push(normalized);
+    }
+
+    let disabledDlcs: unknown[] = [];
+    try {
+        if (fs.existsSync(dlcPath)) {
+            const existing = JSON.parse(fs.readFileSync(dlcPath, "utf8")) as Record<string, unknown>;
+            if (Array.isArray(existing.disabled_dlcs)) {
+                disabledDlcs = existing.disabled_dlcs;
+            }
+        }
+    } catch {
+        disabledDlcs = [];
+    }
+
+    try {
+        fs.mkdirSync(path.dirname(dlcPath), { recursive: true });
+        fs.writeFileSync(
+            dlcPath,
+            JSON.stringify({
+                disabled_dlcs: disabledDlcs,
+                enabled_mods: enabledMods
+            }, null, 2),
+            "utf8"
+        );
+    } catch {
+        // best effort; do not fail library operations
+    }
+}
+
 function mapProfileRow(row: DbProfileRow): LibraryProfile {
     return {
         id: row.Id,
@@ -646,6 +724,7 @@ export function deleteLibraryProfile(profileId: number): LibraryActionResult {
                     }
                     normalizeLoadOrder(db);
                     saveActiveProfileSnapshot(db);
+                    syncDlcLoadFromDb(db);
                 }
             }
         });
@@ -689,6 +768,7 @@ export function activateLibraryProfile(profileId: number): LibraryActionResult {
 
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         });
 
         tx();
@@ -744,6 +824,7 @@ export function setLibraryModEnabled(request: LibrarySetModEnabledRequest): Libr
             db.prepare("UPDATE Mods SET IsEnabled = ? WHERE Id = ?").run(request.isEnabled ? 1 : 0, request.modId);
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         });
 
         tx();
@@ -788,6 +869,7 @@ export function moveLibraryMod(request: LibraryMoveDirectionRequest): LibraryAct
             db.prepare("UPDATE Mods SET LoadOrder = ? WHERE Id = ?").run(current.LoadOrder, adjacent.Id);
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         });
 
         tx();
@@ -837,6 +919,7 @@ export function uninstallLibraryMod(modId: number): LibraryActionResult {
             db.prepare("DELETE FROM Mods WHERE Id = ?").run(modId);
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         });
 
         tx();
@@ -1407,7 +1490,6 @@ export function scanLocalMods(): ScanLocalModsResult {
              SET Name = ?,
                  Version = ?,
                  InstalledPath = CASE WHEN ? <> '' THEN ? ELSE InstalledPath END,
-                 IsEnabled = ?,
                  LastUpdatedAt = ?,
                  GameVersion = ?,
                  Tags = ?
@@ -1454,7 +1536,6 @@ export function scanLocalMods(): ScanLocalModsResult {
                         descriptor.supportedVersion || "",
                         installedPath,
                         installedPath,
-                        isEnabled ? 1 : 0,
                         nowIso(),
                         descriptor.supportedVersion || null,
                         tagsJson,
@@ -1487,6 +1568,7 @@ export function scanLocalMods(): ScanLocalModsResult {
         if (added > 0 || alreadyKnown > 0) {
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         }
 
         const sourcesUsed = [
@@ -1546,6 +1628,7 @@ export function reorderLibraryMod(request: LibraryReorderRequest): LibraryAction
             }
             normalizeLoadOrder(db);
             saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
         });
 
         tx();

@@ -22,6 +22,13 @@ const state = {
     gameRunning: false,
     gamePollingHandle: null,
     stellarisyncPollingHandle: null,
+    workshopMouseNavHooked: false,
+    workshopReturnContext: null,
+    queueHadActiveWork: false,
+    lastQueueMarkup: "",
+    queueSnapshot: null,
+    queueLibrarySyncKey: "",
+    queueLibrarySyncInFlight: false,
     library: {
         snapshot: null,
         searchText: "",
@@ -460,8 +467,14 @@ function renderCards(cards) {
         card.addEventListener("click", (e) => {
             // Don't navigate if they clicked a button inside the card
             if (e.target.closest("button")) return;
+            const workshopId = card.getAttribute("data-workshop-id") || "";
             const url = card.getAttribute("data-workshop-url") || "";
             if (url) {
+                state.workshopReturnContext = {
+                    fromTab: "version",
+                    workshopId,
+                    scrollTop: container.scrollTop
+                };
                 activateTab("workshop");
                 const webview = byId("workshopWebview");
                 if (webview) webview.loadURL(url);
@@ -542,6 +555,42 @@ function getModNameByWorkshopId(workshopId) {
     return workshopId;
 }
 
+function getLiveActionStateForWorkshopId(workshopId) {
+    const queueItems = state.queueSnapshot?.items || [];
+    const activeQueueItem = queueItems.find((item) => {
+        if (item.workshopId !== workshopId) return false;
+        return item.status === "queued" || item.status === "running";
+    });
+
+    if (activeQueueItem) {
+        if (activeQueueItem.status === "queued") {
+            return "queued";
+        }
+        return activeQueueItem.action === "uninstall" ? "uninstalling" : "installing";
+    }
+
+    const isInstalled = (state.library.snapshot?.mods || []).some((mod) => mod.workshopId === workshopId);
+    return isInstalled ? "installed" : "not-installed";
+}
+
+function syncVisibleVersionCardActionStates() {
+    const container = byId("versionCards");
+    if (!container) return;
+
+    for (const button of container.querySelectorAll("button[data-action='toggle-mod']")) {
+        const workshopId = button.getAttribute("data-workshop-id") || "";
+        if (!workshopId) continue;
+
+        const actionState = getLiveActionStateForWorkshopId(workshopId);
+        button.setAttribute("data-action-state", actionState);
+        button.setAttribute("data-intent", actionIntent(actionState));
+        button.className = actionButtonClass(actionState);
+        button.disabled = actionIsDisabled(actionState);
+        button.textContent = actionLabel(actionState);
+        applyInstalledHoverLabel(button, actionState);
+    }
+}
+
 function renderQueueList(snapshot) {
     const summary = byId("queueSummary");
     const queueList = byId("queueList");
@@ -571,12 +620,16 @@ function renderQueueList(snapshot) {
     if (!queueList) return;
 
     if (total === 0) {
-        queueList.innerHTML = `<div class="queue-empty"><span class="queue-empty-icon" data-icon="queue"></span><span>No active installs</span></div>`;
-        applyDataIcons(queueList);
+        const emptyMarkup = `<div class="queue-empty"><span class="queue-empty-icon" data-icon="queue"></span><span>No active installs</span></div>`;
+        if (state.lastQueueMarkup !== emptyMarkup) {
+            queueList.innerHTML = emptyMarkup;
+            applyDataIcons(queueList);
+            state.lastQueueMarkup = emptyMarkup;
+        }
         return;
     }
 
-    queueList.innerHTML = items.map((item) => {
+    const markup = items.map((item) => {
         const cancelable = item.status === "queued" || item.status === "running";
         const name = getModNameByWorkshopId(item.workshopId);
         return `
@@ -586,11 +639,18 @@ function renderQueueList(snapshot) {
                     <span class="queue-stage">${escapeHtml(item.status)}</span>
                 </div>
                 <p class="muted mono queue-item-workshop">${escapeHtml(item.workshopId)}</p>
-                <p class="muted">${escapeHtml(item.action)}: ${escapeHtml(item.message)}</p>
+                <p class="muted queue-item-message">${escapeHtml(item.action)}: ${escapeHtml(item.message)}</p>
                 <div class="queue-progress"><span style="width:${Math.max(0, Math.min(100, Number(item.progress || 0)))}%"></span></div>
                 ${cancelable ? `<button class="button-secondary" data-action="cancel-queue" data-workshop-id="${escapeHtml(item.workshopId)}">Cancel</button>` : ""}
             </article>`;
     }).join("\n");
+
+    if (state.lastQueueMarkup === markup) {
+        return;
+    }
+
+    queueList.innerHTML = markup;
+    state.lastQueueMarkup = markup;
 
     for (const btn of queueList.querySelectorAll("button[data-action='cancel-queue']")) {
         btn.addEventListener("click", () => void cancelQueueAction(btn.getAttribute("data-workshop-id") || ""));
@@ -600,8 +660,35 @@ function renderQueueList(snapshot) {
 async function refreshQueueSnapshot() {
     try {
         const snapshot = await window.spikeApi.getVersionQueueSnapshot();
+        state.queueSnapshot = snapshot;
         renderQueueList(snapshot);
-        if (snapshot.hasActiveWork && !state.isLoading && state.selectedTab === "version") {
+        syncVisibleVersionCardActionStates();
+
+        const completedOps = (snapshot.items || [])
+            .filter((item) => item.status === "completed" && (item.action === "install" || item.action === "uninstall"))
+            .map((item) => `${item.workshopId}:${item.action}:${item.updatedAtUtc}`)
+            .sort();
+        const completedOpsKey = completedOps.join("|");
+
+        if (completedOpsKey && completedOpsKey !== state.queueLibrarySyncKey && !state.queueLibrarySyncInFlight) {
+            state.queueLibrarySyncKey = completedOpsKey;
+            state.queueLibrarySyncInFlight = true;
+            try {
+                // Re-scan local/workshop descriptors after queue completion so Library reflects installs without restart.
+                await window.spikeApi.scanLocalMods();
+                await refreshLibrarySnapshot();
+            } finally {
+                state.queueLibrarySyncInFlight = false;
+            }
+        }
+
+        const hasActiveWork = snapshot.hasActiveWork === true;
+        const finishedActiveWork = state.queueHadActiveWork && !hasActiveWork;
+        state.queueHadActiveWork = hasActiveWork;
+
+        // Avoid reloading the entire version page while installs are active.
+        // Do one sync refresh after active work completes so button states settle.
+        if (finishedActiveWork && !state.isLoading && state.selectedTab === "version") {
             void refreshVersionResults();
         }
     } catch { /* ignore */ }
@@ -1111,6 +1198,7 @@ async function refreshLibrarySnapshot() {
     try {
         const snapshot = await window.spikeApi.getLibrarySnapshot();
         state.library.snapshot = snapshot;
+        syncVisibleVersionCardActionStates();
         if (state.library.selectedModId && !snapshot.mods.some((m) => m.id === state.library.selectedModId)) {
             state.library.selectedModId = null;
         }
@@ -1176,12 +1264,96 @@ async function getWorkshopOverlayActionState(workshopId) {
    ============================================================ */
 const WORKSHOP_HOME = "https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90";
 
+function restoreVersionTabFromWorkshopContext() {
+    const context = state.workshopReturnContext;
+    if (!context || context.fromTab !== "version") {
+        return false;
+    }
+
+    state.workshopReturnContext = null;
+    activateTab("version");
+
+    const scrollTop = Number.isFinite(context.scrollTop) ? context.scrollTop : 0;
+    const workshopId = String(context.workshopId || "").trim();
+
+    const restoreScroll = () => {
+        const container = byId("versionCards");
+        if (!container) {
+            return;
+        }
+
+        container.scrollTop = Math.max(0, scrollTop);
+
+        if (workshopId) {
+            const card = container.querySelector(`.mod-card[data-workshop-id="${workshopId}"]`);
+            if (card instanceof HTMLElement) {
+                card.scrollIntoView({ block: "nearest", inline: "nearest" });
+            }
+        }
+    };
+
+    requestAnimationFrame(() => {
+        restoreScroll();
+        requestAnimationFrame(restoreScroll);
+    });
+
+    return true;
+}
+
 function initWorkshop() {
     const webview = byId("workshopWebview");
     const urlInput = byId("workshopUrl");
     const loading = byId("workshopLoading");
 
     if (!webview) return;
+
+    const navigateWorkshopHistory = (direction) => {
+        if (direction === "back") {
+            if (restoreVersionTabFromWorkshopContext()) {
+                return true;
+            }
+
+            if (webview.canGoBack()) {
+                webview.goBack();
+                return true;
+            }
+            return false;
+        }
+
+        if (webview.canGoForward()) {
+            webview.goForward();
+            return true;
+        }
+
+        return false;
+    };
+
+    const handleWorkshopSideButton = (event) => {
+        if (state.selectedTab !== "workshop") {
+            return;
+        }
+
+        if (event.button === 3) {
+            if (navigateWorkshopHistory("back")) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            return;
+        }
+
+        if (event.button === 4) {
+            if (navigateWorkshopHistory("forward")) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        }
+    };
+
+    if (!state.workshopMouseNavHooked) {
+        window.addEventListener("mouseup", handleWorkshopSideButton, true);
+        window.addEventListener("auxclick", handleWorkshopSideButton, true);
+        state.workshopMouseNavHooked = true;
+    }
 
     webview.addEventListener("did-start-loading", () => {
         if (loading) loading.classList.add("is-loading");
@@ -1266,8 +1438,8 @@ function initWorkshop() {
         }
     });
 
-    byId("workshopBack")?.addEventListener("click", () => { if (webview.canGoBack()) webview.goBack(); });
-    byId("workshopForward")?.addEventListener("click", () => { if (webview.canGoForward()) webview.goForward(); });
+    byId("workshopBack")?.addEventListener("click", () => { void navigateWorkshopHistory("back"); });
+    byId("workshopForward")?.addEventListener("click", () => { void navigateWorkshopHistory("forward"); });
     byId("workshopRefresh")?.addEventListener("click", () => webview.reload());
     byId("workshopHome")?.addEventListener("click", () => webview.loadURL(WORKSHOP_HOME));
     byId("workshopGo")?.addEventListener("click", () => {
@@ -1560,6 +1732,7 @@ function hookLibraryControls() {
         const mod = getSelectedLibraryMod();
         if (!mod) return;
         const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`;
+        state.workshopReturnContext = null;
         activateTab("workshop");
         const webview = byId("workshopWebview");
         if (webview) webview.loadURL(url);
@@ -1586,7 +1759,10 @@ function hookLibraryControls() {
 function hookGlobalControls() {
     byId("tabVersion")?.addEventListener("click", () => activateTab("version"));
     byId("tabLibrary")?.addEventListener("click", () => activateTab("library"));
-    byId("tabWorkshop")?.addEventListener("click", () => activateTab("workshop"));
+    byId("tabWorkshop")?.addEventListener("click", () => {
+        state.workshopReturnContext = null;
+        activateTab("workshop");
+    });
     byId("tabSettings")?.addEventListener("click", () => activateTab("settings"));
     byId("launchGameBtn")?.addEventListener("click", () => void handleLaunchGame());
 
@@ -1594,6 +1770,31 @@ function hookGlobalControls() {
     byId("detailCloseButton")?.addEventListener("click", () => showDetailDrawer(false));
 
     window.addEventListener("keydown", (e) => {
+        if (state.selectedTab === "workshop") {
+            if (e.key === "BrowserBack") {
+                if (restoreVersionTabFromWorkshopContext()) {
+                    e.preventDefault();
+                    return;
+                }
+
+                const webview = byId("workshopWebview");
+                if (webview?.canGoBack()) {
+                    e.preventDefault();
+                    webview.goBack();
+                    return;
+                }
+            }
+
+            if (e.key === "BrowserForward") {
+                const webview = byId("workshopWebview");
+                if (webview?.canGoForward()) {
+                    e.preventDefault();
+                    webview.goForward();
+                    return;
+                }
+            }
+        }
+
         if (e.key === "Escape") {
             showDetailDrawer(false);
             const overlay = byId("modalOverlay");
@@ -1662,9 +1863,9 @@ async function init() {
     syncSearchClearButton();
     activateTab("version");
 
-    // Polling: queue every 1.3s, game status every 3s, stellarisync every 2 min
+    // Polling: queue every 1.8s, game status every 3s, stellarisync every 2 min
     if (state.queuePollingHandle) clearInterval(state.queuePollingHandle);
-    state.queuePollingHandle = setInterval(() => void refreshQueueSnapshot(), 1300);
+    state.queuePollingHandle = setInterval(() => void refreshQueueSnapshot(), 1800);
 
     if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
     state.gamePollingHandle = setInterval(() => void refreshGameRunningStatus(), 3000);

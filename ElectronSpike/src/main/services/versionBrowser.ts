@@ -1,5 +1,6 @@
 ﻿import fs from "node:fs";
 import fsp from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -792,12 +793,81 @@ function toWorkshopSortMode(sortMode: VersionSortMode | undefined): WorkshopSort
     }
 }
 
+function extractMajorMinorVersionTokens(text: string): Set<string> {
+    const tokens = new Set<string>();
+    const versionTokenRegex = /(^|[^\d])(\d+\.\d+(?:\.\d+)?)(?=$|[^\d])/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = versionTokenRegex.exec(text)) !== null) {
+        const rawToken = (match[2] ?? "").trim();
+        if (!rawToken) {
+            continue;
+        }
+
+        const majorMinor = normalizeMajorMinor(rawToken);
+        if (majorMinor) {
+            tokens.add(majorMinor);
+        }
+    }
+
+    return tokens;
+}
+
+function getStrongSignalVersionTokens(detail: SteamPublishedFileDetails): Set<string> {
+    const strongParts: string[] = [];
+
+    if (detail.title) {
+        strongParts.push(detail.title);
+    }
+
+    if (Array.isArray(detail.tags)) {
+        for (const tag of detail.tags) {
+            if (tag?.tag) {
+                strongParts.push(tag.tag);
+            }
+        }
+    }
+
+    return extractMajorMinorVersionTokens(strongParts.join(" "));
+}
+
+function getAllDetailVersionTokens(detail: SteamPublishedFileDetails): Set<string> {
+    const allParts: string[] = [];
+
+    if (detail.title) {
+        allParts.push(detail.title);
+    }
+    if (detail.file_description) {
+        allParts.push(stripHtml(detail.file_description));
+    }
+    if (Array.isArray(detail.tags)) {
+        for (const tag of detail.tags) {
+            if (tag?.tag) {
+                allParts.push(tag.tag);
+            }
+        }
+    }
+
+    return extractMajorMinorVersionTokens(allParts.join(" "));
+}
+
 function isVersionCompatible(
     workshopId: string,
     maps: VersionMapsCache,
     selectedVersion: string,
     detail: SteamPublishedFileDetails | undefined
 ): boolean {
+    const selectedMajorMinor = normalizeMajorMinor(selectedVersion);
+
+    // Strong version signals from title/tags should always gate compatibility.
+    // Example: a title explicitly stating "For 4.3" should never appear in 4.2.
+    if (detail && selectedMajorMinor) {
+        const strongTokens = getStrongSignalVersionTokens(detail);
+        if (strongTokens.size > 0 && !strongTokens.has(selectedMajorMinor)) {
+            return false;
+        }
+    }
+
     const confirmedVersion = maps.versions[workshopId];
     const communityEntry = maps.communityCompat[workshopId];
 
@@ -819,43 +889,12 @@ function isVersionCompatible(
         return false;
     }
 
-    const detailTextParts: string[] = [];
-    if (detail.title) {
-        detailTextParts.push(detail.title);
-    }
-    if (detail.file_description) {
-        detailTextParts.push(stripHtml(detail.file_description));
-    }
-    if (Array.isArray(detail.tags)) {
-        for (const tag of detail.tags) {
-            if (tag?.tag) {
-                detailTextParts.push(tag.tag);
-            }
-        }
-    }
-
-    const combinedText = detailTextParts.join(" ");
-    if (!combinedText.trim()) {
+    const detailTokens = getAllDetailVersionTokens(detail);
+    if (detailTokens.size === 0) {
         return true;
     }
 
-    const versionTokenRegex = /(^|[^\d])(\d+\.\d+(?:\.\d+)?)(?=$|[^\d])/g;
-    let match: RegExpExecArray | null;
-    let foundAnyToken = false;
-    while ((match = versionTokenRegex.exec(combinedText)) !== null) {
-        const token = (match[2] ?? "").trim();
-        if (!token) {
-            continue;
-        }
-
-        foundAnyToken = true;
-        if (token && versionMatchesSelection(token, selectedVersion)) {
-            return true;
-        }
-    }
-
-    // If a mod doesn't publish explicit version tokens, keep it in results as "unknown compatibility".
-    return !foundAnyToken;
+    return selectedMajorMinor ? detailTokens.has(selectedMajorMinor) : false;
 }
 
 async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: number): Promise<CachedResultCard[]> {
@@ -966,6 +1005,103 @@ function resolveDownloadBasePath(): string {
     return path.join(getLegacyPaths().productDir, "SteamCmdDownloads");
 }
 
+function getDefaultModsPath(): string {
+    const home = os.homedir();
+    if (process.platform === "win32" || process.platform === "darwin") {
+        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
+    }
+
+    return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+}
+
+function resolveModsInstallRoot(): string {
+    const settings = loadSettingsSnapshot();
+    const configured = settings?.modsPath?.trim();
+    return configured && configured.length > 0 ? configured : getDefaultModsPath();
+}
+
+function upsertQuotedDescriptorField(content: string, key: string, value: string): string {
+    const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const line = `${key}="${escapedValue}"`;
+    const re = new RegExp(`^\\s*${key}\\s*=\\s*"[^"]*"\\s*$`, "m");
+
+    if (re.test(content)) {
+        return content.replace(re, line);
+    }
+
+    const trimmed = content.trimEnd();
+    return trimmed.length > 0 ? `${trimmed}\n${line}\n` : `${line}\n`;
+}
+
+async function deployDownloadedModToModsPath(
+    workshopId: string,
+    downloadedInstallPath: string,
+    reportProgress: (progress: number, message: string) => void
+): Promise<{ ok: boolean; installPath: string; message: string }> {
+    const modsRoot = resolveModsInstallRoot();
+    const finalInstallPath = path.join(modsRoot, workshopId);
+    const finalDescriptorPath = path.join(modsRoot, `${workshopId}.mod`);
+
+    try {
+        await fsp.mkdir(modsRoot, { recursive: true });
+    } catch {
+        return {
+            ok: false,
+            installPath: finalInstallPath,
+            message: `Could not create mods path: ${modsRoot}`
+        };
+    }
+
+    reportProgress(96, `Deploying ${workshopId} to mods path...`);
+
+    try {
+        await removeDirectoryIfExists(finalInstallPath);
+        await fsp.cp(downloadedInstallPath, finalInstallPath, { recursive: true, force: true });
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Copy failed";
+        return {
+            ok: false,
+            installPath: finalInstallPath,
+            message: `Failed to deploy mod files to mods path: ${message}`
+        };
+    }
+
+    let descriptorContent = `name="Workshop Mod ${workshopId}"\nremote_file_id="${workshopId}"\npath="mod/${workshopId}"\n`;
+    try {
+        const downloadedDescriptorPath = path.join(downloadedInstallPath, "descriptor.mod");
+        if (fs.existsSync(downloadedDescriptorPath)) {
+            descriptorContent = await fsp.readFile(downloadedDescriptorPath, "utf8");
+        }
+    } catch {
+        // fall back to minimal descriptor
+    }
+
+    descriptorContent = upsertQuotedDescriptorField(descriptorContent, "remote_file_id", workshopId);
+    descriptorContent = upsertQuotedDescriptorField(descriptorContent, "path", `mod/${workshopId}`);
+
+    try {
+        await fsp.writeFile(finalDescriptorPath, descriptorContent, "utf8");
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Descriptor write failed";
+        return {
+            ok: false,
+            installPath: finalInstallPath,
+            message: `Failed to write descriptor in mods path: ${message}`
+        };
+    }
+
+    // Best effort: don't keep duplicate Steam workshop content when deployment succeeded.
+    if (path.resolve(downloadedInstallPath) !== path.resolve(finalInstallPath)) {
+        await removeDirectoryIfExists(downloadedInstallPath);
+    }
+
+    return {
+        ok: true,
+        installPath: finalInstallPath,
+        message: `Installed to mods path: ${finalInstallPath}`
+    };
+}
+
 async function removeDirectoryIfExists(targetPath: string): Promise<void> {
     try {
         await fsp.rm(targetPath, { recursive: true, force: true });
@@ -1005,8 +1141,8 @@ async function runSteamCmdDownload(
     const forceInstallDir = resolveDownloadBasePath();
     await fsp.mkdir(forceInstallDir, { recursive: true });
 
-    const installPath = path.join(forceInstallDir, "steamapps", "workshop", "content", STELLARIS_APP_ID, workshopId);
-    await removeDirectoryIfExists(installPath);
+    const downloadedInstallPath = path.join(forceInstallDir, "steamapps", "workshop", "content", STELLARIS_APP_ID, workshopId);
+    await removeDirectoryIfExists(downloadedInstallPath);
 
     const args = [
         "+force_install_dir", forceInstallDir,
@@ -1088,35 +1224,40 @@ async function runSteamCmdDownload(
     if (!result.ok) {
         return {
             ok: false,
-            installPath,
+            installPath: downloadedInstallPath,
             message: result.message
         };
     }
 
     try {
-        const entries = await fsp.readdir(installPath);
+        const entries = await fsp.readdir(downloadedInstallPath);
         if (entries.length === 0) {
             return {
                 ok: false,
-                installPath,
+                installPath: downloadedInstallPath,
                 message: "SteamCMD finished but download folder is empty."
             };
         }
     } catch {
         return {
             ok: false,
-            installPath,
+            installPath: downloadedInstallPath,
             message: "SteamCMD finished but download folder was not found."
         };
     }
 
-    installPathById.set(workshopId, installPath);
+    const deployed = await deployDownloadedModToModsPath(workshopId, downloadedInstallPath, reportProgress);
+    if (!deployed.ok) {
+        return deployed;
+    }
+
+    installPathById.set(workshopId, deployed.installPath);
     await saveInstallState();
 
     return {
         ok: true,
-        installPath,
-        message: "Download completed."
+        installPath: deployed.installPath,
+        message: deployed.message
     };
 }
 
@@ -1124,7 +1265,13 @@ async function runUninstall(workshopId: string): Promise<{ ok: boolean; message:
     const knownPath = installPathById.get(workshopId);
     if (knownPath) {
         await removeDirectoryIfExists(knownPath);
+        const descriptorPath = path.join(path.dirname(knownPath), `${workshopId}.mod`);
+        await removeDirectoryIfExists(descriptorPath);
     } else {
+        const modsRoot = resolveModsInstallRoot();
+        await removeDirectoryIfExists(path.join(modsRoot, workshopId));
+        await removeDirectoryIfExists(path.join(modsRoot, `${workshopId}.mod`));
+
         const discovery = discoverSteamLibraries();
         for (const library of discovery.libraries) {
             const candidate = path.join(library.workshopContentPath, workshopId);
