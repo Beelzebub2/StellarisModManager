@@ -34,6 +34,7 @@ function createMainWindow(): void {
         height: 880,
         minWidth: 1080,
         minHeight: 700,
+        icon: path.join(__dirname, "..", "assets", "app.ico"),
         titleBarStyle: "hidden",
         titleBarOverlay: {
             color: "#0e1117",
@@ -54,7 +55,7 @@ function createMainWindow(): void {
     const entryPath = getRendererEntryPath();
     logInfo(`Loading renderer from ${entryPath}`);
     void mainWindow.loadFile(entryPath);
-    
+
     mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
         console.error(`[Renderer] ${message} (line ${line} at ${sourceId})`);
     });
@@ -74,6 +75,12 @@ app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createMainWindow();
     }
+});
+
+app.on("web-contents-created", (_event, contents) => {
+    contents.on("will-attach-webview", (_wae, webPreferences) => {
+        webPreferences.preload = path.join(__dirname, "webviewPreload.js");
+    });
 });
 
 app.whenReady()

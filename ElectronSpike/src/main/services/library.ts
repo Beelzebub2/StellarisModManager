@@ -9,6 +9,7 @@ import type {
     LibraryImportResult,
     LibraryModItem,
     LibraryMoveDirectionRequest,
+    LibraryReorderRequest,
     LibraryProfile,
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
@@ -372,13 +373,13 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
             .all() as DbProfileRow[];
 
         profiles = rows.map(mapProfileRow);
-        
+
         if (profiles.length === 0) {
             db.prepare("INSERT INTO Profiles (Name, IsActive, CreatedAt, SharedProfileId) VALUES (?, 1, ?, NULL)")
                 .run("Default Profile", nowIso());
-            
+
             saveActiveProfileSnapshot(db);
-            
+
             const newRows = db
                 .prepare(
                     `SELECT Id,
@@ -390,7 +391,7 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
                      ORDER BY Name COLLATE NOCASE ASC, Id ASC`
                 )
                 .all() as DbProfileRow[];
-                
+
             profiles = newRows.map(mapProfileRow);
         }
     }
@@ -1351,7 +1352,7 @@ export function scanLocalMods(): ScanLocalModsResult {
     for (const candidate of [...localDescriptors, ...workshopDescriptors]) {
         candidatesByPath.set(normalizePathKey(candidate.descriptorPath), candidate);
     }
-    
+
     // Also explicitly add any descriptors found in dlc_load.json
     for (const enabledModPath of enabledMods) {
         const fullPath = path.join(stellarisDir, enabledModPath);
@@ -1365,7 +1366,7 @@ export function scanLocalMods(): ScanLocalModsResult {
             });
         }
     }
-    
+
     const descriptorCandidates = Array.from(candidatesByPath.values());
 
     const db = openLibraryDb();
@@ -1505,6 +1506,53 @@ export function scanLocalMods(): ScanLocalModsResult {
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown scan error";
         return { ok: false, message: `Scan failed: ${message}`, discovered: 0, added: 0, alreadyKnown: 0 };
+    } finally {
+        db.close();
+    }
+}
+
+export function reorderLibraryMod(request: LibraryReorderRequest): LibraryActionResult {
+    const db = openLibraryDb();
+    if (!db) {
+        return { ok: false, message: "mods.db is not available." };
+    }
+
+    try {
+        const enabledMods = db
+            .prepare("SELECT Id, LoadOrder, IsEnabled FROM Mods WHERE IsEnabled = 1 ORDER BY LoadOrder ASC, Name COLLATE NOCASE ASC, Id ASC")
+            .all() as Array<{ Id: number; LoadOrder: number; IsEnabled: number }>;
+
+        const sourceIndex = enabledMods.findIndex((entry) => entry.Id === request.modId);
+        if (sourceIndex < 0) {
+            return { ok: false, message: "Only enabled mods can be reordered." };
+        }
+
+        if (request.targetIndex < 0 || request.targetIndex >= enabledMods.length) {
+            return { ok: false, message: "Invalid target position." };
+        }
+
+        if (sourceIndex === request.targetIndex) {
+            return { ok: true, message: "No change needed." };
+        }
+
+        const [movedMod] = enabledMods.splice(sourceIndex, 1);
+        enabledMods.splice(request.targetIndex, 0, movedMod);
+
+        const tx = db.transaction(() => {
+            const updateStmt = db.prepare("UPDATE Mods SET LoadOrder = ? WHERE Id = ?");
+            // Re-assign a sequential load order so it perfectly matches the new array
+            for (let i = 0; i < enabledMods.length; i++) {
+                updateStmt.run(i, enabledMods[i].Id);
+            }
+            normalizeLoadOrder(db);
+            saveActiveProfileSnapshot(db);
+        });
+
+        tx();
+        return { ok: true, message: "Load order updated." };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown load-order error";
+        return { ok: false, message: `Failed to reorder mod: ${message}` };
     } finally {
         db.close();
     }

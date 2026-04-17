@@ -269,6 +269,11 @@ export interface LibraryMoveDirectionRequest {
     direction: "up" | "down";
 }
 
+export interface LibraryReorderRequest {
+    modId: number;
+    targetIndex: number;
+}
+
 export interface LibrarySetModEnabledRequest {
     modId: number;
     isEnabled: boolean;
@@ -333,6 +338,7 @@ export interface SpikeApi {
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) => Promise<LibraryActionResult>;
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) => Promise<LibraryActionResult>;
     moveLibraryMod: (request: LibraryMoveDirectionRequest) => Promise<LibraryActionResult>;
+    reorderLibraryMod: (request: LibraryReorderRequest) => Promise<LibraryActionResult>;
     uninstallLibraryMod: (modId: number) => Promise<LibraryActionResult>;
     checkLibraryUpdates: () => Promise<LibraryActionResult>;
     exportLibraryMods: () => Promise<LibraryActionResult>;

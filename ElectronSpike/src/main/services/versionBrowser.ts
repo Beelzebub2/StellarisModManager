@@ -14,24 +14,26 @@ import type {
     VersionOption,
     VersionQueueItem,
     VersionQueueSnapshot,
-    VersionSortMode
+    VersionSortMode,
+    WorkshopSortMode
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
 import { loadSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
+import { scrapeSteamWorkshopPage } from "./workshopBrowser";
 
 const STELLARIS_APP_ID = "281990";
 const STELLARISYNC_BASE_URL = process.env.STELLARISYNC_BASE_URL?.trim() || "https://stellarisync.rrmtools.uk";
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
-const DEFAULT_PAGE_SIZE = 24;
+const DEFAULT_PAGE_SIZE = 30;
 const MIN_PAGE_SIZE = 8;
 const MAX_PAGE_SIZE = 60;
-const MAX_METADATA_POOL = 520;
 const MAP_CACHE_TTL_MS = 4 * 60 * 1000;
 const DETAIL_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const RESULT_CACHE_TTL_MS = 20 * 60 * 1000;
 const THUMBNAIL_CACHE_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
+const MAX_STEAM_PAGE_PROBES_PER_QUERY = 20;
 
 const knownVersions: Readonly<Record<string, string>> = {
     "4.3": "Cetus",
@@ -129,6 +131,8 @@ interface CachedResultCard {
 interface CachedResultEntry {
     cachedAtUtc: string;
     cards: CachedResultCard[];
+    steamPage: number;
+    exhausted: boolean;
 }
 
 interface InstallStateStore {
@@ -776,91 +780,170 @@ function asCachedCard(card: VersionModCard): CachedResultCard {
     };
 }
 
-async function buildCardsForQuery(query: VersionBrowserQuery): Promise<CachedResultCard[]> {
-    const selectedVersion = (query.selectedVersion || "4.3").trim();
-    const searchText = (query.searchText ?? "").trim();
-    const lowerSearch = searchText.toLowerCase();
-    const maps = await ensureVersionMaps();
+function toWorkshopSortMode(sortMode: VersionSortMode | undefined): WorkshopSortMode {
+    switch (sortMode) {
+        case "most-popular":
+            return "most-popular";
+        case "most-subscribed":
+            return "most-subscribed";
+        case "relevance":
+        default:
+            return "relevance";
+    }
+}
 
-    const candidateIds = new Set<string>();
-    for (const workshopId of Object.keys(maps.versions)) {
-        if (isValidWorkshopId(workshopId)) {
-            candidateIds.add(workshopId);
-        }
+function isVersionCompatible(
+    workshopId: string,
+    maps: VersionMapsCache,
+    selectedVersion: string,
+    detail: SteamPublishedFileDetails | undefined
+): boolean {
+    const confirmedVersion = maps.versions[workshopId];
+    const communityEntry = maps.communityCompat[workshopId];
+
+    if (confirmedVersion && versionMatchesSelection(confirmedVersion, selectedVersion)) {
+        return true;
     }
 
-    for (const workshopId of Object.keys(maps.communityCompat)) {
-        if (isValidWorkshopId(workshopId)) {
-            candidateIds.add(workshopId);
-        }
+    if (communityVersionMatchesSelection(communityEntry, selectedVersion)) {
+        return true;
     }
 
-    const matchingIds = Array.from(candidateIds)
-        .filter((workshopId) => {
-            const confirmedVersion = maps.versions[workshopId];
-            if (confirmedVersion && versionMatchesSelection(confirmedVersion, selectedVersion)) {
-                return true;
+    // If we have explicit compatibility data for this mod and it didn't match, treat it as incompatible.
+    if (confirmedVersion || (communityEntry && Object.keys(communityEntry).length > 0)) {
+        return false;
+    }
+
+    // Fallback for mods not present in compatibility maps: inspect title/description/tags for version tokens.
+    if (!detail) {
+        return false;
+    }
+
+    const detailTextParts: string[] = [];
+    if (detail.title) {
+        detailTextParts.push(detail.title);
+    }
+    if (detail.file_description) {
+        detailTextParts.push(stripHtml(detail.file_description));
+    }
+    if (Array.isArray(detail.tags)) {
+        for (const tag of detail.tags) {
+            if (tag?.tag) {
+                detailTextParts.push(tag.tag);
             }
+        }
+    }
 
-            return communityVersionMatchesSelection(maps.communityCompat[workshopId], selectedVersion);
-        })
-        .slice(0, MAX_METADATA_POOL);
+    const combinedText = detailTextParts.join(" ");
+    if (!combinedText.trim()) {
+        return true;
+    }
 
-    const details = await fetchPublishedFileDetails(matchingIds);
-    const cards: CachedResultCard[] = [];
-
-    for (const workshopId of matchingIds) {
-        const detail = details.get(workshopId);
-        if (!detail) {
+    const versionTokenRegex = /(^|[^\d])(\d+\.\d+(?:\.\d+)?)(?=$|[^\d])/g;
+    let match: RegExpExecArray | null;
+    let foundAnyToken = false;
+    while ((match = versionTokenRegex.exec(combinedText)) !== null) {
+        const token = (match[2] ?? "").trim();
+        if (!token) {
             continue;
         }
 
-        const title = (detail.title ?? "").trim() || `Workshop Mod ${workshopId}`;
-        if (searchText) {
-            const matched = title.toLowerCase().includes(lowerSearch) || workshopId.includes(lowerSearch);
-            if (!matched) {
-                continue;
-            }
+        foundAnyToken = true;
+        if (token && versionMatchesSelection(token, selectedVersion)) {
+            return true;
         }
-
-        const subscribersRaw = Number(detail.lifetime_subscriptions ?? 0);
-        const totalSubscribers = Number.isFinite(subscribersRaw) ? subscribersRaw : 0;
-        const community = getCommunityStats(maps.communityCompat, workshopId, selectedVersion);
-        const previewImageUrl = await ensureThumbnailCached(workshopId, detail.preview_url?.trim() || null);
-
-        cards.push({
-            workshopId,
-            workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`,
-            name: title,
-            gameVersionBadge: normalizeMajorMinor(maps.versions[workshopId] ?? selectedVersion) ?? selectedVersion,
-            previewImageUrl,
-            totalSubscribers,
-            communityWorksCount: community.works,
-            communityNotWorksCount: community.notWorks,
-            communityWorksPercent: community.percent
-        });
     }
 
-    return sortCards(cards, query.sortMode ?? "relevance");
+    // If a mod doesn't publish explicit version tokens, keep it in results as "unknown compatibility".
+    return !foundAnyToken;
 }
 
-async function getCardsWithResultCache(query: VersionBrowserQuery): Promise<CachedResultCard[]> {
+async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: number): Promise<CachedResultCard[]> {
+    const selectedVersion = (query.selectedVersion || "4.3").trim();
+    const maps = await ensureVersionMaps();
     await ensureInitialized();
 
     const key = buildQueryCacheKey(query);
-    const cached = resultCacheByKey.get(key);
-    if (cached && isCacheFresh(cached.cachedAtUtc, RESULT_CACHE_TTL_MS)) {
-        return cached.cards;
+    const searchText = (query.searchText ?? "").trim();
+    const sortMode = toWorkshopSortMode(query.sortMode);
+
+    let cached = resultCacheByKey.get(key);
+    if (!cached || !isCacheFresh(cached.cachedAtUtc, RESULT_CACHE_TTL_MS)) {
+        cached = {
+            cachedAtUtc: nowIso(),
+            cards: [],
+            steamPage: 1,
+            exhausted: false
+        };
+    } else {
+        cached.cards = Array.isArray(cached.cards) ? cached.cards : [];
+        cached.steamPage = Number.isFinite(cached.steamPage) && cached.steamPage > 0 ? Math.trunc(cached.steamPage) : 1;
+        cached.exhausted = cached.exhausted === true;
     }
 
-    const cards = await buildCardsForQuery(query);
-    resultCacheByKey.set(key, {
-        cachedAtUtc: nowIso(),
-        cards
-    });
+    const seenIds = new Set<string>(cached.cards.map((card) => card.workshopId));
+
+    // Fetch additional Steam pages in small batches until we can fill the requested UI page.
+    let pageRequests = 0;
+    while (!cached.exhausted && cached.cards.length < targetCount && pageRequests < MAX_STEAM_PAGE_PROBES_PER_QUERY) {
+        const pageIds = await scrapeSteamWorkshopPage(sortMode, searchText, cached.steamPage);
+        cached.steamPage += 1;
+        pageRequests += 1;
+
+        if (pageIds.length === 0) {
+            cached.exhausted = true;
+            break;
+        }
+
+        const candidateIds = pageIds
+            .filter((workshopId) => isValidWorkshopId(workshopId) && !seenIds.has(workshopId));
+
+        if (candidateIds.length === 0) {
+            continue;
+        }
+
+        const details = await fetchPublishedFileDetails(candidateIds);
+        for (const workshopId of candidateIds) {
+            const detail = details.get(workshopId);
+            if (!detail || !isVersionCompatible(workshopId, maps, selectedVersion, detail)) {
+                seenIds.add(workshopId);
+                continue;
+            }
+
+            const title = (detail.title ?? "").trim() || `Workshop Mod ${workshopId}`;
+            const subscribersRaw = Number(detail.lifetime_subscriptions ?? 0);
+            const totalSubscribers = Number.isFinite(subscribersRaw) ? subscribersRaw : 0;
+            const community = getCommunityStats(maps.communityCompat, workshopId, selectedVersion);
+            const previewImageUrl = await ensureThumbnailCached(workshopId, detail.preview_url?.trim() || null);
+
+            cached.cards.push({
+                workshopId,
+                workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`,
+                name: title,
+                gameVersionBadge: normalizeMajorMinor(maps.versions[workshopId] ?? selectedVersion) ?? selectedVersion,
+                previewImageUrl,
+                totalSubscribers,
+                communityWorksCount: community.works,
+                communityNotWorksCount: community.notWorks,
+                communityWorksPercent: community.percent
+            });
+
+            seenIds.add(workshopId);
+            if (cached.cards.length >= targetCount) {
+                break;
+            }
+        }
+
+        if (pageIds.length < 10) {
+            cached.exhausted = true;
+        }
+    }
+
+    cached.cachedAtUtc = nowIso();
+    resultCacheByKey.set(key, cached);
 
     await saveResultCache();
-    return cards;
+    return cached.cards;
 }
 
 function resolveDownloadBasePath(): string {
@@ -1140,20 +1223,26 @@ export async function queryVersionMods(query: VersionBrowserQuery): Promise<Vers
     const selectedVersion = (query.selectedVersion || "4.3").trim();
     const pageSize = clampPageSize(query.pageSize);
     const requestedPage = Math.max(1, Math.trunc(query.page ?? 1));
+    const targetCount = (requestedPage * pageSize) + 1;
 
-    const cachedCards = await getCardsWithResultCache(query);
+    const cachedCards = await getCardsWithResultCache(query, targetCount);
     const installedIds = getEffectiveInstalledIds();
     const cards = hydrateCardsFromCache(cachedCards, installedIds);
 
-    const totalMatches = cards.length;
-    const totalPages = Math.max(1, Math.ceil(totalMatches / pageSize));
+    const hasMore = cards.length > (requestedPage * pageSize);
+    const totalPages = hasMore
+        ? requestedPage + 1
+        : Math.max(1, Math.ceil(cards.length / pageSize));
     const boundedPage = Math.min(requestedPage, totalPages);
     const offset = (boundedPage - 1) * pageSize;
     const paged = cards.slice(offset, offset + pageSize);
+    const totalMatches = hasMore
+        ? Math.max(cards.length, (boundedPage * pageSize) + 1)
+        : cards.length;
 
     const statusText = totalMatches === 0
         ? `No mods found for ${selectedVersion}.`
-        : `Loaded ${totalMatches} mod(s) for ${selectedVersion}. Showing page ${boundedPage} of ${totalPages}.`;
+        : `Loaded ${totalMatches}${hasMore ? "+" : ""} mod(s) for ${selectedVersion}. Showing page ${boundedPage} of ${totalPages}.`;
 
     return {
         selectedVersion,

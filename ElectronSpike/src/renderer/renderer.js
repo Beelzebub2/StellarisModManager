@@ -858,7 +858,7 @@ function renderLibraryList() {
         const updateBadge = mod.hasUpdate ? "<span class='badge badge-version'>Update</span>" : "";
         const mpBadge = mod.isMultiplayerSafe ? "<span class='badge badge-community'>MP safe</span>" : "";
         return `
-            <article class="library-row${sel}" data-mod-id="${mod.id}">
+            <article class="library-row${sel}" data-mod-id="${mod.id}" draggable="${mod.isEnabled ? "true" : "false"}">
                 <div class="library-cell library-enabled">
                     <input type="checkbox" data-action="toggle-enabled" data-mod-id="${mod.id}" ${mod.isEnabled ? "checked" : ""} />
                 </div>
@@ -887,6 +887,82 @@ function renderLibraryList() {
             if (!Number.isFinite(id) || id <= 0) return;
             state.library.selectedModId = id;
             renderLibraryList();
+        });
+
+        // Drag and drop events
+        row.addEventListener("dragstart", (e) => {
+            if (row.getAttribute("draggable") !== "true") {
+                e.preventDefault();
+                return;
+            }
+            row.classList.add("is-dragging");
+            e.dataTransfer.effectAllowed = "move";
+            e.dataTransfer.setData("text/plain", row.getAttribute("data-mod-id"));
+            // Optional: set custom drag image if needed
+        });
+
+        row.addEventListener("dragend", () => {
+            row.classList.remove("is-dragging");
+            const allRows = list.querySelectorAll(".library-row");
+            for (const r of allRows) {
+                r.classList.remove("drag-over-top", "drag-over-bottom");
+            }
+        });
+
+        row.addEventListener("dragover", (e) => {
+            e.preventDefault(); // Necessary to allow dropping
+            if (row.getAttribute("draggable") !== "true") return;
+
+            const rect = row.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+
+            row.classList.remove("drag-over-top", "drag-over-bottom");
+            if (e.clientY < midpoint) {
+                row.classList.add("drag-over-top");
+            } else {
+                row.classList.add("drag-over-bottom");
+            }
+        });
+
+        row.addEventListener("dragleave", () => {
+            row.classList.remove("drag-over-top", "drag-over-bottom");
+        });
+
+        row.addEventListener("drop", async (e) => {
+            e.preventDefault();
+            row.classList.remove("drag-over-top", "drag-over-bottom");
+            if (row.getAttribute("draggable") !== "true") return;
+
+            const sourceIdStr = e.dataTransfer.getData("text/plain");
+            const sourceId = Number.parseInt(sourceIdStr, 10);
+            const targetId = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+
+            if (!sourceId || !targetId || sourceId === targetId) return;
+
+            // Figure out the new index based on the enabled array
+            const enabledMods = state.library.snapshot.mods.filter((m) => m.isEnabled).sort((a, b) => a.loadOrder - b.loadOrder);
+
+            const rect = row.getBoundingClientRect();
+            const midpoint = rect.top + rect.height / 2;
+            const insertAfter = e.clientY >= midpoint;
+
+            let targetIndex = enabledMods.findIndex((m) => m.id === targetId);
+            if (targetIndex === -1) return;
+
+            // If we are dropping after, the apparent target index is offset by 1
+            if (insertAfter) {
+                targetIndex++;
+            }
+
+            // If the source was before the target, inserting shifts the array left by 1, so offset back
+            const sourceIndex = enabledMods.findIndex((m) => m.id === sourceId);
+            if (sourceIndex !== -1 && sourceIndex < targetIndex) {
+                targetIndex--;
+            }
+
+            const result = await window.spikeApi.reorderLibraryMod({ modId: sourceId, targetIndex: targetIndex });
+            setLibraryStatus(result.message);
+            await refreshLibrarySnapshot();
         });
     }
 
@@ -1037,6 +1113,20 @@ function initWorkshop() {
             } else {
                 void window.spikeApi.openExternalUrl(url);
             }
+        }
+    });
+
+    webview.addEventListener("ipc-message", async (e) => {
+        if (e.channel === "smm-add-workshop-mod") {
+            const workshopId = e.args[0];
+            if (!workshopId) return;
+            setLibraryStatus(`Attempting to add mod ${workshopId}...`);
+            // For now, if we don't have a direct 'add workshop mod' endpoint in the api
+            // we can trigger the equivalent. Usually 'importLibraryMods' or 'invoke' something.
+            // Assuming we just alert or call a known steamCmd probe endpoint.
+            setLibraryStatus(`Workshop feature needs steamCmd connection to fetch: ${workshopId}`);
+            // Let's force a snapshot refresh just in case
+            await refreshLibrarySnapshot();
         }
     });
 

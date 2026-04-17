@@ -6,6 +6,7 @@ import type {
     LibraryCompatibilityReportRequest,
     LibraryImportResult,
     LibraryMoveDirectionRequest,
+    LibraryReorderRequest,
     ScanLocalModsResult,
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
@@ -65,6 +66,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:setLibraryModEnabled", request) as Promise<LibraryActionResult>,
     moveLibraryMod: (request: LibraryMoveDirectionRequest) =>
         ipcRenderer.invoke("spike:moveLibraryMod", request) as Promise<LibraryActionResult>,
+    reorderLibraryMod: (request: LibraryReorderRequest) =>
+        ipcRenderer.invoke("spike:reorderLibraryMod", request) as Promise<LibraryActionResult>,
     uninstallLibraryMod: (modId: number) =>
         ipcRenderer.invoke("spike:uninstallLibraryMod", modId) as Promise<LibraryActionResult>,
     checkLibraryUpdates: () =>

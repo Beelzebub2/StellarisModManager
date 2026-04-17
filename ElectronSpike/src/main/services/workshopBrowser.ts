@@ -145,7 +145,7 @@ function extractWorkshopIds(html: string): string[] {
     return ids;
 }
 
-async function scrapeSteamWorkshopPage(
+export async function scrapeSteamWorkshopPage(
     sortMode: WorkshopSortMode,
     searchText: string,
     steamPage: number

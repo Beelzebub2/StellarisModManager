@@ -2190,3 +2190,25 @@ pre {
         display: none;
     }
 }
+/* Drag and Drop Load Order */
+.library-row[draggable="true"] {
+    cursor: grab;
+}
+
+.library-row[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.library-row.is-dragging {
+    opacity: 0.4;
+    background-color: var(--accent-subtle);
+    transform: scale(0.98);
+}
+
+.library-row.drag-over-top {
+    box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+.library-row.drag-over-bottom {
+    box-shadow: inset 0 -2px 0 0 var(--accent);
+}
