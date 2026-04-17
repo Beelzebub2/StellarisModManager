@@ -2015,6 +2015,18 @@ button:disabled {
     align-items: center;
 }
 
+.path-picker-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.path-picker-row .button-secondary {
+    min-width: 94px;
+    white-space: nowrap;
+}
+
 .settings-kv {
     display: grid;
     grid-template-columns: minmax(130px, 160px) 1fr;

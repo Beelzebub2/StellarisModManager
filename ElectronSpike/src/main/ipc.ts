@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, clipboard, dialog, ipcMain, shell } from "electron";
 import type {
+    DirectoryPickerRequest,
     DownloadActionRequest,
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
@@ -85,6 +86,7 @@ const CHANNELS = {
     settingsValidate: "spike:validateSettings",
     settingsPalettes: "spike:getThemePaletteOptions",
     settingsRuntimes: "spike:getDownloadRuntimeOptions",
+    settingsPickDirectory: "spike:pickDirectory",
     dbSummary: "spike:getDbSummary",
     librarySnapshot: "spike:getLibrarySnapshot",
     libraryCreateProfile: "spike:createLibraryProfile",
@@ -183,6 +185,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.settingsValidate);
     ipcMain.removeHandler(CHANNELS.settingsPalettes);
     ipcMain.removeHandler(CHANNELS.settingsRuntimes);
+    ipcMain.removeHandler(CHANNELS.settingsPickDirectory);
     ipcMain.removeHandler(CHANNELS.dbSummary);
     ipcMain.removeHandler(CHANNELS.librarySnapshot);
     ipcMain.removeHandler(CHANNELS.libraryCreateProfile);
@@ -259,6 +262,23 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.settingsRuntimes, async () => {
         return getDownloadRuntimeOptions();
+    });
+
+    ipcMain.handle(CHANNELS.settingsPickDirectory, async (_event, request?: DirectoryPickerRequest) => {
+        const defaultPath = (request?.defaultPath ?? "").trim();
+        const title = (request?.title ?? "Select folder").trim() || "Select folder";
+
+        const selection = await dialog.showOpenDialog({
+            title,
+            defaultPath: defaultPath || undefined,
+            properties: ["openDirectory", "createDirectory", "dontAddToRecent"]
+        });
+
+        if (selection.canceled || selection.filePaths.length === 0) {
+            return null;
+        }
+
+        return selection.filePaths[0] ?? null;
     });
 
     ipcMain.handle(CHANNELS.dbSummary, async () => {

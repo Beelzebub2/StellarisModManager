@@ -481,8 +481,11 @@
                                     <h3>Game Installation</h3>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsGamePathInput">Game path</label>
-                                        <input id="settingsGamePathInput" class="field-input mono" type="text"
-                                            placeholder="Path to Stellaris installation folder" />
+                                        <div class="path-picker-row">
+                                            <input id="settingsGamePathInput" class="field-input mono" type="text"
+                                                placeholder="Path to Stellaris installation folder" />
+                                            <button id="settingsGamePathBrowse" type="button" class="button-secondary">Browse...</button>
+                                        </div>
                                     </div>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsModsPathInput">Mods path</label>

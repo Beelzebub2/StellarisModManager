@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+    DirectoryPickerRequest,
     CompatibilityTagCatalogResult,
     DbSummary,
     DownloadActionRequest,
@@ -55,6 +56,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:getThemePaletteOptions") as Promise<string[]>,
     getDownloadRuntimeOptions: () =>
         ipcRenderer.invoke("spike:getDownloadRuntimeOptions") as Promise<string[]>,
+    pickDirectory: (request?: DirectoryPickerRequest) =>
+        ipcRenderer.invoke("spike:pickDirectory", request) as Promise<string | null>,
     getDbSummary: () => ipcRenderer.invoke("spike:getDbSummary") as Promise<DbSummary | null>,
     getLibrarySnapshot: () =>
         ipcRenderer.invoke("spike:getLibrarySnapshot") as Promise<LibrarySnapshot>,

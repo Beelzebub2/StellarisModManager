@@ -44,6 +44,11 @@ export interface SettingsAutoDetectResult {
     settings: SettingsSnapshot;
 }
 
+export interface DirectoryPickerRequest {
+    title?: string;
+    defaultPath?: string;
+}
+
 export interface DbSummary {
     modCount: number;
     profileCount: number;
@@ -461,6 +466,7 @@ export interface SpikeApi {
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;
     getThemePaletteOptions: () => Promise<string[]>;
     getDownloadRuntimeOptions: () => Promise<string[]>;
+    pickDirectory: (request?: DirectoryPickerRequest) => Promise<string | null>;
     getDbSummary: () => Promise<DbSummary | null>;
     getLibrarySnapshot: () => Promise<LibrarySnapshot>;
     createLibraryProfile: (name: string) => Promise<LibraryActionResult>;

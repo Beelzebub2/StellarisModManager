@@ -2213,6 +2213,20 @@ function hookSettingsControls() {
     for (const id of dirtyCheckboxes) {
         byId(id)?.addEventListener("change", () => markSettingsDirty(true));
     }
+
+    byId("settingsGamePathBrowse")?.addEventListener("click", async () => {
+        const selectedPath = await window.spikeApi.pickDirectory({
+            title: "Select Stellaris installation folder",
+            defaultPath: getInputValue("settingsGamePathInput")
+        });
+
+        if (!selectedPath) {
+            return;
+        }
+
+        setInputValue("settingsGamePathInput", selectedPath);
+        markSettingsDirty(true);
+    });
 }
 
 function hookLibraryControls() {
