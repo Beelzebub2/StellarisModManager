@@ -43,20 +43,13 @@
                 <span class="update-banner-icon" data-icon="download"></span>
                 <span class="update-banner-text">
                     <strong id="updateBannerVersion">Update available</strong>
-                    <span id="updateBannerMessage" class="muted">A new version is ready to download.</span>
+                    <span id="updateBannerMessage" class="muted">A new version is ready to install.</span>
                 </span>
             </div>
             <div class="update-banner-actions">
-                <button id="updateBannerDownload" type="button">Download</button>
+                <button id="updateBannerUpdate" type="button">Update now</button>
+                <button id="updateBannerSkip" type="button" class="button-secondary">Skip this version</button>
                 <button id="updateBannerDismiss" type="button" class="button-secondary">Dismiss</button>
-            </div>
-            <!-- Inline download progress -->
-            <div id="updateBannerProgress" class="update-banner-progress hidden">
-                <div class="update-progress-bar update-progress-bar-compact">
-                    <span id="updateBannerProgressFill" style="width: 0%"></span>
-                </div>
-                <span id="updateBannerProgressText" class="update-banner-progress-text">0%</span>
-                <button id="updateBannerInstall" type="button" class="hidden">Install now</button>
             </div>
         </div>
 
@@ -569,25 +562,10 @@
                                         <pre id="settingsUpdateChangelog" class="update-changelog"></pre>
                                         <div class="update-available-actions">
                                             <button id="settingsDownloadUpdateBtn" type="button">
-                                                <span class="nav-icon" data-icon="download"></span> Download &amp; Install
+                                                <span class="nav-icon" data-icon="download"></span> Update now
                                             </button>
                                             <button id="settingsSkipVersionBtn" type="button" class="button-secondary">Skip this version</button>
                                             <button id="settingsViewReleaseBtn" type="button" class="button-secondary">View release</button>
-                                        </div>
-
-                                        <!-- Download progress (hidden until downloading) -->
-                                        <div id="settingsUpdateProgress" class="update-progress hidden">
-                                            <div class="update-progress-header">
-                                                <span id="settingsUpdateProgressText">Downloading...</span>
-                                                <span id="settingsUpdateProgressPercent">0%</span>
-                                            </div>
-                                            <div class="update-progress-bar">
-                                                <span id="settingsUpdateProgressFill" style="width: 0%"></span>
-                                            </div>
-                                            <div class="update-progress-stats">
-                                                <span id="settingsUpdateProgressSpeed">--</span>
-                                                <span id="settingsUpdateProgressEta">--</span>
-                                            </div>
                                         </div>
                                     </div>
 

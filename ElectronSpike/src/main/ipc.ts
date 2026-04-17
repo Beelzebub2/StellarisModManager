@@ -73,8 +73,7 @@ import {
 } from "./services/workshopBrowser";
 import {
     checkAppUpdate,
-    downloadAppUpdate,
-    launchInstaller
+    startAppUpdate
 } from "./services/appUpdater";
 
 const CHANNELS = {
@@ -130,10 +129,8 @@ const CHANNELS = {
     workshopQuery: "spike:queryWorkshopMods",
     workshopClearCache: "spike:clearWorkshopCache",
     appUpdateCheck: "spike:checkAppUpdate",
-    appUpdateDownload: "spike:downloadAppUpdate",
-    appUpdateLaunch: "spike:launchAppUpdate",
-    appUpdateSkip: "spike:skipAppVersion",
-    appUpdateProgress: "spike:appUpdateProgress"
+    appUpdateStart: "spike:startAppUpdate",
+    appUpdateSkip: "spike:skipAppVersion"
 } as const;
 
 function buildSystemSummary(): SystemSummary {
@@ -228,8 +225,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.workshopQuery);
     ipcMain.removeHandler(CHANNELS.workshopClearCache);
     ipcMain.removeHandler(CHANNELS.appUpdateCheck);
-    ipcMain.removeHandler(CHANNELS.appUpdateDownload);
-    ipcMain.removeHandler(CHANNELS.appUpdateLaunch);
+    ipcMain.removeHandler(CHANNELS.appUpdateStart);
     ipcMain.removeHandler(CHANNELS.appUpdateSkip);
 
     ipcMain.handle(CHANNELS.ping, async () => {
@@ -527,14 +523,8 @@ export function registerIpcHandlers(): void {
         return checkAppUpdate();
     });
 
-    ipcMain.handle(CHANNELS.appUpdateDownload, async (event, downloadUrl: string, version: string) => {
-        return downloadAppUpdate(downloadUrl, version, (progress) => {
-            event.sender.send(CHANNELS.appUpdateProgress, progress);
-        });
-    });
-
-    ipcMain.handle(CHANNELS.appUpdateLaunch, async (_event, installerPath: string) => {
-        return launchInstaller(installerPath);
+    ipcMain.handle(CHANNELS.appUpdateStart, async (_event, release) => {
+        return startAppUpdate(release);
     });
 
     ipcMain.handle(CHANNELS.appUpdateSkip, async (_event, version: string) => {

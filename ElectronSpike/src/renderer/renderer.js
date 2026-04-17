@@ -2413,6 +2413,106 @@ function hookLibraryControls() {
     });
 }
 
+/* ============================================================
+   APP UPDATES
+   ============================================================ */
+state.appUpdate = { release: null, message: "Not checked yet.", busy: false };
+
+async function checkForAppUpdates(source = "auto") {
+    if (state.appUpdate.busy) return;
+    state.appUpdate.busy = true;
+    const statusEl = byId("settingsUpdateStatus");
+    if (source === "manual" && statusEl) statusEl.textContent = "Checking for updates…";
+    try {
+        const result = await window.spikeApi.checkAppUpdate();
+        state.appUpdate.message = result.message;
+        const release = result.hasUpdate ? result.release : null;
+        const skipped = state.settingsModel?.skippedAppVersion || "";
+        state.appUpdate.release = release && release.version !== skipped ? release : null;
+    } catch (err) {
+        state.appUpdate.release = null;
+        state.appUpdate.message = `Update check failed: ${err?.message || err}`;
+    } finally {
+        state.appUpdate.busy = false;
+        renderAppUpdateBanner();
+        renderSettingsAppUpdate();
+    }
+}
+
+function renderAppUpdateBanner() {
+    const banner = byId("updateBanner");
+    if (!banner) return;
+    const release = state.appUpdate.release;
+    if (!release) {
+        banner.classList.add("hidden");
+        return;
+    }
+    const versionEl = byId("updateBannerVersion");
+    const messageEl = byId("updateBannerMessage");
+    if (versionEl) versionEl.textContent = `v${release.version} available`;
+    if (messageEl) {
+        messageEl.textContent = release.critical
+            ? "Critical update — install as soon as possible."
+            : "A new version is ready to install.";
+    }
+    banner.classList.remove("hidden");
+}
+
+function renderSettingsAppUpdate() {
+    const statusEl = byId("settingsUpdateStatus");
+    if (statusEl) statusEl.textContent = state.appUpdate.message || "Not checked yet.";
+
+    const card = byId("settingsUpdateAvailable");
+    const release = state.appUpdate.release;
+    if (!card) return;
+    if (!release) {
+        card.classList.add("hidden");
+        return;
+    }
+    card.classList.remove("hidden");
+    const badge = byId("settingsUpdateVersionBadge");
+    if (badge) badge.textContent = `v${release.version}`;
+    const changelog = byId("settingsUpdateChangelog");
+    if (changelog) changelog.textContent = release.changelog || "See release notes on GitHub.";
+}
+
+async function launchAppUpdateFlow() {
+    const release = state.appUpdate.release;
+    if (!release) return;
+    const result = await window.spikeApi.startAppUpdate(release);
+    if (!result?.ok) {
+        state.appUpdate.message = result?.message || "Could not start updater.";
+        renderSettingsAppUpdate();
+    }
+    // On success the main process quits this app; no further UI work.
+}
+
+async function skipCurrentAppVersion() {
+    const release = state.appUpdate.release;
+    if (!release) return;
+    await window.spikeApi.skipAppVersion(release.version);
+    if (state.settingsModel) state.settingsModel.skippedAppVersion = release.version;
+    state.appUpdate.release = null;
+    renderAppUpdateBanner();
+    renderSettingsAppUpdate();
+}
+
+function hookAppUpdateControls() {
+    byId("updateBannerUpdate")?.addEventListener("click", () => void launchAppUpdateFlow());
+    byId("updateBannerSkip")?.addEventListener("click", () => void skipCurrentAppVersion());
+    byId("updateBannerDismiss")?.addEventListener("click", () => {
+        byId("updateBanner")?.classList.add("hidden");
+    });
+
+    byId("settingsCheckUpdateBtn")?.addEventListener("click", () => void checkForAppUpdates("manual"));
+    byId("settingsDownloadUpdateBtn")?.addEventListener("click", () => void launchAppUpdateFlow());
+    byId("settingsSkipVersionBtn")?.addEventListener("click", () => void skipCurrentAppVersion());
+    byId("settingsViewReleaseBtn")?.addEventListener("click", () => {
+        const url = state.appUpdate.release?.releaseUrl;
+        if (url) void window.spikeApi.openExternalUrl(url);
+    });
+}
+
 function hookGlobalControls() {
     byId("tabVersion")?.addEventListener("click", () => activateTab("version"));
     byId("tabLibrary")?.addEventListener("click", () => activateTab("library"));
@@ -2484,6 +2584,7 @@ async function init() {
     hookSettingsControls();
     hookLibraryControls();
     hookGlobalControls();
+    hookAppUpdateControls();
     initWorkshop();
     renderSettingsSubtabs();
 
@@ -2533,6 +2634,10 @@ async function init() {
 
     if (state.stellarisyncPollingHandle) clearInterval(state.stellarisyncPollingHandle);
     state.stellarisyncPollingHandle = setInterval(() => void refreshStellarisyncStatus(), 120000);
+
+    if (state.settingsModel?.autoCheckAppUpdates !== false) {
+        void checkForAppUpdates("auto");
+    }
 }
 
 void init();

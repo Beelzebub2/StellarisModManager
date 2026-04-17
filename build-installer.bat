@@ -11,6 +11,8 @@ set "INSTALLER_DIR=%ROOT%installer"
 set "OUTPUT_DIR=%ROOT%Output\Installer"
 set "UNPACKED_DIR=%APP_DIR%\release\win-unpacked"
 set "ISS_FILE=%INSTALLER_DIR%\stellaris-mod-manager.iss"
+set "UPDATER_DIR=%ROOT%updater"
+set "UPDATER_EXE=%UPDATER_DIR%\target\release\smm-updater.exe"
 
 rem ----- Arg 1: configuration (kept for backwards compatibility; not used by Electron) -----
 set "CONFIG=%~1"
@@ -45,6 +47,12 @@ rem ----- 1. Resolve tools -----
 where npm >nul 2>nul
 if errorlevel 1 (
     echo ERROR: npm was not found in PATH. Install Node.js 18+ and retry.
+    exit /b 1
+)
+
+where cargo >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: cargo was not found in PATH. Install Rust 1.79+ ^(https://rustup.rs^) and retry.
     exit /b 1
 )
 
@@ -110,6 +118,29 @@ if not exist "%UNPACKED_DIR%\Stellaris Mod Manager.exe" (
     echo ERROR: Expected unpacked app at "%UNPACKED_DIR%" but the executable is missing.
     echo Contents:
     dir /B "%UNPACKED_DIR%" 2>nul
+    exit /b 1
+)
+
+rem ----- 2b. Build the native updater companion -----
+pushd "%UPDATER_DIR%" >nul
+echo Building smm-updater (release)...
+call cargo build --release
+if errorlevel 1 (
+    echo Updater build failed.
+    popd >nul
+    exit /b 1
+)
+popd >nul
+
+if not exist "%UPDATER_EXE%" (
+    echo ERROR: Expected updater binary at "%UPDATER_EXE%" but it is missing.
+    exit /b 1
+)
+
+echo Bundling updater into Electron payload...
+copy /Y "%UPDATER_EXE%" "%UNPACKED_DIR%\smm-updater.exe" >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy updater into "%UNPACKED_DIR%".
     exit /b 1
 )
 

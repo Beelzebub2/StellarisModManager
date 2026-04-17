@@ -392,6 +392,7 @@ export interface AppReleaseInfo {
     downloadUrl: string;
     releaseUrl: string;
     releasedAt: string;
+    sha256: string | null;
 }
 
 export interface AppUpdateCheckResult {
@@ -403,21 +404,9 @@ export interface AppUpdateCheckResult {
     checkedAtUtc: string;
 }
 
-export interface AppUpdateDownloadProgress {
-    phase: "downloading" | "completed" | "failed";
-    percent: number;
-    downloadedBytes: number;
-    totalBytes: number;
-    bytesPerSecond: number;
-    etaSeconds: number;
-    message: string;
-    installerPath: string | null;
-}
-
-export interface AppUpdateDownloadResult {
+export interface StartAppUpdateResult {
     ok: boolean;
     message: string;
-    installerPath: string | null;
 }
 
 export type ModActionState = "not-installed" | "queued" | "installing" | "installed" | "uninstalling" | "error";
@@ -521,8 +510,6 @@ export interface SpikeApi {
     getInstalledWorkshopIds: () => Promise<string[]>;
     onDownloadQueueEvent: (handler: (event: DownloadQueueEvent) => void) => () => void;
     checkAppUpdate: () => Promise<AppUpdateCheckResult>;
-    downloadAppUpdate: (downloadUrl: string, version: string) => Promise<AppUpdateDownloadResult>;
-    launchAppUpdate: (installerPath: string) => Promise<boolean>;
+    startAppUpdate: (release: AppReleaseInfo) => Promise<StartAppUpdateResult>;
     skipAppVersion: (version: string) => Promise<SettingsSaveResult>;
-    onAppUpdateProgress: (handler: (progress: AppUpdateDownloadProgress) => void) => () => void;
 }

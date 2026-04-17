@@ -36,12 +36,13 @@ function configureWritableElectronDataPaths(): void {
 configureWritableElectronDataPaths();
 
 function getRendererEntryPath(): string {
-    const fromWorkspace = path.join(app.getAppPath(), "src", "renderer", "index.html");
-    if (fs.existsSync(fromWorkspace)) {
-        return fromWorkspace;
-    }
+    const candidates = [
+        path.join(app.getAppPath(), "src", "renderer", "index.html"),
+        path.join(app.getAppPath(), "dist", "renderer", "index.html"),
+        path.join(__dirname, "renderer", "index.html")
+    ];
 
-    return path.join(__dirname, "renderer", "index.html");
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
 }
 
 function createMainWindow(): void {
@@ -77,7 +78,12 @@ function createMainWindow(): void {
         logError("No app window icon found; OS may show a generic icon.");
     }
     logInfo(`Loading renderer from ${entryPath}`);
-    void mainWindow.loadFile(entryPath);
+    if (!fs.existsSync(entryPath)) {
+        logError(`Renderer entry file does not exist: ${entryPath}`);
+        void mainWindow.loadURL("data:text/html,<html><body style='font-family:Segoe UI,sans-serif;background:#0e1117;color:#e2e8f0;padding:24px'><h2>Renderer bootstrap failed</h2><p>index.html could not be found in the packaged app.</p></body></html>");
+    } else {
+        void mainWindow.loadFile(entryPath);
+    }
 
     mainWindow.webContents.on("console-message", (event, ...legacyArgs: unknown[]) => {
         const payload = event as {

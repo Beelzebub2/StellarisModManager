@@ -30,6 +30,20 @@ jobs:
           cache: npm
           cache-dependency-path: ElectronSpike/package-lock.json
 
+      - name: Setup Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            updater/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('updater/Cargo.lock', 'updater/Cargo.toml') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
       - name: Resolve Release Version
         id: version
         shell: pwsh
@@ -74,9 +88,13 @@ jobs:
             throw "No installer was produced in Output/Installer."
           }
 
+          $sha = (Get-FileHash -Algorithm SHA256 -Path $installer.FullName).Hash.ToLower()
+
           Write-Host "Installer: $($installer.FullName)"
+          Write-Host "SHA-256:   $sha"
           "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
           "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+          "sha256=$sha" >> $env:GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -116,6 +134,7 @@ jobs:
             releasedAt = (Get-Date).ToUniversalTime().ToString("o")
             changelog = "See GitHub release notes"
             critical = $false
+            sha256 = "${{ steps.installer.outputs.sha256 }}"
             source = "github-actions"
           } | ConvertTo-Json
 

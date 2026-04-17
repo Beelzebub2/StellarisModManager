@@ -36,9 +36,9 @@ import type {
     SystemSummary,
     WorkshopBrowserQuery,
     WorkshopBrowserResult,
+    AppReleaseInfo,
     AppUpdateCheckResult,
-    AppUpdateDownloadProgress,
-    AppUpdateDownloadResult
+    StartAppUpdateResult
 } from "./shared/types";
 
 const api: SpikeApi = {
@@ -169,22 +169,10 @@ const api: SpikeApi = {
     },
     checkAppUpdate: () =>
         ipcRenderer.invoke("spike:checkAppUpdate") as Promise<AppUpdateCheckResult>,
-    downloadAppUpdate: (downloadUrl: string, version: string) =>
-        ipcRenderer.invoke("spike:downloadAppUpdate", downloadUrl, version) as Promise<AppUpdateDownloadResult>,
-    launchAppUpdate: (installerPath: string) =>
-        ipcRenderer.invoke("spike:launchAppUpdate", installerPath) as Promise<boolean>,
+    startAppUpdate: (release: AppReleaseInfo) =>
+        ipcRenderer.invoke("spike:startAppUpdate", release) as Promise<StartAppUpdateResult>,
     skipAppVersion: (version: string) =>
-        ipcRenderer.invoke("spike:skipAppVersion", version) as Promise<SettingsSaveResult>,
-    onAppUpdateProgress: (handler: (progress: AppUpdateDownloadProgress) => void) => {
-        const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
-            handler(payload as AppUpdateDownloadProgress);
-        };
-
-        ipcRenderer.on("spike:appUpdateProgress", listener);
-        return () => {
-            ipcRenderer.removeListener("spike:appUpdateProgress", listener);
-        };
-    }
+        ipcRenderer.invoke("spike:skipAppVersion", version) as Promise<SettingsSaveResult>
 };
 
 contextBridge.exposeInMainWorld("spikeApi", api);

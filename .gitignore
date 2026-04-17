@@ -23,6 +23,19 @@ yarn-error.log*
 .env
 .env.*
 
+## Rust updater
+
+# Cargo build output (very large and fully generated)
+updater/target/
+
+## Local Python tooling
+
+# Local virtual environment used in this workspace
+.venv/
+venv/
+__pycache__/
+*.pyc
+
 ## IDE / OS
 
 .vs/

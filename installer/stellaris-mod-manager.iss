@@ -47,10 +47,25 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 Compression=lzma2/ultra64
 SolidCompression=yes
-WizardStyle=modern
+WizardStyle=modern dynamic windows11
 OutputDir={#OutputDir}
 OutputBaseFilename=StellarisModManager-Setup-{#MyAppVersion}
 SetupIconFile={#SourceDir}\resources\assets\app.ico
+
+; Light-mode visuals
+WizardImageFile={#SourceDir}\resources\assets\wizard-banner.bmp
+WizardImageAlphaFormat=defined
+WizardImageBackColor=$F0F0F0
+WizardSmallImageFile={#SourceDir}\resources\assets\wizard-banner-small.bmp
+WizardSmallImageBackColor=$F0F0F0
+
+; Dark-mode visuals
+WizardImageFileDynamicDark={#SourceDir}\resources\assets\wizard-banner.bmp
+WizardImageBackColorDynamicDark=$202020
+WizardSmallImageFileDynamicDark={#SourceDir}\resources\assets\wizard-banner-small.bmp
+WizardSmallImageBackColorDynamicDark=$202020
+
+WizardImageStretch=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
 CloseApplications=force
 RestartApplications=no
@@ -62,8 +77,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-; Pull in the entire electron-builder win-unpacked folder.
+; Pull in the entire electron-builder win-unpacked folder (which already
+; contains smm-updater.exe, copied there by build-installer.bat).
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Hard-require the updater companion so a packaging regression fails the build.
+Source: "{#SourceDir}\smm-updater.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

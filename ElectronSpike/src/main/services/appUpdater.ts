@@ -2,20 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import https from "node:https";
 import http from "node:http";
-import { app, shell } from "electron";
+import { spawn } from "node:child_process";
+import { app } from "electron";
 import type {
     AppReleaseInfo,
     AppUpdateCheckResult,
-    AppUpdateDownloadProgress,
-    AppUpdateDownloadResult
+    StartAppUpdateResult
 } from "../../shared/types";
 import { loadSettingsSnapshot, saveSettingsSnapshot } from "./settings";
 import { logError, logInfo } from "./logger";
 
 const STELLARISYNC_BASE_URL = "https://stellarisync.rrmtools.uk";
 const CHECK_TIMEOUT_MS = 12000;
-
-let activeDownloadAbort: (() => void) | null = null;
+const UPDATER_EXE_NAME = "smm-updater.exe";
 
 function compareVersions(a: string, b: string): number {
     const pa = (a || "0.0.0").split(".").map(Number);
@@ -49,7 +48,7 @@ function fetchJson(urlString: string): Promise<unknown> {
             res.on("end", () => {
                 try {
                     resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-                } catch (e) {
+                } catch {
                     reject(new Error("Invalid JSON response"));
                 }
             });
@@ -77,7 +76,8 @@ export async function checkAppUpdate(): Promise<AppUpdateCheckResult> {
             critical: data.critical === true,
             downloadUrl: String(data.downloadUrl || ""),
             releaseUrl: String(data.releaseUrl || ""),
-            releasedAt: String(data.releasedAt || now)
+            releasedAt: String(data.releasedAt || now),
+            sha256: typeof data.sha256 === "string" ? data.sha256 : null
         };
 
         if (!release.version) {
@@ -126,195 +126,68 @@ export async function checkAppUpdate(): Promise<AppUpdateCheckResult> {
     }
 }
 
-export function downloadAppUpdate(
-    downloadUrl: string,
-    version: string,
-    onProgress: (progress: AppUpdateDownloadProgress) => void
-): Promise<AppUpdateDownloadResult> {
-    // Cancel any active download
-    if (activeDownloadAbort) {
-        activeDownloadAbort();
-        activeDownloadAbort = null;
-    }
+function resolveUpdaterExecutable(): string | null {
+    const candidates = [
+        // Installed layout: updater sits next to the main exe (electron-builder win-unpacked root)
+        path.join(path.dirname(app.getPath("exe")), UPDATER_EXE_NAME),
+        // Packaged resources fallback
+        path.join(process.resourcesPath || "", UPDATER_EXE_NAME),
+        // Dev fallback: Cargo release build inside the repo
+        path.join(app.getAppPath(), "..", "updater", "target", "release", UPDATER_EXE_NAME),
+        path.join(app.getAppPath(), "..", "..", "updater", "target", "release", UPDATER_EXE_NAME)
+    ];
 
-    const tempDir = path.join(app.getPath("temp"), "StellarisModManager-Updates");
-    fs.mkdirSync(tempDir, { recursive: true });
-    const fileName = `StellarisModManager-Setup-${version}.exe`;
-    const filePath = path.join(tempDir, fileName);
-
-    // If already downloaded, return immediately
-    if (fs.existsSync(filePath)) {
-        const stat = fs.statSync(filePath);
-        if (stat.size > 1_000_000) {
-            logInfo(`Update installer already cached: ${filePath}`);
-            onProgress({
-                phase: "completed",
-                percent: 100,
-                downloadedBytes: stat.size,
-                totalBytes: stat.size,
-                bytesPerSecond: 0,
-                etaSeconds: 0,
-                message: "Download complete.",
-                installerPath: filePath
-            });
-            return Promise.resolve({ ok: true, message: "Installer ready.", installerPath: filePath });
-        }
-        // Too small — likely a partial download, remove it
-        fs.unlinkSync(filePath);
-    }
-
-    return new Promise((resolve) => {
-        let aborted = false;
-        activeDownloadAbort = () => { aborted = true; };
-
-        const url = new URL(downloadUrl);
-        const client = url.protocol === "https:" ? https : http;
-
-        function doRequest(reqUrl: URL, redirects: number): void {
-            if (redirects > 5) {
-                onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: "Too many redirects.", installerPath: null });
-                resolve({ ok: false, message: "Too many redirects.", installerPath: null });
-                return;
+    for (const candidate of candidates) {
+        try {
+            if (candidate && fs.existsSync(candidate)) {
+                return candidate;
             }
-
-            const reqClient = reqUrl.protocol === "https:" ? https : http;
-            const req = reqClient.get(reqUrl, { timeout: 30000 }, (res) => {
-                if (aborted) { res.destroy(); return; }
-
-                if (res.statusCode && res.statusCode >= 301 && res.statusCode <= 308 && res.headers.location) {
-                    res.resume();
-                    try {
-                        doRequest(new URL(res.headers.location), redirects + 1);
-                    } catch {
-                        onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: "Invalid redirect URL.", installerPath: null });
-                        resolve({ ok: false, message: "Invalid redirect URL.", installerPath: null });
-                    }
-                    return;
-                }
-
-                if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-                    res.resume();
-                    const msg = `Download failed with HTTP ${res.statusCode}.`;
-                    onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: msg, installerPath: null });
-                    resolve({ ok: false, message: msg, installerPath: null });
-                    return;
-                }
-
-                const totalBytes = parseInt(res.headers["content-length"] || "0", 10) || 0;
-                let downloadedBytes = 0;
-                const startTime = Date.now();
-                let lastProgressTime = startTime;
-
-                const fileStream = fs.createWriteStream(filePath);
-
-                res.on("data", (chunk: Buffer) => {
-                    if (aborted) { res.destroy(); fileStream.destroy(); return; }
-                    downloadedBytes += chunk.length;
-
-                    const now = Date.now();
-                    // Throttle progress events to every 100ms
-                    if (now - lastProgressTime >= 100 || downloadedBytes >= totalBytes) {
-                        lastProgressTime = now;
-                        const elapsed = (now - startTime) / 1000;
-                        const bytesPerSecond = elapsed > 0 ? downloadedBytes / elapsed : 0;
-                        const percent = totalBytes > 0 ? Math.min(99, Math.round((downloadedBytes / totalBytes) * 100)) : 0;
-                        const remaining = totalBytes > 0 && bytesPerSecond > 0
-                            ? Math.ceil((totalBytes - downloadedBytes) / bytesPerSecond)
-                            : 0;
-
-                        onProgress({
-                            phase: "downloading",
-                            percent,
-                            downloadedBytes,
-                            totalBytes,
-                            bytesPerSecond,
-                            etaSeconds: remaining,
-                            message: `Downloading... ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`,
-                            installerPath: null
-                        });
-                    }
-                });
-
-                res.pipe(fileStream);
-
-                fileStream.on("finish", () => {
-                    if (aborted) return;
-                    activeDownloadAbort = null;
-                    logInfo(`Update downloaded: ${filePath} (${formatBytes(downloadedBytes)})`);
-                    onProgress({
-                        phase: "completed",
-                        percent: 100,
-                        downloadedBytes,
-                        totalBytes: downloadedBytes,
-                        bytesPerSecond: 0,
-                        etaSeconds: 0,
-                        message: "Download complete.",
-                        installerPath: filePath
-                    });
-                    resolve({ ok: true, message: "Download complete.", installerPath: filePath });
-                });
-
-                fileStream.on("error", (err) => {
-                    activeDownloadAbort = null;
-                    const msg = `Write error: ${err.message}`;
-                    logError(msg);
-                    onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: msg, installerPath: null });
-                    resolve({ ok: false, message: msg, installerPath: null });
-                });
-
-                res.on("error", (err) => {
-                    activeDownloadAbort = null;
-                    fileStream.destroy();
-                    const msg = `Network error: ${err.message}`;
-                    logError(msg);
-                    onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: msg, installerPath: null });
-                    resolve({ ok: false, message: msg, installerPath: null });
-                });
-            });
-
-            req.on("error", (err) => {
-                activeDownloadAbort = null;
-                const msg = `Request error: ${err.message}`;
-                logError(msg);
-                onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: msg, installerPath: null });
-                resolve({ ok: false, message: msg, installerPath: null });
-            });
-
-            req.on("timeout", () => {
-                req.destroy();
-                activeDownloadAbort = null;
-                const msg = "Download timed out.";
-                onProgress({ phase: "failed", percent: 0, downloadedBytes: 0, totalBytes: 0, bytesPerSecond: 0, etaSeconds: 0, message: msg, installerPath: null });
-                resolve({ ok: false, message: msg, installerPath: null });
-            });
+        } catch {
+            // ignore and keep searching
         }
-
-        doRequest(url, 0);
-    });
+    }
+    return null;
 }
 
-export async function launchInstaller(installerPath: string): Promise<boolean> {
-    if (!installerPath || !fs.existsSync(installerPath)) {
-        logError(`Installer not found: ${installerPath}`);
-        return false;
+export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppUpdateResult> {
+    if (!release || !release.downloadUrl || !release.version) {
+        return { ok: false, message: "Missing download URL or version." };
+    }
+
+    const updaterPath = resolveUpdaterExecutable();
+    if (!updaterPath) {
+        logError(`Updater executable '${UPDATER_EXE_NAME}' not found next to app.`);
+        return {
+            ok: false,
+            message: `Updater companion not installed. Please download the latest installer manually.`
+        };
+    }
+
+    const args = ["--url", release.downloadUrl, "--version", release.version];
+    if (release.sha256) {
+        args.push("--sha256", release.sha256);
+    } else {
+        logInfo("Launching updater without SHA-256 — integrity check will be skipped.");
+    }
+    if (release.releaseUrl) {
+        args.push("--release-url", release.releaseUrl);
     }
 
     try {
-        await shell.openPath(installerPath);
-        logInfo(`Launched installer: ${installerPath}`);
-        // Give the installer a moment to start, then quit the app
-        setTimeout(() => app.quit(), 1500);
-        return true;
+        const child = spawn(updaterPath, args, {
+            detached: true,
+            stdio: "ignore",
+            windowsHide: false
+        });
+        child.unref();
+        logInfo(`Spawned updater: ${updaterPath} (pid=${child.pid ?? "?"})`);
     } catch (error) {
         const msg = error instanceof Error ? error.message : "Unknown error";
-        logError(`Failed to launch installer: ${msg}`);
-        return false;
+        logError(`Failed to spawn updater: ${msg}`);
+        return { ok: false, message: `Failed to start updater: ${msg}` };
     }
-}
 
-function formatBytes(bytes: number): string {
-    if (bytes <= 0) return "0 B";
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    // Give the updater a moment to draw its window before the app vanishes.
+    setTimeout(() => app.quit(), 600);
+    return { ok: true, message: "Updater launched." };
 }
