@@ -20,6 +20,7 @@ import { logError, logInfo } from "./logger";
 
 const STELLARIS_APP_ID = "281990";
 const MAX_CONCURRENT_DOWNLOADS = 3;
+const MAX_STEAMCMD_BATCH_ITEMS = 8;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
 
 type EventEmitter = (event: DownloadQueueEvent) => void;
@@ -31,6 +32,13 @@ interface RunningJob {
     action: "install" | "uninstall";
     process: ChildProcess | null;
     cancelled: boolean;
+    sharedProcess: boolean;
+}
+
+interface InstallExecutionResult {
+    ok: boolean;
+    installPath: string;
+    message: string;
 }
 
 interface InstallStateStore {
@@ -470,6 +478,287 @@ async function runSteamCmdDownload(
     return { ok: true, installPath: deployed.installPath, message: deployed.message };
 }
 
+async function runSteamCmdDownloadBatch(
+    entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }>,
+    jobsByWorkshopId: Map<string, RunningJob>,
+    reportProgress: (workshopId: string, progress: number, message: string) => void
+): Promise<Map<string, InstallExecutionResult>> {
+    const results = new Map<string, InstallExecutionResult>();
+    if (entries.length === 0) {
+        return results;
+    }
+
+    if (entries.length === 1) {
+        const entry = entries[0];
+        const job = jobsByWorkshopId.get(entry.workshopId);
+        if (!job) {
+            results.set(entry.workshopId, {
+                ok: false,
+                installPath: "",
+                message: "Internal queue error: running job was not found."
+            });
+            return results;
+        }
+
+        const singleResult = await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
+            reportProgress(entry.workshopId, progress, message);
+        });
+        results.set(entry.workshopId, singleResult);
+        return results;
+    }
+
+    const settings = loadSettingsSnapshot();
+    const steamCmdPath = settings?.steamCmdPath?.trim() ?? "";
+    if (!steamCmdPath || !fs.existsSync(steamCmdPath)) {
+        for (const entry of entries) {
+            results.set(entry.workshopId, {
+                ok: false,
+                installPath: "",
+                message: "SteamCMD path is not configured or executable is missing."
+            });
+        }
+        return results;
+    }
+
+    const downloadBase = resolveDownloadBasePath();
+    const forceInstallDir = path.join(downloadBase, `dl-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    await fsp.mkdir(forceInstallDir, { recursive: true });
+
+    try {
+        const outputCandidatesById = new Map<string, string[]>();
+        for (const entry of entries) {
+            const candidates = getWorkshopDownloadPathCandidates(forceInstallDir, entry.workshopId);
+            outputCandidatesById.set(entry.workshopId, candidates);
+            for (const candidate of candidates) {
+                await removeDirectoryIfExists(candidate);
+            }
+
+            reportProgress(entry.workshopId, 6, `Launching SteamCMD batch for ${entries.length} mods...`);
+        }
+
+        const args = [
+            "+force_install_dir", forceInstallDir,
+            "+login", "anonymous"
+        ];
+
+        for (const entry of entries) {
+            args.push("+workshop_download_item", STELLARIS_APP_ID, entry.workshopId, "validate");
+        }
+        args.push("+quit");
+
+        const statusHints: string[] = [];
+        let explicitFailureMessage: string | null = null;
+        const appendStatusHint = (line: string): void => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                return;
+            }
+
+            const failureDetail = extractSteamCmdFailureDetail(trimmed);
+            if (failureDetail && !explicitFailureMessage) {
+                explicitFailureMessage = failureDetail;
+            }
+
+            statusHints.push(trimmed);
+            if (statusHints.length > 8) {
+                statusHints.shift();
+            }
+        };
+
+        const batchRunResult = await new Promise<{ ok: boolean; message: string }>((resolve) => {
+            const child = spawn(steamCmdPath, args, {
+                stdio: ["ignore", "pipe", "pipe"],
+                windowsHide: true
+            });
+
+            for (const entry of entries) {
+                const job = jobsByWorkshopId.get(entry.workshopId);
+                if (job) {
+                    job.process = child;
+                }
+            }
+
+            let timedOut = false;
+            const timeout = setTimeout(() => {
+                timedOut = true;
+                try {
+                    child.kill();
+                } catch {
+                    // ignore
+                }
+            }, STEAMCMD_TIMEOUT_MS);
+
+            child.stdout.on("data", (chunk) => {
+                const text = chunk.toString("utf8");
+                for (const line of text.split(/\r?\n/)) {
+                    const trimmed = line.trim();
+                    if (!trimmed) {
+                        continue;
+                    }
+
+                    const parsed = parseSteamCmdProgress(trimmed);
+                    if (parsed !== null) {
+                        for (const entry of entries) {
+                            const job = jobsByWorkshopId.get(entry.workshopId);
+                            if (!job || job.cancelled) {
+                                continue;
+                            }
+
+                            reportProgress(
+                                entry.workshopId,
+                                parsed,
+                                `Downloading ${entries.length} mods... ${parsed}%`
+                            );
+                        }
+                    } else {
+                        appendStatusHint(trimmed);
+                    }
+                }
+            });
+
+            child.stderr.on("data", (chunk) => {
+                const text = chunk.toString("utf8").trim();
+                if (!text) {
+                    return;
+                }
+
+                appendStatusHint(text);
+                for (const entry of entries) {
+                    const job = jobsByWorkshopId.get(entry.workshopId);
+                    if (!job || job.cancelled) {
+                        continue;
+                    }
+
+                    reportProgress(entry.workshopId, 12, `SteamCMD: ${text}`);
+                }
+            });
+
+            child.on("error", (error) => {
+                clearTimeout(timeout);
+                resolve({ ok: false, message: error.message });
+            });
+
+            child.on("close", (code) => {
+                clearTimeout(timeout);
+                if (timedOut) {
+                    resolve({ ok: false, message: "SteamCMD download timed out." });
+                    return;
+                }
+
+                const hasRunningNonCancelledJob = entries.some((entry) => {
+                    const job = jobsByWorkshopId.get(entry.workshopId);
+                    return Boolean(job) && !job!.cancelled;
+                });
+                if (!hasRunningNonCancelledJob) {
+                    resolve({ ok: false, message: "Download cancelled." });
+                    return;
+                }
+
+                if (code !== 0) {
+                    resolve({ ok: false, message: `SteamCMD exited with code ${String(code)}` });
+                    return;
+                }
+
+                resolve({ ok: true, message: "SteamCMD reported success." });
+            });
+        });
+
+        if (!batchRunResult.ok) {
+            for (const entry of entries) {
+                const job = jobsByWorkshopId.get(entry.workshopId);
+                if (job?.cancelled) {
+                    results.set(entry.workshopId, {
+                        ok: false,
+                        installPath: "",
+                        message: "Download cancelled."
+                    });
+                    continue;
+                }
+
+                results.set(entry.workshopId, {
+                    ok: false,
+                    installPath: "",
+                    message: batchRunResult.message
+                });
+            }
+
+            return results;
+        }
+
+        if (explicitFailureMessage) {
+            for (const entry of entries) {
+                const job = jobsByWorkshopId.get(entry.workshopId);
+                if (job?.cancelled) {
+                    results.set(entry.workshopId, {
+                        ok: false,
+                        installPath: "",
+                        message: "Download cancelled."
+                    });
+                    continue;
+                }
+
+                results.set(entry.workshopId, {
+                    ok: false,
+                    installPath: "",
+                    message: `SteamCMD reported download failure: ${explicitFailureMessage}`
+                });
+            }
+
+            return results;
+        }
+
+        let installStateDirty = false;
+
+        for (const entry of entries) {
+            const job = jobsByWorkshopId.get(entry.workshopId);
+            if (job?.cancelled) {
+                results.set(entry.workshopId, {
+                    ok: false,
+                    installPath: "",
+                    message: "Download cancelled."
+                });
+                continue;
+            }
+
+            const candidates = outputCandidatesById.get(entry.workshopId) ?? [];
+            const located = await findDownloadedWorkshopPath(candidates);
+            if (!located.foundPath) {
+                const hint = statusHints.length > 0
+                    ? ` Last SteamCMD output: ${statusHints.join(" | ")}`
+                    : "";
+
+                results.set(entry.workshopId, {
+                    ok: false,
+                    installPath: candidates[0] ?? "",
+                    message: located.hadEmptyPath
+                        ? `SteamCMD finished but download folder is empty.${hint}`
+                        : `SteamCMD finished but download folder was not found.${hint}`
+                });
+                continue;
+            }
+
+            const deployed = await deployDownloadedModToModsPath(entry.workshopId, located.foundPath, (progress, message) => {
+                reportProgress(entry.workshopId, progress, message);
+            });
+
+            if (deployed.ok) {
+                installPathById.set(entry.workshopId, deployed.installPath);
+                installStateDirty = true;
+            }
+
+            results.set(entry.workshopId, deployed);
+        }
+
+        if (installStateDirty) {
+            await saveInstallState();
+        }
+
+        return results;
+    } finally {
+        await removeDirectoryIfExists(forceInstallDir);
+    }
+}
+
 async function runUninstall(workshopId: string): Promise<{ ok: boolean; message: string }> {
     const knownPath = installPathById.get(workshopId);
     if (knownPath) {
@@ -501,7 +790,8 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
         workshopId: entry.workshopId,
         action: entry.action,
         process: null,
-        cancelled: false
+        cancelled: false,
+        sharedProcess: false
     };
 
     runningJobs.set(entry.workshopId, job);
@@ -545,6 +835,83 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
     runningJobs.delete(entry.workshopId);
 }
 
+async function runInstallBatch(firstEntry: { workshopId: string; modName: string; action: "install" | "uninstall" }): Promise<void> {
+    const entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }> = [firstEntry];
+
+    while (entries.length < MAX_STEAMCMD_BATCH_ITEMS && queuePending.length > 0) {
+        const next = queuePending[0];
+        if (!next || next.action !== "install") {
+            break;
+        }
+
+        const shifted = queuePending.shift();
+        if (!shifted) {
+            break;
+        }
+
+        entries.push(shifted);
+    }
+
+    const isBatch = entries.length > 1;
+    const jobsById = new Map<string, RunningJob>();
+
+    for (const entry of entries) {
+        const job: RunningJob = {
+            workshopId: entry.workshopId,
+            action: "install",
+            process: null,
+            cancelled: false,
+            sharedProcess: isBatch
+        };
+
+        jobsById.set(entry.workshopId, job);
+        runningJobs.set(entry.workshopId, job);
+
+        actionStates.set(entry.workshopId, "installing");
+        upsertQueueItem(
+            entry.workshopId,
+            entry.modName,
+            "install",
+            "running",
+            3,
+            isBatch ? `Preparing batch download (${entries.length} mods)...` : "Preparing download..."
+        );
+    }
+
+    logInfo(`Download queue: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`}`);
+
+    const installResults = await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
+        const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
+        if (!activeEntry) {
+            return;
+        }
+
+        upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
+    });
+
+    for (const entry of entries) {
+        const job = jobsById.get(entry.workshopId);
+        const installResult = installResults.get(entry.workshopId) ?? {
+            ok: false,
+            installPath: "",
+            message: "Unknown download error."
+        };
+
+        if (job?.cancelled) {
+            actionStates.set(entry.workshopId, "not-installed");
+            upsertQueueItem(entry.workshopId, entry.modName, "install", "cancelled", 0, "Install cancelled.");
+        } else if (installResult.ok) {
+            actionStates.set(entry.workshopId, "installed");
+            upsertQueueItem(entry.workshopId, entry.modName, "install", "completed", 100, installResult.message);
+        } else {
+            actionStates.set(entry.workshopId, "error");
+            upsertQueueItem(entry.workshopId, entry.modName, "install", "failed", 0, installResult.message);
+        }
+
+        runningJobs.delete(entry.workshopId);
+    }
+}
+
 async function processQueue(): Promise<void> {
     if (queueWorkerActive) return;
     queueWorkerActive = true;
@@ -557,8 +924,9 @@ async function processQueue(): Promise<void> {
                 if (!next) break;
 
                 logInfo(`Download queue: starting ${next.action} for ${next.workshopId} (${runningJobs.size + 1}/${MAX_CONCURRENT_DOWNLOADS} slots)`);
-                // Don't await — fire-and-forget to enable concurrency
-                void runJob(next).catch((err) => {
+                // Don't await — fire-and-forget to enable queue throughput.
+                const runner = next.action === "install" ? runInstallBatch(next) : runJob(next);
+                void runner.catch((err) => {
                     logError(`Download job failed for ${next.workshopId}: ${err instanceof Error ? err.message : "unknown"}`);
                 });
 
@@ -673,10 +1041,24 @@ export function cancelDownload(workshopIdRaw: string): DownloadActionResult {
     const job = runningJobs.get(workshopId);
     if (job) {
         job.cancelled = true;
-        if (job.process) {
+        const activePeers = job.process
+            ? Array.from(runningJobs.values()).filter((candidate) =>
+                candidate.workshopId !== workshopId
+                && candidate.process === job.process
+                && !candidate.cancelled
+            )
+            : [];
+
+        const shouldKillProcess = Boolean(job.process) && (!job.sharedProcess || activePeers.length === 0);
+        if (job.process && shouldKillProcess) {
             try { job.process.kill(); } catch { /* ignore */ }
         }
-        return { ok: true, workshopId, actionState: getActionStateForCard(workshopId), message: `Cancel requested for ${workshopId}.` };
+
+        const message = job.sharedProcess && activePeers.length > 0
+            ? `Cancel requested for ${workshopId}. Batch download continues for remaining mods.`
+            : `Cancel requested for ${workshopId}.`;
+
+        return { ok: true, workshopId, actionState: getActionStateForCard(workshopId), message };
     }
 
     return { ok: false, workshopId, actionState: getActionStateForCard(workshopId), message: `No active operation found for ${workshopId}.` };
@@ -691,12 +1073,17 @@ export function cancelAllDownloads(): DownloadQueueCommandResult {
         affected += 1;
     }
 
+    const processesToKill = new Set<ChildProcess>();
     for (const [, job] of runningJobs) {
         job.cancelled = true;
         if (job.process) {
-            try { job.process.kill(); } catch { /* ignore */ }
+            processesToKill.add(job.process);
         }
         affected += 1;
+    }
+
+    for (const processHandle of processesToKill) {
+        try { processHandle.kill(); } catch { /* ignore */ }
     }
 
     return {

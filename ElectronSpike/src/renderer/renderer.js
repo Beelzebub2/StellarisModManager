@@ -766,13 +766,17 @@ function createQueueRow(workshopId) {
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "button-secondary queue-item-btn queue-btn-cancel";
-    cancelBtn.textContent = "Cancel";
+    cancelBtn.textContent = "Stop";
+    cancelBtn.title = "Cancel this queue operation";
+    cancelBtn.setAttribute("aria-label", "Cancel this queue operation");
     cancelBtn.addEventListener("click", () => void cancelQueueAction(workshopId));
 
     const retryBtn = document.createElement("button");
     retryBtn.type = "button";
     retryBtn.className = "button-secondary queue-item-btn";
     retryBtn.textContent = "Retry";
+    retryBtn.title = "Retry this queue operation";
+    retryBtn.setAttribute("aria-label", "Retry this queue operation");
     retryBtn.addEventListener("click", () => {
         const action = retryBtn.getAttribute("data-queue-action") || "";
         if (action !== "install" && action !== "uninstall") return;
@@ -782,7 +786,9 @@ function createQueueRow(workshopId) {
     const dismissBtn = document.createElement("button");
     dismissBtn.type = "button";
     dismissBtn.className = "button-secondary queue-item-btn";
-    dismissBtn.textContent = "Dismiss";
+    dismissBtn.textContent = "Hide";
+    dismissBtn.title = "Remove this finished item from history";
+    dismissBtn.setAttribute("aria-label", "Remove this finished item from history");
     dismissBtn.addEventListener("click", () => void clearQueueHistory([workshopId]));
 
     actionsEl.append(cancelBtn, retryBtn, dismissBtn);
@@ -836,7 +842,8 @@ function updateQueueRow(view, item) {
 
     view.retryBtn.hidden = !canRetry;
     view.retryBtn.disabled = !canRetry;
-    view.retryBtn.textContent = item.action === "uninstall" ? "Retry uninstall" : "Retry install";
+    view.retryBtn.textContent = "Retry";
+    view.retryBtn.title = item.action === "uninstall" ? "Retry uninstall" : "Retry install";
     view.retryBtn.setAttribute("data-queue-action", item.action);
 
     view.dismissBtn.hidden = isActive;
