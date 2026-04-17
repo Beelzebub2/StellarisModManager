@@ -1,0 +1,314 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import type {
+    SettingsAutoDetectResult,
+    SettingsSaveResult,
+    SettingsSnapshot,
+    SettingsValidationResult
+} from "../../shared/types";
+import { getLegacyPaths } from "./paths";
+import { discoverSteamLibraries } from "./steamDiscovery";
+
+const THEME_PALETTE_OPTIONS = ["Obsidian Ember", "Graphite Moss", "Nocturne Slate"];
+const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "SteamKit2", "SteamCmd"];
+
+function coerceString(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function coerceBoolean(value: unknown, fallback: boolean): boolean {
+    if (typeof value === "boolean") {
+        return value;
+    }
+
+    return fallback;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== "object") {
+        return {};
+    }
+
+    return value as Record<string, unknown>;
+}
+
+function getString(raw: Record<string, unknown>, ...keys: string[]): string | undefined {
+    for (const key of keys) {
+        const resolved = coerceString(raw[key]);
+        if (resolved) {
+            return resolved;
+        }
+    }
+
+    return undefined;
+}
+
+function getBoolean(raw: Record<string, unknown>, fallback: boolean, ...keys: string[]): boolean {
+    for (const key of keys) {
+        if (typeof raw[key] === "boolean") {
+            return raw[key] as boolean;
+        }
+    }
+
+    return fallback;
+}
+
+function normalizeRuntime(value: string | undefined): string {
+    if (!value) {
+        return "Auto";
+    }
+
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "steamkit2") {
+        return "SteamKit2";
+    }
+
+    if (normalized === "steamcmd") {
+        return "SteamCmd";
+    }
+
+    return "Auto";
+}
+
+function defaultSettings(): SettingsSnapshot {
+    return {
+        workshopDownloadRuntime: "Auto",
+        autoDetectGame: true,
+        warnBeforeRestartGame: true,
+        themePalette: "Obsidian Ember",
+        autoCheckAppUpdates: true
+    };
+}
+
+function normalizeSettings(rawValue: unknown): SettingsSnapshot {
+    const raw = asRecord(rawValue);
+    const defaults = defaultSettings();
+
+    return {
+        gamePath: getString(raw, "gamePath", "GamePath"),
+        modsPath: getString(raw, "modsPath", "ModsPath"),
+        steamCmdPath: getString(raw, "steamCmdPath", "SteamCmdPath"),
+        steamCmdDownloadPath: getString(raw, "steamCmdDownloadPath", "SteamCmdDownloadPath"),
+        workshopDownloadRuntime: normalizeRuntime(
+            getString(raw, "workshopDownloadRuntime", "WorkshopDownloadRuntime")
+        ),
+        lastDetectedGameVersion: getString(raw, "lastDetectedGameVersion", "LastDetectedGameVersion"),
+        autoDetectGame: getBoolean(raw, defaults.autoDetectGame ?? true, "autoDetectGame", "AutoDetectGame"),
+        developerMode: getBoolean(raw, defaults.developerMode ?? false, "developerMode", "DeveloperMode"),
+        warnBeforeRestartGame: getBoolean(
+            raw,
+            defaults.warnBeforeRestartGame ?? true,
+            "warnBeforeRestartGame",
+            "WarnBeforeRestartGame"
+        ),
+        themePalette: getString(raw, "themePalette", "ThemePalette") ?? defaults.themePalette,
+        autoCheckAppUpdates: getBoolean(
+            raw,
+            defaults.autoCheckAppUpdates ?? true,
+            "autoCheckAppUpdates",
+            "AutoCheckAppUpdates"
+        ),
+        compatibilityReporterId: getString(raw, "compatibilityReporterId", "CompatibilityReporterId"),
+        lastAppUpdateCheckUtc: getString(raw, "lastAppUpdateCheckUtc", "LastAppUpdateCheckUtc"),
+        lastOfferedAppVersion: getString(raw, "lastOfferedAppVersion", "LastOfferedAppVersion"),
+        skippedAppVersion: getString(raw, "skippedAppVersion", "SkippedAppVersion"),
+        publicProfileUsername: getString(raw, "publicProfileUsername", "PublicProfileUsername")
+    };
+}
+
+function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown> {
+    return {
+        GamePath: coerceString(settings.gamePath) ?? null,
+        ModsPath: coerceString(settings.modsPath) ?? null,
+        SteamCmdPath: coerceString(settings.steamCmdPath) ?? null,
+        SteamCmdDownloadPath: coerceString(settings.steamCmdDownloadPath) ?? null,
+        WorkshopDownloadRuntime: normalizeRuntime(coerceString(settings.workshopDownloadRuntime)),
+        LastDetectedGameVersion: coerceString(settings.lastDetectedGameVersion) ?? null,
+        AutoDetectGame: coerceBoolean(settings.autoDetectGame, true),
+        DeveloperMode: coerceBoolean(settings.developerMode, false),
+        WarnBeforeRestartGame: coerceBoolean(settings.warnBeforeRestartGame, true),
+        ThemePalette: coerceString(settings.themePalette) ?? "Obsidian Ember",
+        AutoCheckAppUpdates: coerceBoolean(settings.autoCheckAppUpdates, true),
+        CompatibilityReporterId: coerceString(settings.compatibilityReporterId) ?? null,
+        LastAppUpdateCheckUtc: coerceString(settings.lastAppUpdateCheckUtc) ?? null,
+        LastOfferedAppVersion: coerceString(settings.lastOfferedAppVersion) ?? null,
+        SkippedAppVersion: coerceString(settings.skippedAppVersion) ?? null,
+        PublicProfileUsername: coerceString(settings.publicProfileUsername) ?? null
+    };
+}
+
+function getDefaultModsPath(): string {
+    const home = os.homedir();
+    if (process.platform === "win32") {
+        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
+    }
+
+    if (process.platform === "darwin") {
+        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
+    }
+
+    return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+}
+
+function readSettingsRaw(): unknown | null {
+    const { settingsPath } = getLegacyPaths();
+    if (!fs.existsSync(settingsPath)) {
+        return null;
+    }
+
+    try {
+        const raw = fs.readFileSync(settingsPath, "utf8");
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+function loadSettingsOrDefault(): SettingsSnapshot {
+    const raw = readSettingsRaw();
+    if (raw === null) {
+        return defaultSettings();
+    }
+
+    return {
+        ...defaultSettings(),
+        ...normalizeSettings(raw)
+    };
+}
+
+export function getThemePaletteOptions(): string[] {
+    return THEME_PALETTE_OPTIONS.slice();
+}
+
+export function getDownloadRuntimeOptions(): string[] {
+    return DOWNLOAD_RUNTIME_OPTIONS.slice();
+}
+
+export function loadSettingsSnapshot(): SettingsSnapshot | null {
+    const raw = readSettingsRaw();
+    if (raw === null) {
+        return null;
+    }
+
+    return {
+        ...defaultSettings(),
+        ...normalizeSettings(raw)
+    };
+}
+
+export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult {
+    const merged: SettingsSnapshot = {
+        ...defaultSettings(),
+        ...next,
+        workshopDownloadRuntime: normalizeRuntime(coerceString(next.workshopDownloadRuntime)),
+        themePalette: coerceString(next.themePalette) ?? "Obsidian Ember"
+    };
+
+    const { settingsPath } = getLegacyPaths();
+    try {
+        fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+        fs.writeFileSync(settingsPath, JSON.stringify(toPersistedSettings(merged), null, 2), "utf8");
+        return {
+            ok: true,
+            message: "Settings saved.",
+            settings: merged
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown save error";
+        return {
+            ok: false,
+            message: `Failed to save settings: ${message}`,
+            settings: merged
+        };
+    }
+}
+
+export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
+    const current = loadSettingsOrDefault();
+    const discovery = discoverSteamLibraries();
+
+    const hasGamePath = coerceString(current.gamePath);
+    if (!hasGamePath) {
+        const gameLibrary = discovery.libraries.find((entry) => entry.hasStellaris);
+        if (gameLibrary) {
+            current.gamePath = gameLibrary.stellarisPath;
+        }
+    }
+
+    if (!coerceString(current.modsPath)) {
+        current.modsPath = getDefaultModsPath();
+    }
+
+    if (!coerceString(current.steamCmdDownloadPath)) {
+        const firstSteamRoot = discovery.existingSteamRoots[0];
+        if (firstSteamRoot) {
+            current.steamCmdDownloadPath = firstSteamRoot;
+        }
+    }
+
+    if (!coerceString(current.steamCmdPath)) {
+        const searchRoots = [
+            discovery.existingSteamRoots[0],
+            getLegacyPaths().productDir,
+            path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Steam"),
+            path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Steam")
+        ].filter((entry): entry is string => Boolean(entry));
+
+        for (const root of searchRoots) {
+            const candidate = path.join(root, "steamcmd.exe");
+            if (fs.existsSync(candidate)) {
+                current.steamCmdPath = candidate;
+                break;
+            }
+        }
+    }
+
+    return {
+        ok: true,
+        message: "Auto-detect completed.",
+        settings: current
+    };
+}
+
+export function validateSettingsSnapshot(settings: SettingsSnapshot): SettingsValidationResult {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+
+    const gamePath = coerceString(settings.gamePath);
+    const modsPath = coerceString(settings.modsPath);
+    const steamCmdPath = coerceString(settings.steamCmdPath);
+    const runtime = normalizeRuntime(coerceString(settings.workshopDownloadRuntime));
+
+    if (!gamePath) {
+        warnings.push("Game path is not set.");
+    } else if (!fs.existsSync(gamePath)) {
+        errors.push("Game path does not exist.");
+    }
+
+    if (!modsPath) {
+        warnings.push("Mods path is not set.");
+    } else if (!fs.existsSync(modsPath)) {
+        warnings.push("Mods path does not exist yet and will be created on demand.");
+    }
+
+    if (runtime !== "SteamKit2") {
+        if (!steamCmdPath) {
+            errors.push("SteamCMD runtime requires a configured SteamCMD path.");
+        } else if (!fs.existsSync(steamCmdPath)) {
+            errors.push("Configured SteamCMD executable was not found.");
+        }
+    }
+
+    return {
+        ok: errors.length === 0,
+        message: errors.length === 0 ? "Settings validated." : "Settings validation failed.",
+        warnings,
+        errors
+    };
+}

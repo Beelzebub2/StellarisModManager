@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Stellaris Mod Manager</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+    <div class="aurora aurora-one" aria-hidden="true"></div>
+    <div class="aurora aurora-two" aria-hidden="true"></div>
+
+    <main class="window-shell">
+        <!-- ==================== HEADER ==================== -->
+        <header class="topbar panel">
+            <div class="topbar-left">
+                <div class="app-badge" aria-label="App icon">
+                    <img id="appBadgeIcon" class="app-badge-image hidden" alt="Stellaris Mod Manager icon" />
+                    <span id="appBadgeFallback" class="app-badge-fallback">SM</span>
+                </div>
+                <div class="brand-block">
+                    <h1 class="brand-title">Stellaris Mod Manager</h1>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <div id="stellarisyncChip" class="status-chip status-chip-warn">
+                    <span class="status-dot"></span>
+                    <span id="stellarisyncText">Checking...</span>
+                </div>
+                <div id="appVersionChip" class="status-chip status-chip-muted">
+                    <span id="appVersionText">v0.1.0</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ==================== WORKSPACE ==================== -->
+        <section class="workspace">
+            <!-- ---- SIDEBAR ---- -->
+            <aside class="sidebar panel">
+                <section class="sidebar-hero">
+                    <div class="sidebar-hero-mark" aria-label="App icon">
+                        <img id="sidebarHeroIcon" class="sidebar-hero-icon hidden" alt="Stellaris Mod Manager icon" />
+                        <span id="sidebarHeroFallback" class="sidebar-hero-fallback">SM</span>
+                    </div>
+                    <div class="sidebar-hero-copy">
+                        <p class="sidebar-hero-title">Control Deck</p>
+                        <p class="sidebar-hero-subtitle">Switch views &amp; manage installs</p>
+                    </div>
+                </section>
+
+                <section class="sidebar-block">
+                    <p class="sidebar-title">Workspaces</p>
+                    <div class="nav-items">
+                        <button id="tabVersion" class="nav-btn is-active" type="button">
+                            <span class="nav-icon" data-icon="versions"></span>
+                            <span class="nav-label">By Version</span>
+                        </button>
+                        <button id="tabLibrary" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="library"></span>
+                            <span class="nav-label">Library</span>
+                        </button>
+                        <button id="tabWorkshop" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="workshop"></span>
+                            <span class="nav-label">Workshop</span>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="sidebar-block queue-panel">
+                    <div class="queue-head">
+                        <p class="sidebar-title">Install Queue</p>
+                        <span id="queueLoadChip" class="status-chip status-chip-muted">Idle</span>
+                    </div>
+                    <p id="queueSummary" class="muted">No active installs.</p>
+                    <div class="queue-overall-progress"><span id="queueOverallBar"></span></div>
+                    <div id="queueList" class="queue-list">
+                        <div class="queue-empty">
+                            <span class="queue-empty-icon" data-icon="queue"></span>
+                            <span>No active installs</span>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="sidebar-block sidebar-controls">
+                    <p class="sidebar-title">Controls</p>
+                    <button id="launchGameBtn" class="nav-btn nav-btn-launch" type="button">
+                        <span class="nav-icon" data-icon="launch"></span>
+                        <span class="nav-label" id="launchGameText">Launch Game</span>
+                    </button>
+                    <button id="tabSettings" class="nav-btn" type="button">
+                        <span class="nav-icon" data-icon="settings"></span>
+                        <span class="nav-label">Settings</span>
+                    </button>
+                </section>
+            </aside>
+
+            <!-- ---- CONTENT ---- -->
+            <section class="content">
+
+                <!-- ======== VERSION BROWSER PAGE ======== -->
+                <section id="pageVersion" class="page-section">
+                    <header class="version-header">
+                        <p class="eyebrow">Version Browser</p>
+                        <div class="version-header-right">
+                            <span id="resultCountChip" class="status-chip">0 matches</span>
+                            <span id="pageCursorChip" class="status-chip status-chip-muted">Page 1</span>
+                        </div>
+                    </header>
+
+                    <section class="controls-shell">
+                        <div class="controls-row">
+                            <div class="field-col">
+                                <label class="field-label" for="versionSelect">Game Version</label>
+                                <select id="versionSelect" class="field-input"></select>
+                            </div>
+                            <div class="field-col">
+                                <label class="field-label" for="sortSelect">Ranking</label>
+                                <select id="sortSelect" class="field-input">
+                                    <option value="relevance">Relevance</option>
+                                    <option value="most-subscribed">Most Subscribed</option>
+                                    <option value="most-popular">Most Popular</option>
+                                </select>
+                            </div>
+                            <label class="toggle-row" for="showOlderVersions">
+                                <input id="showOlderVersions" type="checkbox" />
+                                <span>Include older versions</span>
+                            </label>
+                            <div class="field-col grow">
+                                <label class="field-label" for="searchInput">Search Mods</label>
+                                <div class="search-wrap">
+                                    <input id="searchInput" class="field-input" type="text"
+                                        placeholder="Search by mod name or workshop ID" />
+                                    <button id="searchClear" type="button" class="button-tertiary">Clear</button>
+                                </div>
+                            </div>
+                            <button id="versionRefresh" type="button" class="button-secondary">Refresh</button>
+                        </div>
+                    </section>
+
+                    <section class="status-row">
+                        <p id="versionStatus">Loading version browser...</p>
+                    </section>
+
+                    <section id="versionCards" class="card-grid"></section>
+
+                    <footer class="pager">
+                        <button id="pagePrev" type="button" class="button-secondary">Previous</button>
+                        <span id="pageSummary">Page 1 of 1</span>
+                        <button id="pageNext" type="button">Next</button>
+                    </footer>
+                </section>
+
+                <!-- ======== LIBRARY PAGE ======== -->
+                <section id="pageLibrary" class="page-section hidden">
+                    <section class="library-toolbar">
+                        <div class="library-toolbar-main">
+                            <div class="field-col grow">
+                                <label class="field-label" for="librarySearchInput">Search</label>
+                                <input id="librarySearchInput" class="field-input" type="text"
+                                    placeholder="Search by mod name or workshop ID" />
+                            </div>
+                            <label class="toggle-row" for="libraryEnabledOnly">
+                                <input id="libraryEnabledOnly" type="checkbox" />
+                                <span>Enabled only</span>
+                            </label>
+                        </div>
+                        <div class="library-toolbar-actions">
+                            <button id="libraryCheckUpdates" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="check"></span> Check updates
+                            </button>
+                            <button id="libraryReinstallAll" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="reinstall"></span> Reinstall all
+                            </button>
+                            <button id="libraryExport" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="export"></span> Export
+                            </button>
+                            <button id="libraryImport" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="import"></span> Import
+                            </button>
+                            <button id="libraryScanLocal" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="scan"></span> Scan local
+                            </button>
+                        </div>
+                    </section>
+
+                    <section class="library-profiles">
+                        <div class="library-profile-row">
+                            <div class="field-col">
+                                <label class="field-label" for="libraryProfileSelect">Profile</label>
+                                <select id="libraryProfileSelect" class="field-input"></select>
+                            </div>
+                            <div class="library-profile-actions">
+                                <button id="libraryNewProfile" type="button" class="button-secondary">
+                                    <span class="nav-icon" data-icon="plus"></span> New
+                                </button>
+                                <button id="libraryRenameProfile" type="button" class="button-secondary">
+                                    <span class="nav-icon" data-icon="edit"></span> Rename
+                                </button>
+                                <button id="libraryDeleteProfile" type="button" class="button-secondary">
+                                    <span class="nav-icon" data-icon="trash"></span> Delete
+                                </button>
+                            </div>
+                        </div>
+                        <div class="library-profile-row">
+                            <div class="field-col grow">
+                                <label class="field-label" for="librarySharedProfileId">Shared profile ID</label>
+                                <input id="librarySharedProfileId" class="field-input" type="text"
+                                    placeholder="Paste a shared profile ID to import" />
+                            </div>
+                            <div class="library-profile-actions">
+                                <button id="libraryUseSharedId" type="button" class="button-secondary">
+                                    <span class="nav-icon" data-icon="link"></span> Use ID
+                                </button>
+                                <button id="libraryShareProfile" type="button" class="button-secondary">
+                                    <span class="nav-icon" data-icon="share"></span> Share
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section class="library-main">
+                        <article class="library-list-shell">
+                            <header class="library-list-header">
+                                <span>On</span>
+                                <span>Mod</span>
+                                <span>#</span>
+                                <span>Actions</span>
+                            </header>
+                            <div id="libraryList" class="library-list"></div>
+                        </article>
+
+                        <article class="library-detail-shell">
+                            <div id="libraryDetailEmpty" class="library-detail-empty muted">Select a mod to view
+                                details.</div>
+                            <div id="libraryDetail" class="library-detail hidden">
+                                <div class="library-detail-head">
+                                    <h3 id="libraryDetailName">Mod</h3>
+                                    <div class="library-detail-badges">
+                                        <span id="libraryDetailMpSafe" class="badge badge-community hidden">Multiplayer
+                                            safe</span>
+                                        <span id="libraryDetailHasUpdate" class="badge badge-version hidden">Update
+                                            available</span>
+                                    </div>
+                                </div>
+
+                                <div class="library-detail-info">
+                                    <div class="library-detail-grid">
+                                        <p class="settings-key">Workshop ID</p>
+                                        <p id="libraryDetailWorkshopId" class="settings-value accent-text mono">-</p>
+                                        <p class="settings-key">Version</p>
+                                        <p id="libraryDetailVersion" class="settings-value">-</p>
+                                        <p class="settings-key">Subscribers</p>
+                                        <p id="libraryDetailSubscribers" class="settings-value">-</p>
+                                        <p class="settings-key">Game Version</p>
+                                        <p id="libraryDetailGameVersion" class="settings-value">-</p>
+                                        <p class="settings-key">Installed</p>
+                                        <p id="libraryDetailInstalledAt" class="settings-value">-</p>
+                                    </div>
+                                </div>
+
+                                <section id="libraryDetailTagsSection" class="detail-block">
+                                    <h4>Tags</h4>
+                                    <p id="libraryDetailTags" class="muted">No tags.</p>
+                                </section>
+
+                                <section class="library-detail-actions-grid">
+                                    <button id="libraryActionUpdate" type="button"
+                                        class="action-btn action-btn-success">
+                                        <span class="nav-icon" data-icon="check"></span> Update
+                                    </button>
+                                    <button id="libraryActionReinstall" type="button" class="action-btn">
+                                        <span class="nav-icon" data-icon="reinstall"></span> Reinstall
+                                    </button>
+                                    <button id="libraryActionWorks" type="button" class="action-btn action-btn-success">
+                                        <span class="nav-icon" data-icon="thumbsUp"></span> Works for me
+                                    </button>
+                                    <button id="libraryActionBroken" type="button" class="action-btn action-btn-danger">
+                                        <span class="nav-icon" data-icon="thumbsDown"></span> Broken for me
+                                    </button>
+                                    <button id="libraryActionWorkshop" type="button" class="action-btn">
+                                        <span class="nav-icon" data-icon="workshop"></span> Workshop
+                                    </button>
+                                    <button id="libraryActionLocation" type="button" class="action-btn">
+                                        <span class="nav-icon" data-icon="folder"></span> File location
+                                    </button>
+                                </section>
+
+                                <section class="detail-block">
+                                    <h4>Description</h4>
+                                    <p id="libraryDetailDescription" class="muted">No description available.</p>
+                                </section>
+
+                                <button id="libraryActionRemove" type="button" class="button-danger full-width">
+                                    <span class="nav-icon" data-icon="trash"></span> Remove mod
+                                </button>
+                            </div>
+                        </article>
+                    </section>
+
+                    <footer class="library-footer">
+                        <div class="library-footer-left">
+                            <span id="libraryTotalModsChip" class="status-chip">Total: 0</span>
+                            <span id="libraryEnabledModsChip" class="status-chip status-chip-success">Enabled: 0</span>
+                            <span id="libraryStatus" class="muted">Library ready.</span>
+                        </div>
+                        <span id="libraryUpdatesFooter" class="status-chip status-chip-muted">Updates: 0</span>
+                    </footer>
+                </section>
+
+                <!-- ======== WORKSHOP PAGE ======== -->
+                <section id="pageWorkshop" class="page-section hidden">
+                    <header class="workshop-toolbar">
+                        <button id="workshopBack" type="button" class="button-icon" title="Back"><span
+                                data-icon="back"></span></button>
+                        <button id="workshopForward" type="button" class="button-icon" title="Forward"><span
+                                data-icon="forward"></span></button>
+                        <button id="workshopRefresh" type="button" class="button-icon" title="Refresh"><span
+                                data-icon="refresh"></span></button>
+                        <button id="workshopHome" type="button" class="button-icon" title="Home"><span
+                                data-icon="home"></span></button>
+                        <input id="workshopUrl" class="field-input workshop-url" type="text"
+                            value="https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90" />
+                        <button id="workshopGo" type="button" class="button-secondary">Go</button>
+                    </header>
+
+                    <div id="workshopBrowserContainer" class="workshop-browser-container">
+                        <div id="workshopLoading" class="workshop-loading">
+                            <div class="workshop-loading-bar"></div>
+                        </div>
+                        <webview id="workshopWebview"
+                            src="https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90"
+                            class="workshop-webview" partition="persist:workshop" allowpopups
+                            useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36">
+                        </webview>
+                    </div>
+
+                    <footer class="workshop-footer">
+                        <span class="muted">Workshop browser powered by Electron's built-in Chromium engine.</span>
+                    </footer>
+                </section>
+
+                <!-- ======== SETTINGS PAGE ======== -->
+                <section id="pageSettings" class="page-section hidden">
+                    <header class="hero">
+                        <div>
+                            <p class="eyebrow">Settings</p>
+                            <h2>App Configuration</h2>
+                            <p class="muted">Profile, game paths, workshop runtime, updates, and diagnostics.</p>
+                        </div>
+                        <div class="hero-metrics">
+                            <button id="refreshSettings" type="button" class="button-secondary">Refresh</button>
+                            <button id="autoDetectSettings" type="button" class="button-secondary">Auto detect</button>
+                        </div>
+                    </header>
+
+                    <section class="settings-shell">
+                        <nav class="settings-subtabs">
+                            <button type="button" class="settings-subtab is-active"
+                                data-settings-tab="general">General</button>
+                            <button type="button" class="settings-subtab" data-settings-tab="workshop">Workshop</button>
+                            <button type="button" class="settings-subtab" data-settings-tab="updates">Updates</button>
+                            <button type="button" class="settings-subtab" data-settings-tab="advanced">Advanced</button>
+                        </nav>
+
+                        <div class="settings-panels">
+                            <!-- General Tab -->
+                            <section id="settingsTabGeneral" class="settings-panel">
+                                <article class="settings-card">
+                                    <h3>Profile &amp; Sharing</h3>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsPublicProfileInput">Public
+                                            username</label>
+                                        <input id="settingsPublicProfileInput" class="field-input" type="text"
+                                            maxlength="40" placeholder="Example: StarAdmiral" />
+                                    </div>
+                                </article>
+
+                                <article class="settings-card">
+                                    <h3>Game Installation</h3>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsGamePathInput">Game path</label>
+                                        <input id="settingsGamePathInput" class="field-input mono" type="text"
+                                            placeholder="Path to Stellaris installation folder" />
+                                    </div>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsModsPathInput">Mods path</label>
+                                        <input id="settingsModsPathInput" class="field-input mono" type="text"
+                                            placeholder="Path to Paradox mods folder" />
+                                    </div>
+                                    <div class="settings-inline-actions">
+                                        <label class="toggle-row" for="settingsAutoDetectGameInput">
+                                            <input id="settingsAutoDetectGameInput" type="checkbox" />
+                                            <span>Auto detect on startup</span>
+                                        </label>
+                                        <label class="toggle-row" for="settingsWarnBeforeRestartInput">
+                                            <input id="settingsWarnBeforeRestartInput" type="checkbox" />
+                                            <span>Show restart warning</span>
+                                        </label>
+                                    </div>
+                                    <p class="muted">Detected game version: <span id="settingsGameVersionText"
+                                            class="accent-text">Not set</span></p>
+                                </article>
+
+                                <article class="settings-card">
+                                    <h3>Theme</h3>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsThemeInput">Palette</label>
+                                        <select id="settingsThemeInput" class="field-input"></select>
+                                    </div>
+                                    <p class="muted">Pick your preferred look before saving.</p>
+                                </article>
+                            </section>
+
+                            <!-- Workshop Tab -->
+                            <section id="settingsTabWorkshop" class="settings-panel hidden">
+                                <article class="settings-card">
+                                    <h3>Workshop Download Runtime</h3>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsWorkshopRuntimeInput">Runtime</label>
+                                        <select id="settingsWorkshopRuntimeInput" class="field-input"></select>
+                                    </div>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsSteamCmdPathInput">SteamCMD
+                                            path</label>
+                                        <input id="settingsSteamCmdPathInput" class="field-input mono" type="text"
+                                            placeholder="Path to steamcmd.exe" />
+                                    </div>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsSteamCmdDownloadPathInput">SteamCMD
+                                            download path</label>
+                                        <input id="settingsSteamCmdDownloadPathInput" class="field-input mono"
+                                            type="text" placeholder="SteamCMD download and workshop cache path" />
+                                    </div>
+                                    <p class="muted">SteamCMD status: <span id="settingsSteamCmdConfiguredText"
+                                            class="steam-status-text">Not configured</span></p>
+                                </article>
+                            </section>
+
+                            <!-- Updates Tab -->
+                            <section id="settingsTabUpdates" class="settings-panel hidden">
+                                <article class="settings-card">
+                                    <h3>App Updates</h3>
+                                    <div class="settings-inline-actions">
+                                        <label class="toggle-row" for="settingsAutoUpdatesInput">
+                                            <input id="settingsAutoUpdatesInput" type="checkbox" />
+                                            <span>Auto-check updates</span>
+                                        </label>
+                                    </div>
+                                    <div class="settings-kv">
+                                        <p class="settings-key">Last Check (UTC)</p>
+                                        <p id="settingsLastCheckUtcText" class="settings-value">Never</p>
+                                        <p class="settings-key">Last Offered Version</p>
+                                        <p id="settingsLastOfferedVersionText" class="settings-value">Not set</p>
+                                        <p class="settings-key">Skipped Version</p>
+                                        <p id="settingsSkippedVersionText" class="settings-value">Not set</p>
+                                        <p class="settings-key">Reporter ID</p>
+                                        <input id="settingsReporterIdInput" class="field-input mono" type="text"
+                                            placeholder="Compatibility reporter ID" />
+                                    </div>
+                                </article>
+                            </section>
+
+                            <!-- Advanced Tab -->
+                            <section id="settingsTabAdvanced" class="settings-panel hidden">
+                                <article class="settings-card">
+                                    <h3>Diagnostics</h3>
+                                    <label class="toggle-row" for="settingsDeveloperModeInput">
+                                        <input id="settingsDeveloperModeInput" type="checkbox" />
+                                        <span>Developer mode</span>
+                                    </label>
+                                    <pre id="runtime">Loading...</pre>
+                                    <pre id="db">Loading...</pre>
+                                </article>
+                            </section>
+                        </div>
+                    </section>
+
+                    <footer class="settings-footer">
+                        <span id="settingsStatus" class="muted">Settings ready.</span>
+                        <span id="settingsUnsavedChip" class="status-chip status-chip-warn hidden">Unsaved
+                            changes</span>
+                        <button id="validateSettings" type="button" class="button-secondary">Validate</button>
+                        <button id="saveSettings" type="button">Save</button>
+                    </footer>
+                </section>
+            </section>
+        </section>
+
+        <!-- ==================== STATUS BAR ==================== -->
+        <footer class="statusbar panel">
+            <span id="statusbarText">Ready</span>
+            <span id="statusbarQueue" class="status-chip status-chip-muted">Queue idle</span>
+        </footer>
+    </main>
+
+    <!-- ==================== DETAIL DRAWER ==================== -->
+    <aside id="detailDrawer" class="detail-drawer hidden" aria-live="polite">
+        <div class="detail-backdrop" id="detailCloseBackdrop"></div>
+        <section class="detail-panel">
+            <header class="detail-header">
+                <p class="eyebrow">Mod Detail</p>
+                <button id="detailCloseButton" type="button" class="button-secondary">Close</button>
+            </header>
+            <h3 id="detailTitle">Mod details</h3>
+            <img id="detailImage" class="detail-image" alt="Mod preview" />
+            <div class="detail-meta">
+                <span id="detailVersion" class="badge badge-version">-</span>
+                <span id="detailCommunity" class="badge badge-community">-</span>
+                <span id="detailSubscribers" class="badge">-</span>
+            </div>
+            <div class="detail-actions">
+                <button id="detailActionButton" type="button">Install</button>
+                <button id="detailCancelButton" type="button" class="button-secondary">Cancel</button>
+                <button id="detailWorkshopButton" type="button" class="button-secondary full-span">Open Workshop
+                    Page</button>
+            </div>
+            <section class="detail-block">
+                <h4>Description</h4>
+                <p id="detailDescription">No description available.</p>
+            </section>
+            <section class="detail-block">
+                <h4>Queue Message</h4>
+                <p id="detailQueueMessage">No queue activity.</p>
+            </section>
+            <section class="detail-block">
+                <h4>Tags</h4>
+                <div id="detailTags" class="tag-list"></div>
+            </section>
+        </section>
+    </aside>
+
+    <!-- ==================== MODAL SYSTEM ==================== -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+        <div class="modal-backdrop" id="modalBackdrop"></div>
+        <div class="modal-dialog" id="modalDialog">
+            <h3 id="modalTitle">Confirm</h3>
+            <p id="modalMessage" class="muted">Are you sure?</p>
+            <div id="modalExtra"></div>
+            <div class="modal-actions">
+                <button id="modalCancel" type="button" class="button-secondary">Cancel</button>
+                <button id="modalConfirm" type="button">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+
+</html>

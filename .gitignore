@@ -1,69 +1,51 @@
-## .NET / C# / Avalonia
+## Node / Electron
 
-# Build outputs
-[Bb]in/
-[Oo]bj/
-[Dd]ebug/
-[Rr]elease/
-publish/
-artifacts/
-Output/
-TestResults/
+# Dependencies
+**/node_modules/
 
-# Platform build folders
-x64/
-x86/
-[Ww][Ii][Nn]32/
-[Aa][Rr][Mm]/
-[Aa][Rr][Mm]64/
+# TypeScript build output
+ElectronSpike/dist/
 
-# IDE files
+# Electron Forge / builder output
+ElectronSpike/out/
+ElectronSpike/release/
+
+# npm / yarn / pnpm lock artifacts (keep package-lock.json committed)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Optional: local env overrides
+.env
+.env.*
+
+## IDE / OS
+
 .vs/
-.idea/
-*.suo
-*.user
-*.userosscache
-*.userprefs
-*.sln.docstates
-*.sln.iml
-
-# Optional local VS Code workspace files
 .vscode/*
 !.vscode/extensions.json
 !.vscode/launch.json
 !.vscode/tasks.json
+.idea/
+*.suo
+*.user
 
-# NuGet and packages
-*.nupkg
-*.snupkg
-**/[Pp]ackages/*
-!**/[Pp]ackages/build/
-.nuget/
-project.lock.json
-project.fragment.lock.json
-
-# Logs and diagnostics
-[Ll]ogs/
-*.log
-*.trx
-*.coverage
-*.coveragexml
-*.tmp
-
-# Local environment and secrets
-.env
-.env.*
-appsettings.Development.json
-secrets.json
-
-# WebView local runtime data
-WebView2UserData/
-EBWebView/
-
-# OS files
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# Independent nested repository
+## Logs and temp files
+
+[Ll]ogs/
+*.log
+*.tmp
+
+## App data written at runtime (Electron userData / session)
+
+WebView2UserData/
+EBWebView/
+
+## Independent nested repository
+
 Stellarisync/

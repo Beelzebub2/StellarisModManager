@@ -1,0 +1,23 @@
+{
+    "name": "stellaris-mod-manager-electron-spike",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Phase 1 Electron migration spike for Stellaris Mod Manager",
+    "main": "dist/main.js",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "start": "npm run build && electron .",
+        "check": "tsc -p tsconfig.json --noEmit",
+        "postinstall": "electron-rebuild -f -w better-sqlite3"
+    },
+    "dependencies": {
+        "better-sqlite3": "^11.8.1"
+    },
+    "devDependencies": {
+        "@electron/rebuild": "^4.0.3",
+        "@types/better-sqlite3": "^7.6.12",
+        "@types/node": "^22.15.3",
+        "electron": "^35.2.0",
+        "typescript": "^5.8.3"
+    }
+}

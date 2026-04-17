@@ -1,0 +1,1404 @@
+/* ============================================================
+   Stellaris Mod Manager – Renderer
+   ============================================================ */
+
+const state = {
+    selectedVersion: "4.3",
+    sortMode: "relevance",
+    showOlderVersions: false,
+    searchText: "",
+    page: 1,
+    pageSize: 30,
+    totalPages: 1,
+    isLoading: false,
+    selectedTab: "version",
+    settingsTab: "general",
+    queuePollingHandle: null,
+    searchDebounceHandle: null,
+    activeDetailWorkshopId: null,
+    activeCards: [],
+    settingsModel: null,
+    settingsDirty: false,
+    gameRunning: false,
+    gamePollingHandle: null,
+    stellarisyncPollingHandle: null,
+    library: {
+        snapshot: null,
+        searchText: "",
+        showEnabledOnly: false,
+        selectedModId: null
+    }
+};
+
+const ICON_PATHS = Object.freeze({
+    versions: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+    library: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
+    workshop: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 9.36l-6.9 6.9a2.12 2.12 0 0 1-3-3l6.9-6.9a6 6 0 0 1 9.36-7.94l-3.79 3.79z"/>',
+    launch: '<polygon points="5 3 19 12 5 21 5 3"/>',
+    restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+    queue: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    reinstall: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    export: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+    import: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+    scan: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+    trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+    thumbsUp: '<path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>',
+    thumbsDown: '<path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/>',
+    folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+    back: '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+    forward: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+    refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    chevronUp: '<polyline points="18 15 12 9 6 15"/>',
+    chevronDown: '<polyline points="6 9 12 15 18 9"/>'
+});
+
+function iconSvg(name) {
+    const paths = ICON_PATHS[name] || ICON_PATHS.settings;
+    return `<svg class="icon" viewBox="0 0 24 24" fill="none" aria-hidden="true" focusable="false">${paths}</svg>`;
+}
+
+function applyDataIcons(root = document) {
+    for (const el of root.querySelectorAll("[data-icon]")) {
+        const iconName = (el.getAttribute("data-icon") || "").trim();
+        if (!iconName) continue;
+        el.innerHTML = iconSvg(iconName);
+    }
+}
+
+function setDataIcon(el, iconName) {
+    if (!(el instanceof HTMLElement)) return;
+    el.setAttribute("data-icon", iconName);
+    el.innerHTML = iconSvg(iconName);
+}
+
+/* ---- Helpers ---- */
+function byId(id) { return document.getElementById(id); }
+
+function setText(id, value) {
+    const el = byId(id);
+    if (el) el.textContent = value;
+}
+
+function printJson(id, value) {
+    const el = byId(id);
+    if (el) el.textContent = JSON.stringify(value, null, 2);
+}
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function toDisplayValue(value, fallback = "Not set") {
+    if (value === null || value === undefined) return fallback;
+    if (typeof value === "string") { const t = value.trim(); return t || fallback; }
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : fallback;
+    if (typeof value === "boolean") return value ? "Enabled" : "Disabled";
+    return fallback;
+}
+
+function formatUtc(value) {
+    if (!value || typeof value !== "string") return "Never";
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    return d.toISOString().replace("T", " ").replace(".000Z", " UTC");
+}
+
+function formatInteger(value) { return Number(value || 0).toLocaleString(); }
+
+/* ---- Status management ---- */
+function setGlobalStatus(text) { setText("statusbarText", text); }
+
+function setVersionStatus(text) {
+    setText("versionStatus", text);
+    if (state.selectedTab === "version") setGlobalStatus(text);
+}
+
+function setSettingsStatus(text) {
+    setText("settingsStatus", text);
+    if (state.selectedTab === "settings") setGlobalStatus(text);
+}
+
+function setLibraryStatus(text) {
+    setText("libraryStatus", text);
+    if (state.selectedTab === "library") setGlobalStatus(text);
+}
+
+function setResultSummary(total, page, pages) {
+    setText("resultCountChip", `${total} matches`);
+    setText("pageCursorChip", `Page ${page}/${pages}`);
+}
+
+async function applyAppIcon() {
+    try {
+        const iconDataUrl = await window.spikeApi.getAppIconDataUrl();
+        if (!iconDataUrl) {
+            return;
+        }
+
+        const targets = [
+            ["appBadgeIcon", "appBadgeFallback"],
+            ["sidebarHeroIcon", "sidebarHeroFallback"]
+        ];
+
+        for (const [iconId, fallbackId] of targets) {
+            const iconEl = byId(iconId);
+            const fallbackEl = byId(fallbackId);
+
+            if (iconEl instanceof HTMLImageElement) {
+                iconEl.src = iconDataUrl;
+                iconEl.classList.remove("hidden");
+            }
+
+            if (fallbackEl) {
+                fallbackEl.classList.add("hidden");
+            }
+        }
+    } catch {
+        // keep fallback initials if icon loading fails
+    }
+}
+
+/* ---- Loading state ---- */
+function setLoadingState(isLoading) {
+    state.isLoading = isLoading;
+    const btn = byId("versionRefresh");
+    if (btn) btn.disabled = isLoading;
+    const prev = byId("pagePrev");
+    if (prev) prev.disabled = isLoading || state.page <= 1;
+    const next = byId("pageNext");
+    if (next) next.disabled = isLoading || state.page >= state.totalPages;
+    const clear = byId("searchClear");
+    if (clear) clear.disabled = isLoading || !state.searchText;
+}
+
+function syncSearchClearButton() {
+    const btn = byId("searchClear");
+    if (btn) btn.disabled = !state.searchText;
+}
+
+/* ============================================================
+   MODAL SYSTEM
+   ============================================================ */
+function showModal(title, message, confirmLabel = "Confirm", cancelLabel = "Cancel") {
+    return new Promise((resolve) => {
+        const overlay = byId("modalOverlay");
+        const titleEl = byId("modalTitle");
+        const msgEl = byId("modalMessage");
+        const confirmBtn = byId("modalConfirm");
+        const cancelBtn = byId("modalCancel");
+        const backdrop = byId("modalBackdrop");
+
+        if (titleEl) titleEl.textContent = title;
+        if (msgEl) msgEl.textContent = message;
+        if (confirmBtn) confirmBtn.textContent = confirmLabel;
+        if (cancelBtn) cancelBtn.textContent = cancelLabel;
+
+        if (overlay) overlay.classList.remove("hidden");
+
+        function cleanup(result) {
+            if (overlay) overlay.classList.add("hidden");
+            if (confirmBtn) confirmBtn.onclick = null;
+            if (cancelBtn) cancelBtn.onclick = null;
+            if (backdrop) backdrop.onclick = null;
+            resolve(result);
+        }
+
+        if (confirmBtn) confirmBtn.onclick = () => cleanup(true);
+        if (cancelBtn) cancelBtn.onclick = () => cleanup(false);
+        if (backdrop) backdrop.onclick = () => cleanup(false);
+    });
+}
+
+function showPrompt(title, message, defaultValue = "") {
+    return new Promise((resolve) => {
+        const overlay = byId("modalOverlay");
+        const titleEl = byId("modalTitle");
+        const msgEl = byId("modalMessage");
+        const extra = byId("modalExtra");
+        const confirmBtn = byId("modalConfirm");
+        const cancelBtn = byId("modalCancel");
+        const backdrop = byId("modalBackdrop");
+
+        if (titleEl) titleEl.textContent = title;
+        if (msgEl) msgEl.textContent = message;
+        if (confirmBtn) confirmBtn.textContent = "OK";
+        if (cancelBtn) cancelBtn.textContent = "Cancel";
+
+        if (extra) {
+            extra.innerHTML = `<input id="modalInput" class="field-input" type="text" value="${escapeHtml(defaultValue)}" style="margin-top:8px" />`;
+        }
+
+        if (overlay) overlay.classList.remove("hidden");
+
+        setTimeout(() => {
+            const input = byId("modalInput");
+            if (input) input.focus();
+        }, 50);
+
+        function cleanup(result) {
+            if (overlay) overlay.classList.add("hidden");
+            if (extra) extra.innerHTML = "";
+            if (confirmBtn) confirmBtn.onclick = null;
+            if (cancelBtn) cancelBtn.onclick = null;
+            if (backdrop) backdrop.onclick = null;
+            resolve(result);
+        }
+
+        if (confirmBtn) confirmBtn.onclick = () => {
+            const input = byId("modalInput");
+            cleanup(input ? input.value.trim() : null);
+        };
+        if (cancelBtn) cancelBtn.onclick = () => cleanup(null);
+        if (backdrop) backdrop.onclick = () => cleanup(null);
+    });
+}
+
+/* ============================================================
+   STELLARISYNC STATUS
+   ============================================================ */
+async function refreshStellarisyncStatus() {
+    try {
+        const status = await window.spikeApi.getStellarisyncStatus();
+        const chip = byId("stellarisyncChip");
+        const text = byId("stellarisyncText");
+
+        if (chip && text) {
+            if (status.online) {
+                chip.className = "status-chip status-chip-online";
+                text.textContent = "Stellarisync Online";
+            } else {
+                chip.className = "status-chip status-chip-offline";
+                text.textContent = "Stellarisync Offline";
+            }
+        }
+    } catch {
+        // ignore
+    }
+}
+
+/* ============================================================
+   GAME LAUNCH
+   ============================================================ */
+async function refreshGameRunningStatus() {
+    try {
+        state.gameRunning = await window.spikeApi.getGameRunningStatus();
+        const btn = byId("launchGameBtn");
+        const text = byId("launchGameText");
+        if (btn && text) {
+            const iconHolder = btn.querySelector(".nav-icon[data-icon]");
+            if (state.gameRunning) {
+                text.textContent = "Restart Game";
+                setDataIcon(iconHolder, "restart");
+            } else {
+                text.textContent = "Launch Game";
+                setDataIcon(iconHolder, "launch");
+            }
+        }
+    } catch {
+        // ignore
+    }
+}
+
+async function handleLaunchGame() {
+    if (state.gameRunning) {
+        const confirmed = await showModal(
+            "Stellaris is running",
+            "Restarting will close the running game. Did you save your current game?",
+            "Restart Game",
+            "Cancel"
+        );
+        if (!confirmed) return;
+    }
+
+    const result = await window.spikeApi.launchGame();
+    setGlobalStatus(result.message);
+    setTimeout(() => void refreshGameRunningStatus(), 2000);
+}
+
+/* ============================================================
+   VERSION BROWSER
+   ============================================================ */
+function actionLabel(actionState) {
+    switch (actionState) {
+        case "queued": return "Queued";
+        case "installing": return "Installing...";
+        case "installed": return "Installed";
+        case "uninstalling": return "Removing...";
+        case "error": return "Retry";
+        default: return "Install";
+    }
+}
+
+function actionIntent(actionState) {
+    return actionState === "installed" ? "uninstall" : "install";
+}
+
+function actionIsDisabled(actionState) {
+    return actionState === "queued" || actionState === "installing" || actionState === "uninstalling";
+}
+
+function cardTemplate(card) {
+    const safeName = escapeHtml(card.name);
+    const thumbnail = card.previewImageUrl
+        ? `<img src="${escapeHtml(card.previewImageUrl)}" alt="${safeName}" loading="lazy" />`
+        : `<div class="mod-fallback">${safeName.slice(0, 1).toUpperCase() || "?"}</div>`;
+    const hasCommunity = (card.communityWorksCount + card.communityNotWorksCount) > 0;
+
+    return `
+        <article class="mod-card" data-workshop-id="${card.workshopId}" data-workshop-url="${escapeHtml(card.workshopUrl)}">
+            <button class="mod-thumb" type="button" data-action="open-detail" data-workshop-id="${card.workshopId}">
+                ${thumbnail}
+            </button>
+            <div class="mod-body">
+                <h3 class="mod-title" title="${safeName}">${safeName}</h3>
+                <div class="badges">
+                    <span class="badge badge-version">${escapeHtml(card.gameVersionBadge)}</span>
+                    ${hasCommunity ? `<span class="badge badge-community">${card.communityWorksPercent}% works</span>` : `<span class="badge badge-unverified">Unverified</span>`}
+                </div>
+                <p class="mod-meta">${card.totalSubscribers.toLocaleString()} subscribers</p>
+                <div class="mod-footer">
+                    <button type="button" data-action="toggle-mod" data-workshop-id="${card.workshopId}"
+                        data-intent="${actionIntent(card.actionState)}"
+                        class="${card.actionState === "error" ? "button-secondary" : ""}"
+                        ${actionIsDisabled(card.actionState) ? "disabled" : ""}>
+                        ${actionLabel(card.actionState)}
+                    </button>
+                </div>
+            </div>
+        </article>`;
+}
+
+function renderCards(cards) {
+    state.activeCards = cards;
+    const container = byId("versionCards");
+    if (!container) return;
+
+    if (!cards || cards.length === 0) {
+        container.innerHTML = `
+            <article class="panel-lite" style="padding:20px;text-align:center;">
+                <h3 style="margin:0 0 6px">No mods found</h3>
+                <p class="muted">Try a broader search term or switch to another game version.</p>
+            </article>`;
+        setResultSummary(0, 1, 1);
+        return;
+    }
+
+    container.innerHTML = cards.map(cardTemplate).join("\n");
+
+    for (const btn of container.querySelectorAll("button[data-action='open-detail']")) {
+        btn.addEventListener("click", () => void openDetailDrawer(btn.getAttribute("data-workshop-id") || ""));
+    }
+    for (const card of container.querySelectorAll(".mod-card")) {
+        card.addEventListener("click", (e) => {
+            // Don't navigate if they clicked a button inside the card
+            if (e.target.closest("button")) return;
+            const url = card.getAttribute("data-workshop-url") || "";
+            if (url) {
+                activateTab("workshop");
+                const webview = byId("workshopWebview");
+                if (webview) webview.loadURL(url);
+                const urlInput = byId("workshopUrl");
+                if (urlInput) urlInput.value = url;
+            }
+        });
+    }
+    for (const btn of container.querySelectorAll("button[data-action='toggle-mod']")) {
+        btn.addEventListener("click", () => {
+            const id = btn.getAttribute("data-workshop-id") || "";
+            const intent = btn.getAttribute("data-intent") === "uninstall" ? "uninstall" : "install";
+            void queueAction(id, intent, "version");
+        });
+    }
+}
+
+function renderPager(result) {
+    state.page = result.currentPage;
+    state.totalPages = result.totalPages;
+    setText("pageSummary", `Page ${result.currentPage} of ${result.totalPages} (${result.totalMatches} mods)`);
+    setResultSummary(result.totalMatches, result.currentPage, result.totalPages);
+    const prev = byId("pagePrev");
+    if (prev) prev.disabled = state.isLoading || result.currentPage <= 1;
+    const next = byId("pageNext");
+    if (next) next.disabled = state.isLoading || result.currentPage >= result.totalPages;
+}
+
+async function refreshVersionOptions() {
+    const options = await window.spikeApi.getVersionOptions(state.showOlderVersions);
+    const select = byId("versionSelect");
+    if (!select) return;
+    select.innerHTML = "";
+    for (const opt of options) {
+        const item = document.createElement("option");
+        item.value = opt.version;
+        item.textContent = opt.displayName;
+        select.append(item);
+    }
+    const hasSelection = options.some((o) => o.version === state.selectedVersion);
+    if (!hasSelection && options.length > 0) state.selectedVersion = options[0].version;
+    select.value = state.selectedVersion;
+}
+
+async function refreshVersionResults() {
+    setLoadingState(true);
+    try {
+        const result = await window.spikeApi.queryVersionMods({
+            selectedVersion: state.selectedVersion,
+            searchText: state.searchText,
+            showOlderVersions: state.showOlderVersions,
+            sortMode: state.sortMode,
+            page: state.page,
+            pageSize: state.pageSize
+        });
+        renderCards(result.cards);
+        renderPager(result);
+        setVersionStatus(result.statusText);
+        if (state.activeDetailWorkshopId) void refreshDetailDrawer(state.activeDetailWorkshopId);
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown error.";
+        setVersionStatus(`Version browser failed: ${msg}`);
+    } finally {
+        setLoadingState(false);
+    }
+}
+
+/* ============================================================
+   QUEUE
+   ============================================================ */
+function getModNameByWorkshopId(workshopId) {
+    const fromLib = (state.library.snapshot?.mods ?? []).find((m) => m.workshopId === workshopId);
+    if (fromLib) return fromLib.name;
+    const fromCards = state.activeCards.find((c) => c.workshopId === workshopId);
+    if (fromCards) return fromCards.name;
+    return workshopId;
+}
+
+function renderQueueList(snapshot) {
+    const summary = byId("queueSummary");
+    const queueList = byId("queueList");
+    const queueChip = byId("statusbarQueue");
+    const queueLoadChip = byId("queueLoadChip");
+    const queueOverallBar = byId("queueOverallBar");
+
+    const items = snapshot.items || [];
+    const activeItems = items.filter((i) => i.status === "queued" || i.status === "running");
+    const total = items.length;
+    const active = activeItems.length;
+
+    if (queueChip) queueChip.textContent = active > 0 ? `Queue ${active} active` : "Queue idle";
+    if (queueLoadChip) queueLoadChip.textContent = active > 0 ? `${active} active` : "Idle";
+
+    if (summary) {
+        if (total === 0) summary.textContent = "No active installs.";
+        else if (active > 0) summary.textContent = `${active} active, ${total} tracked`;
+        else summary.textContent = `${total} recent operations`;
+    }
+
+    if (queueOverallBar) {
+        const pct = total === 0 ? 0 : Math.round(items.reduce((s, i) => s + Number(i.progress || 0), 0) / total);
+        queueOverallBar.style.width = `${pct}%`;
+    }
+
+    if (!queueList) return;
+
+    if (total === 0) {
+        queueList.innerHTML = `<div class="queue-empty"><span class="queue-empty-icon" data-icon="queue"></span><span>No active installs</span></div>`;
+        applyDataIcons(queueList);
+        return;
+    }
+
+    queueList.innerHTML = items.map((item) => {
+        const cancelable = item.status === "queued" || item.status === "running";
+        const name = getModNameByWorkshopId(item.workshopId);
+        return `
+            <article class="queue-item">
+                <div class="queue-item-top">
+                    <span class="queue-id" title="${escapeHtml(item.workshopId)}">${escapeHtml(name)}</span>
+                    <span class="queue-stage">${escapeHtml(item.status)}</span>
+                </div>
+                <p class="muted mono queue-item-workshop">${escapeHtml(item.workshopId)}</p>
+                <p class="muted">${escapeHtml(item.action)}: ${escapeHtml(item.message)}</p>
+                <div class="queue-progress"><span style="width:${Math.max(0, Math.min(100, Number(item.progress || 0)))}%"></span></div>
+                ${cancelable ? `<button class="button-secondary" data-action="cancel-queue" data-workshop-id="${escapeHtml(item.workshopId)}">Cancel</button>` : ""}
+            </article>`;
+    }).join("\n");
+
+    for (const btn of queueList.querySelectorAll("button[data-action='cancel-queue']")) {
+        btn.addEventListener("click", () => void cancelQueueAction(btn.getAttribute("data-workshop-id") || ""));
+    }
+}
+
+async function refreshQueueSnapshot() {
+    try {
+        const snapshot = await window.spikeApi.getVersionQueueSnapshot();
+        renderQueueList(snapshot);
+        if (snapshot.hasActiveWork && !state.isLoading && state.selectedTab === "version") {
+            void refreshVersionResults();
+        }
+    } catch { /* ignore */ }
+}
+
+async function queueAction(workshopId, action, source = "version") {
+    const result = await window.spikeApi.queueVersionModAction({ workshopId, action });
+    if (source === "library") setLibraryStatus(result.message);
+    else setVersionStatus(result.message);
+    await refreshQueueSnapshot();
+    await refreshVersionResults();
+    if (source === "library") await refreshLibrarySnapshot();
+}
+
+async function cancelQueueAction(workshopId) {
+    const result = await window.spikeApi.cancelVersionModAction(workshopId);
+    setGlobalStatus(result.message);
+    await refreshQueueSnapshot();
+    await refreshVersionResults();
+    if (state.activeDetailWorkshopId === workshopId) await refreshDetailDrawer(workshopId);
+}
+
+/* ============================================================
+   DETAIL DRAWER
+   ============================================================ */
+function showDetailDrawer(show) {
+    const drawer = byId("detailDrawer");
+    if (!drawer) return;
+    drawer.classList.toggle("hidden", !show);
+    document.body.classList.toggle("drawer-open", show);
+}
+
+async function refreshDetailDrawer(workshopId) {
+    const detail = await window.spikeApi.getVersionModDetail(workshopId, state.selectedVersion);
+    if (!detail) return;
+    state.activeDetailWorkshopId = workshopId;
+
+    setText("detailTitle", detail.title);
+    setText("detailVersion", detail.gameVersionBadge);
+
+    const hasDetailCommunity = (detail.communityWorksCount + detail.communityNotWorksCount) > 0;
+    setText("detailCommunity", hasDetailCommunity
+        ? `${detail.communityWorksPercent}% work (${detail.communityWorksCount + detail.communityNotWorksCount} reports)`
+        : `Unverified (0 reports)`);
+
+    setText("detailSubscribers", `${detail.totalSubscribers.toLocaleString()} subscribers`);
+    setText("detailDescription", detail.descriptionText || "No description available.");
+    setText("detailQueueMessage", detail.queueMessage || "No queue activity.");
+
+    const image = byId("detailImage");
+    if (image) {
+        if (detail.previewImageUrl) { image.src = detail.previewImageUrl; image.style.display = "block"; }
+        else { image.removeAttribute("src"); image.style.display = "none"; }
+    }
+
+    const tags = byId("detailTags");
+    if (tags) {
+        tags.innerHTML = detail.tags.length === 0
+            ? "<span class='muted'>No tags.</span>"
+            : detail.tags.map((t) => `<span class='tag'>${escapeHtml(t)}</span>`).join(" ");
+    }
+
+    const actionBtn = byId("detailActionButton");
+    if (actionBtn) {
+        const intent = detail.actionState === "installed" ? "uninstall" : "install";
+        actionBtn.textContent = intent === "install" ? "Install" : "Uninstall";
+        actionBtn.disabled = actionIsDisabled(detail.actionState);
+        actionBtn.onclick = () => void queueAction(workshopId, intent, "version");
+    }
+
+    const cancelBtn = byId("detailCancelButton");
+    if (cancelBtn) cancelBtn.onclick = () => void cancelQueueAction(workshopId);
+
+    const workshopBtn = byId("detailWorkshopButton");
+    if (workshopBtn) workshopBtn.onclick = () => void window.spikeApi.openExternalUrl(detail.workshopUrl);
+}
+
+async function openDetailDrawer(workshopId) {
+    await refreshDetailDrawer(workshopId);
+    showDetailDrawer(true);
+}
+
+/* ============================================================
+   SETTINGS
+   ============================================================ */
+function getDefaultSettingsModel() {
+    return {
+        gamePath: "", modsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
+        workshopDownloadRuntime: "Auto", lastDetectedGameVersion: "",
+        autoDetectGame: true, developerMode: false, warnBeforeRestartGame: true,
+        themePalette: "Obsidian Ember", autoCheckAppUpdates: true,
+        compatibilityReporterId: "", lastAppUpdateCheckUtc: "",
+        lastOfferedAppVersion: "", skippedAppVersion: "", publicProfileUsername: ""
+    };
+}
+
+function setInputValue(id, v) { const el = byId(id); if (el && "value" in el) el.value = v ?? ""; }
+function setCheckboxValue(id, v) { const el = byId(id); if (el && "checked" in el) el.checked = v === true; }
+function getInputValue(id) { const el = byId(id); return (!el || !("value" in el)) ? "" : String(el.value || "").trim(); }
+function getCheckboxValue(id) { const el = byId(id); return (!el || !("checked" in el)) ? false : el.checked === true; }
+
+function markSettingsDirty(isDirty) {
+    state.settingsDirty = isDirty;
+    const chip = byId("settingsUnsavedChip");
+    if (chip) chip.classList.toggle("hidden", !isDirty);
+}
+
+function buildSettingsFromForm() {
+    return {
+        gamePath: getInputValue("settingsGamePathInput"),
+        modsPath: getInputValue("settingsModsPathInput"),
+        steamCmdPath: getInputValue("settingsSteamCmdPathInput"),
+        steamCmdDownloadPath: getInputValue("settingsSteamCmdDownloadPathInput"),
+        workshopDownloadRuntime: getInputValue("settingsWorkshopRuntimeInput") || "Auto",
+        lastDetectedGameVersion: state.settingsModel?.lastDetectedGameVersion || "",
+        autoDetectGame: getCheckboxValue("settingsAutoDetectGameInput"),
+        developerMode: getCheckboxValue("settingsDeveloperModeInput"),
+        warnBeforeRestartGame: getCheckboxValue("settingsWarnBeforeRestartInput"),
+        themePalette: getInputValue("settingsThemeInput") || "Obsidian Ember",
+        autoCheckAppUpdates: getCheckboxValue("settingsAutoUpdatesInput"),
+        compatibilityReporterId: getInputValue("settingsReporterIdInput"),
+        lastAppUpdateCheckUtc: state.settingsModel?.lastAppUpdateCheckUtc || "",
+        lastOfferedAppVersion: state.settingsModel?.lastOfferedAppVersion || "",
+        skippedAppVersion: state.settingsModel?.skippedAppVersion || "",
+        publicProfileUsername: getInputValue("settingsPublicProfileInput")
+    };
+}
+
+function applySettingsToForm(settings) {
+    const m = { ...getDefaultSettingsModel(), ...(settings || {}) };
+    state.settingsModel = m;
+
+    setInputValue("settingsPublicProfileInput", m.publicProfileUsername);
+    setInputValue("settingsGamePathInput", m.gamePath);
+    setInputValue("settingsModsPathInput", m.modsPath);
+    setInputValue("settingsSteamCmdPathInput", m.steamCmdPath);
+    setInputValue("settingsSteamCmdDownloadPathInput", m.steamCmdDownloadPath);
+    setInputValue("settingsThemeInput", m.themePalette || "Obsidian Ember");
+    setInputValue("settingsWorkshopRuntimeInput", m.workshopDownloadRuntime || "Auto");
+    setInputValue("settingsReporterIdInput", m.compatibilityReporterId);
+
+    setCheckboxValue("settingsAutoDetectGameInput", m.autoDetectGame === true);
+    setCheckboxValue("settingsWarnBeforeRestartInput", m.warnBeforeRestartGame === true);
+    setCheckboxValue("settingsDeveloperModeInput", m.developerMode === true);
+    setCheckboxValue("settingsAutoUpdatesInput", m.autoCheckAppUpdates === true);
+
+    setText("settingsGameVersionText", toDisplayValue(m.lastDetectedGameVersion));
+    setText("settingsLastCheckUtcText", formatUtc(m.lastAppUpdateCheckUtc));
+    setText("settingsLastOfferedVersionText", toDisplayValue(m.lastOfferedAppVersion));
+    setText("settingsSkippedVersionText", toDisplayValue(m.skippedAppVersion));
+
+    const steamText = byId("settingsSteamCmdConfiguredText");
+    if (steamText) {
+        const configured = !!m.steamCmdPath?.trim();
+        steamText.textContent = configured ? "Configured" : "Not configured";
+        steamText.className = "steam-status-text " + (configured ? "steam-status-configured" : "steam-status-not-configured");
+    }
+
+    syncSettingsRuntimeVisibility();
+    markSettingsDirty(false);
+}
+
+function syncSettingsRuntimeVisibility() {
+    const runtime = getInputValue("settingsWorkshopRuntimeInput") || "Auto";
+    const hide = runtime.toLowerCase() === "steamkit2";
+    for (const id of ["settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput"]) {
+        const el = byId(id);
+        if (el) {
+            const container = el.closest(".field-col");
+            if (container) container.classList.toggle("hidden", hide);
+        }
+    }
+}
+
+function renderSettingsSubtabs() {
+    for (const btn of document.querySelectorAll(".settings-subtab")) {
+        btn.classList.toggle("is-active", btn.getAttribute("data-settings-tab") === state.settingsTab);
+    }
+    for (const tab of ["general", "workshop", "updates", "advanced"]) {
+        const panel = byId(`settingsTab${tab.charAt(0).toUpperCase()}${tab.slice(1)}`);
+        if (panel) panel.classList.toggle("hidden", tab !== state.settingsTab);
+    }
+}
+
+async function refreshSettingsPage() {
+    try {
+        const [summary, settings, dbSummary, palettes, runtimes] = await Promise.all([
+            window.spikeApi.getSystemSummary(),
+            window.spikeApi.getSettings(),
+            window.spikeApi.getDbSummary(),
+            window.spikeApi.getThemePaletteOptions(),
+            window.spikeApi.getDownloadRuntimeOptions()
+        ]);
+
+        const paletteSelect = byId("settingsThemeInput");
+        if (paletteSelect) paletteSelect.innerHTML = palettes.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+
+        const runtimeSelect = byId("settingsWorkshopRuntimeInput");
+        if (runtimeSelect) runtimeSelect.innerHTML = runtimes.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+
+        applySettingsToForm(settings || getDefaultSettingsModel());
+        printJson("runtime", summary);
+        printJson("db", dbSummary ?? { message: "No readable mods.db found" });
+        setSettingsStatus("Settings loaded.");
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown settings error";
+        setSettingsStatus(`Failed to load settings: ${msg}`);
+    }
+}
+
+async function validateSettingsPage() {
+    const current = buildSettingsFromForm();
+    const result = await window.spikeApi.validateSettings(current);
+    setSettingsStatus(result.ok
+        ? (result.warnings.length > 0 ? result.warnings.join(" ") : result.message)
+        : result.errors.join(" "));
+}
+
+async function saveSettingsPage() {
+    const current = buildSettingsFromForm();
+    const result = await window.spikeApi.saveSettings(current);
+    if (!result.ok) { setSettingsStatus(result.message); return; }
+    applySettingsToForm(result.settings);
+    setSettingsStatus(result.message);
+}
+
+async function autoDetectSettingsPage() {
+    const result = await window.spikeApi.autoDetectSettings();
+    applySettingsToForm(result.settings);
+    markSettingsDirty(true);
+    setSettingsStatus(result.message);
+}
+
+/* ============================================================
+   LIBRARY
+   ============================================================ */
+function getActiveLibraryProfile() {
+    const s = state.library.snapshot;
+    return s ? s.profiles.find((p) => p.id === s.activeProfileId) || null : null;
+}
+
+function getSelectedLibraryMod() {
+    const s = state.library.snapshot;
+    return s ? s.mods.find((m) => m.id === state.library.selectedModId) || null : null;
+}
+
+function getFilteredLibraryMods() {
+    const s = state.library.snapshot;
+    if (!s) return [];
+    const search = state.library.searchText.trim().toLowerCase();
+    return s.mods
+        .filter((m) => {
+            if (state.library.showEnabledOnly && !m.isEnabled) return false;
+            if (!search) return true;
+            return m.name.toLowerCase().includes(search) || m.workshopId.includes(search);
+        })
+        .sort((a, b) => {
+            if (a.isEnabled !== b.isEnabled) return a.isEnabled ? -1 : 1;
+            if (a.loadOrder !== b.loadOrder) return a.loadOrder - b.loadOrder;
+            return a.name.localeCompare(b.name);
+        });
+}
+
+function renderLibraryDetail(mod) {
+    const empty = byId("libraryDetailEmpty");
+    const detail = byId("libraryDetail");
+    const mpSafe = byId("libraryDetailMpSafe");
+    const hasUpdate = byId("libraryDetailHasUpdate");
+
+    if (!mod) {
+        if (empty) empty.classList.remove("hidden");
+        if (detail) detail.classList.add("hidden");
+        return;
+    }
+
+    if (empty) empty.classList.add("hidden");
+    if (detail) detail.classList.remove("hidden");
+
+    setText("libraryDetailName", mod.name);
+    setText("libraryDetailWorkshopId", mod.workshopId);
+    setText("libraryDetailVersion", toDisplayValue(mod.version));
+    setText("libraryDetailSubscribers", `${formatInteger(mod.totalSubscribers)} subscribers`);
+    setText("libraryDetailGameVersion", toDisplayValue(mod.gameVersion));
+    setText("libraryDetailInstalledAt", formatUtc(mod.lastUpdatedAtUtc || mod.installedAtUtc));
+    setText("libraryDetailTags", mod.tags.length > 0 ? mod.tags.join(", ") : "No tags.");
+    setText("libraryDetailDescription", mod.description || "No description available.");
+
+    if (mpSafe) mpSafe.classList.toggle("hidden", !mod.isMultiplayerSafe);
+    if (hasUpdate) hasUpdate.classList.toggle("hidden", !mod.hasUpdate);
+
+    const updateBtn = byId("libraryActionUpdate");
+    if (updateBtn) updateBtn.disabled = !mod.hasUpdate;
+}
+
+function renderLibraryList() {
+    const list = byId("libraryList");
+    if (!list) return;
+    const mods = getFilteredLibraryMods();
+
+    if (mods.length === 0) {
+        list.innerHTML = "<div class='library-empty muted'>No installed mods match the current filter.</div>";
+        renderLibraryDetail(null);
+        return;
+    }
+
+    if (!mods.some((m) => m.id === state.library.selectedModId)) {
+        state.library.selectedModId = mods[0].id;
+    }
+
+    list.innerHTML = mods.map((mod) => {
+        const sel = mod.id === state.library.selectedModId ? " is-selected" : "";
+        const updateBadge = mod.hasUpdate ? "<span class='badge badge-version'>Update</span>" : "";
+        const mpBadge = mod.isMultiplayerSafe ? "<span class='badge badge-community'>MP safe</span>" : "";
+        return `
+            <article class="library-row${sel}" data-mod-id="${mod.id}">
+                <div class="library-cell library-enabled">
+                    <input type="checkbox" data-action="toggle-enabled" data-mod-id="${mod.id}" ${mod.isEnabled ? "checked" : ""} />
+                </div>
+                <div class="library-cell library-name">
+                    <p class="library-row-title">${escapeHtml(mod.name)}</p>
+                    <div class="library-row-badges">
+                        <span class="badge">v${escapeHtml(mod.version || "-")}</span>
+                        ${mpBadge}${updateBadge}
+                    </div>
+                </div>
+                <div class="library-cell library-order">
+                    <span class="badge">${mod.loadOrder}</span>
+                </div>
+                <div class="library-cell library-actions">
+                    <button type="button" class="button-icon" data-action="move-up" data-mod-id="${mod.id}" ${!mod.isEnabled ? "disabled" : ""} title="Move up">${iconSvg("chevronUp")}</button>
+                    <button type="button" class="button-icon" data-action="move-down" data-mod-id="${mod.id}" ${!mod.isEnabled ? "disabled" : ""} title="Move down">${iconSvg("chevronDown")}</button>
+                    <button type="button" class="button-icon button-danger" data-action="remove-mod" data-mod-id="${mod.id}" title="Remove">${iconSvg("trash")}</button>
+                </div>
+            </article>`;
+    }).join("\n");
+
+    // Event listeners
+    for (const row of list.querySelectorAll(".library-row")) {
+        row.addEventListener("click", () => {
+            const id = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+            if (!Number.isFinite(id) || id <= 0) return;
+            state.library.selectedModId = id;
+            renderLibraryList();
+        });
+    }
+
+    for (const input of list.querySelectorAll("input[data-action='toggle-enabled']")) {
+        input.addEventListener("click", (e) => e.stopPropagation());
+        input.addEventListener("change", async () => {
+            const id = Number.parseInt(input.getAttribute("data-mod-id") || "0", 10);
+            if (!Number.isFinite(id) || id <= 0) return;
+            const result = await window.spikeApi.setLibraryModEnabled({ modId: id, isEnabled: input.checked === true });
+            setLibraryStatus(result.message);
+            await refreshLibrarySnapshot();
+        });
+    }
+
+    for (const btn of list.querySelectorAll("button[data-action='move-up'], button[data-action='move-down']")) {
+        btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const id = Number.parseInt(btn.getAttribute("data-mod-id") || "0", 10);
+            if (!Number.isFinite(id) || id <= 0) return;
+            const dir = btn.getAttribute("data-action") === "move-up" ? "up" : "down";
+            const result = await window.spikeApi.moveLibraryMod({ modId: id, direction: dir });
+            setLibraryStatus(result.message);
+            await refreshLibrarySnapshot();
+        });
+    }
+
+    for (const btn of list.querySelectorAll("button[data-action='remove-mod']")) {
+        btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            const id = Number.parseInt(btn.getAttribute("data-mod-id") || "0", 10);
+            if (!Number.isFinite(id) || id <= 0) return;
+            const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
+            if (!confirmed) return;
+            const result = await window.spikeApi.uninstallLibraryMod(id);
+            setLibraryStatus(result.message);
+            await refreshLibrarySnapshot();
+        });
+    }
+
+    renderLibraryDetail(getSelectedLibraryMod());
+}
+
+function renderLibraryProfiles() {
+    const snapshot = state.library.snapshot;
+    const select = byId("libraryProfileSelect");
+    const sharedInput = byId("librarySharedProfileId");
+    if (!snapshot || !select) return;
+
+    select.innerHTML = snapshot.profiles
+        .map((p) => `<option value="${p.id}" ${p.id === snapshot.activeProfileId ? "selected" : ""}>${escapeHtml(p.name)}</option>`)
+        .join("");
+
+    const active = getActiveLibraryProfile();
+    if (sharedInput) sharedInput.value = active?.sharedProfileId || "";
+
+    // Disable delete button when only one profile remains
+    const deleteBtn = byId("libraryDeleteProfile");
+    if (deleteBtn) deleteBtn.disabled = snapshot.profiles.length <= 1;
+}
+
+function renderLibrarySummary() {
+    const s = state.library.snapshot;
+    if (!s) return;
+    setText("libraryUpdatesChip", `${s.updatesAvailable} updates`);
+    setText("libraryTotalsChip", `${s.totalMods} mods`);
+    setText("libraryTotalModsChip", `Total: ${s.totalMods}`);
+    setText("libraryEnabledModsChip", `Enabled: ${s.enabledMods}`);
+    setText("libraryUpdatesFooter", `Updates: ${s.updatesAvailable}`);
+}
+
+async function refreshLibrarySnapshot() {
+    try {
+        const snapshot = await window.spikeApi.getLibrarySnapshot();
+        state.library.snapshot = snapshot;
+        if (state.library.selectedModId && !snapshot.mods.some((m) => m.id === state.library.selectedModId)) {
+            state.library.selectedModId = null;
+        }
+        renderLibrarySummary();
+        renderLibraryProfiles();
+        renderLibraryList();
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown library error";
+        setLibraryStatus(`Failed to load library: ${msg}`);
+    }
+}
+
+async function reinstallAllLibraryMods() {
+    const snapshot = state.library.snapshot;
+    if (!snapshot || snapshot.mods.length === 0) { setLibraryStatus("No installed mods to reinstall."); return; }
+    let queued = 0;
+    for (const mod of snapshot.mods) {
+        const result = await window.spikeApi.queueVersionModAction({ workshopId: mod.workshopId, action: "install" });
+        if (result.ok) queued += 1;
+    }
+    setLibraryStatus(`Queued ${queued} mod(s) for reinstall.`);
+    await refreshQueueSnapshot();
+}
+
+async function runLibraryCompatibilityReport(worked) {
+    const mod = getSelectedLibraryMod();
+    if (!mod) { setLibraryStatus("Select a mod first."); return; }
+    const snapshot = state.library.snapshot;
+    const gv = (snapshot?.lastDetectedGameVersion || mod.gameVersion || "").trim();
+    if (!gv) { setLibraryStatus("Game version is required to report compatibility."); return; }
+    const result = await window.spikeApi.reportLibraryCompatibility({ workshopId: mod.workshopId, gameVersion: gv, worked });
+    setLibraryStatus(result.message);
+}
+
+/* ============================================================
+   WORKSHOP VIEW
+   ============================================================ */
+const WORKSHOP_HOME = "https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90";
+
+function initWorkshop() {
+    const webview = byId("workshopWebview");
+    const urlInput = byId("workshopUrl");
+    const loading = byId("workshopLoading");
+
+    if (!webview) return;
+
+    webview.addEventListener("did-start-loading", () => {
+        if (loading) loading.classList.add("is-loading");
+    });
+    webview.addEventListener("did-stop-loading", () => {
+        if (loading) loading.classList.remove("is-loading");
+        // Inject CSS to improve Steam workshop rendering in the embedded webview
+        webview.insertCSS(`
+            body { background: #1b2838 !important; }
+            .responsive_page_template_content { min-height: 600px !important; }
+            .apphub_HomeHeaderContent { display: none !important; }
+            #global_header { position: sticky; top: 0; z-index: 100; }
+        `).catch(() => { });
+    });
+    webview.addEventListener("did-navigate", (e) => {
+        if (urlInput) urlInput.value = e.url;
+    });
+    webview.addEventListener("did-navigate-in-page", (e) => {
+        if (urlInput && e.isMainFrame) urlInput.value = e.url;
+    });
+
+    // Handle new-window requests from Steam links (opens in same webview)
+    webview.addEventListener("new-window", (e) => {
+        const url = e.url;
+        if (url && url.startsWith("http")) {
+            e.preventDefault();
+            if (url.includes("steamcommunity.com") || url.includes("store.steampowered.com")) {
+                webview.loadURL(url);
+            } else {
+                void window.spikeApi.openExternalUrl(url);
+            }
+        }
+    });
+
+    byId("workshopBack")?.addEventListener("click", () => { if (webview.canGoBack()) webview.goBack(); });
+    byId("workshopForward")?.addEventListener("click", () => { if (webview.canGoForward()) webview.goForward(); });
+    byId("workshopRefresh")?.addEventListener("click", () => webview.reload());
+    byId("workshopHome")?.addEventListener("click", () => webview.loadURL(WORKSHOP_HOME));
+    byId("workshopGo")?.addEventListener("click", () => {
+        const url = urlInput?.value?.trim();
+        if (url) webview.loadURL(url.startsWith("http") ? url : `https://${url}`);
+    });
+
+    if (urlInput) {
+        urlInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                const url = urlInput.value.trim();
+                if (url) webview.loadURL(url.startsWith("http") ? url : `https://${url}`);
+            }
+        });
+    }
+}
+
+/* ============================================================
+   TAB NAVIGATION
+   ============================================================ */
+function activateTab(name) {
+    state.selectedTab = name;
+
+    const tabs = { version: "tabVersion", library: "tabLibrary", workshop: "tabWorkshop", settings: "tabSettings" };
+    for (const [tabName, id] of Object.entries(tabs)) {
+        const el = byId(id);
+        if (el) el.classList.toggle("is-active", tabName === name);
+    }
+
+    const pages = { version: "pageVersion", library: "pageLibrary", workshop: "pageWorkshop", settings: "pageSettings" };
+    for (const [tabName, id] of Object.entries(pages)) {
+        const el = byId(id);
+        if (el) el.classList.toggle("hidden", tabName !== name);
+    }
+
+    const statusMap = {
+        version: "Version browser ready.",
+        library: "Library view ready.",
+        workshop: "Workshop browser ready.",
+        settings: "Settings view ready."
+    };
+    setGlobalStatus(statusMap[name] || "Ready.");
+}
+
+/* ============================================================
+   EVENT HOOKS
+   ============================================================ */
+function hookVersionControls() {
+    byId("versionSelect")?.addEventListener("change", (e) => {
+        state.selectedVersion = e.target.value;
+        state.page = 1;
+        void refreshVersionResults();
+    });
+    byId("sortSelect")?.addEventListener("change", (e) => {
+        state.sortMode = e.target.value;
+        state.page = 1;
+        void refreshVersionResults();
+    });
+    byId("showOlderVersions")?.addEventListener("change", (e) => {
+        state.showOlderVersions = e.target.checked;
+        state.page = 1;
+        void refreshVersionOptions().then(() => refreshVersionResults());
+    });
+
+    const searchInput = byId("searchInput");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            state.searchText = searchInput.value.trim();
+            state.page = 1;
+            syncSearchClearButton();
+            if (state.searchDebounceHandle) clearTimeout(state.searchDebounceHandle);
+            state.searchDebounceHandle = setTimeout(() => void refreshVersionResults(), 260);
+        });
+        searchInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                if (state.searchDebounceHandle) clearTimeout(state.searchDebounceHandle);
+                void refreshVersionResults();
+            }
+        });
+    }
+
+    byId("searchClear")?.addEventListener("click", () => {
+        if (searchInput && searchInput.value) {
+            searchInput.value = "";
+            state.searchText = "";
+            state.page = 1;
+            syncSearchClearButton();
+            void refreshVersionResults();
+            searchInput.focus();
+        }
+    });
+
+    byId("versionRefresh")?.addEventListener("click", async () => {
+        await window.spikeApi.clearVersionResultCache();
+        void refreshVersionResults();
+    });
+    byId("pagePrev")?.addEventListener("click", () => { if (state.page > 1) { state.page -= 1; void refreshVersionResults(); } });
+    byId("pageNext")?.addEventListener("click", () => { if (state.page < state.totalPages) { state.page += 1; void refreshVersionResults(); } });
+}
+
+function hookSettingsControls() {
+    byId("refreshSettings")?.addEventListener("click", () => void refreshSettingsPage());
+    byId("autoDetectSettings")?.addEventListener("click", () => void autoDetectSettingsPage());
+    byId("validateSettings")?.addEventListener("click", () => void validateSettingsPage());
+    byId("saveSettings")?.addEventListener("click", () => void saveSettingsPage());
+
+    for (const btn of document.querySelectorAll(".settings-subtab")) {
+        btn.addEventListener("click", () => {
+            state.settingsTab = btn.getAttribute("data-settings-tab") || "general";
+            renderSettingsSubtabs();
+        });
+    }
+
+    const dirtyInputs = [
+        "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput",
+        "settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput",
+        "settingsWorkshopRuntimeInput", "settingsThemeInput", "settingsReporterIdInput"
+    ];
+    for (const id of dirtyInputs) {
+        byId(id)?.addEventListener("input", () => {
+            markSettingsDirty(true);
+            if (id === "settingsWorkshopRuntimeInput") syncSettingsRuntimeVisibility();
+        });
+    }
+
+    const dirtyCheckboxes = [
+        "settingsAutoDetectGameInput", "settingsWarnBeforeRestartInput",
+        "settingsDeveloperModeInput", "settingsAutoUpdatesInput"
+    ];
+    for (const id of dirtyCheckboxes) {
+        byId(id)?.addEventListener("change", () => markSettingsDirty(true));
+    }
+}
+
+function hookLibraryControls() {
+    byId("librarySearchInput")?.addEventListener("input", (e) => {
+        state.library.searchText = e.target.value || "";
+        renderLibraryList();
+    });
+    byId("libraryEnabledOnly")?.addEventListener("change", (e) => {
+        state.library.showEnabledOnly = e.target.checked === true;
+        renderLibraryList();
+    });
+
+    byId("libraryProfileSelect")?.addEventListener("change", async (e) => {
+        const id = Number.parseInt(e.target.value || "0", 10);
+        if (!Number.isFinite(id) || id <= 0) return;
+        const result = await window.spikeApi.activateLibraryProfile(id);
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryNewProfile")?.addEventListener("click", async () => {
+        const name = await showPrompt("New Profile", "Enter a name for the new profile:", "New Profile");
+        if (!name) return;
+        setLibraryStatus(`Creating profile '${name}'...`);
+        try {
+            const result = await window.spikeApi.createLibraryProfile(name);
+            setLibraryStatus(result.message);
+            if (result.ok) {
+                await refreshLibrarySnapshot();
+                // Find and activate the new profile so it actually switches in the UI
+                const p = state.library.snapshot.profiles.find(x => x.name.toLowerCase() === name.toLowerCase());
+                if (p) {
+                    await window.spikeApi.activateLibraryProfile(p.id);
+                    await refreshLibrarySnapshot();
+                }
+            }
+        } catch (e) {
+            setLibraryStatus(`Error creating profile: ${e.message}`);
+        }
+    });
+
+    byId("libraryRenameProfile")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
+        const name = await showPrompt("Rename Profile", "Enter new name:", active.name);
+        if (!name) return;
+        const result = await window.spikeApi.renameLibraryProfile({ profileId: active.id, name });
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryDeleteProfile")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
+        const confirmed = await showModal("Delete Profile", `Delete profile '${active.name}'?`, "Delete", "Cancel");
+        if (!confirmed) return;
+        const result = await window.spikeApi.deleteLibraryProfile(active.id);
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryUseSharedId")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
+        const sharedId = getInputValue("librarySharedProfileId");
+        if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
+        const result = await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryShareProfile")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
+        let sharedId = getInputValue("librarySharedProfileId") || active.sharedProfileId || "";
+        if (!sharedId) {
+            sharedId = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
+        }
+        const copied = await window.spikeApi.copyText(sharedId);
+        setLibraryStatus(copied ? `Shared profile ID copied: ${sharedId}` : `Shared profile ID: ${sharedId}`);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryCheckUpdates")?.addEventListener("click", async () => {
+        const result = await window.spikeApi.checkLibraryUpdates();
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    byId("libraryReinstallAll")?.addEventListener("click", () => void reinstallAllLibraryMods());
+    byId("libraryExport")?.addEventListener("click", async () => {
+        const result = await window.spikeApi.exportLibraryMods();
+        setLibraryStatus(result.message);
+    });
+    byId("libraryImport")?.addEventListener("click", async () => {
+        const result = await window.spikeApi.importLibraryMods();
+        setLibraryStatus(result.message);
+        if (result.ok && result.queuedCount > 0) await refreshQueueSnapshot();
+    });
+    byId("libraryScanLocal")?.addEventListener("click", async () => {
+        setLibraryStatus("Scanning local mods...");
+        const result = await window.spikeApi.scanLocalMods();
+        setLibraryStatus(result.message);
+        if (result.added > 0) await refreshLibrarySnapshot();
+    });
+
+    // Detail actions
+    byId("libraryActionUpdate")?.addEventListener("click", async () => {
+        const mod = getSelectedLibraryMod();
+        if (mod) await queueAction(mod.workshopId, "install", "library");
+    });
+    byId("libraryActionReinstall")?.addEventListener("click", async () => {
+        const mod = getSelectedLibraryMod();
+        if (mod) await queueAction(mod.workshopId, "install", "library");
+    });
+    byId("libraryActionWorks")?.addEventListener("click", () => void runLibraryCompatibilityReport(true));
+    byId("libraryActionBroken")?.addEventListener("click", () => void runLibraryCompatibilityReport(false));
+    byId("libraryActionWorkshop")?.addEventListener("click", () => {
+        const mod = getSelectedLibraryMod();
+        if (mod) void window.spikeApi.openExternalUrl(`https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`);
+    });
+    byId("libraryActionLocation")?.addEventListener("click", async () => {
+        const mod = getSelectedLibraryMod();
+        if (!mod) return;
+        const ok = await window.spikeApi.openPathInFileExplorer(mod.installedPath || mod.descriptorPath);
+        setLibraryStatus(ok ? "Opened file location." : "Could not open file location.");
+    });
+    byId("libraryActionRemove")?.addEventListener("click", async () => {
+        const mod = getSelectedLibraryMod();
+        if (!mod) return;
+        const confirmed = await showModal("Remove Mod", `Remove '${mod.name}'?`, "Remove", "Cancel");
+        if (!confirmed) return;
+        const result = await window.spikeApi.uninstallLibraryMod(mod.id);
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+}
+
+function hookGlobalControls() {
+    byId("tabVersion")?.addEventListener("click", () => activateTab("version"));
+    byId("tabLibrary")?.addEventListener("click", () => activateTab("library"));
+    byId("tabWorkshop")?.addEventListener("click", () => activateTab("workshop"));
+    byId("tabSettings")?.addEventListener("click", () => activateTab("settings"));
+    byId("launchGameBtn")?.addEventListener("click", () => void handleLaunchGame());
+
+    byId("detailCloseBackdrop")?.addEventListener("click", () => showDetailDrawer(false));
+    byId("detailCloseButton")?.addEventListener("click", () => showDetailDrawer(false));
+
+    window.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+            showDetailDrawer(false);
+            const overlay = byId("modalOverlay");
+            if (overlay && !overlay.classList.contains("hidden")) {
+                overlay.classList.add("hidden");
+            }
+            return;
+        }
+
+        if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const target = e.target;
+            const isTyping = target instanceof HTMLElement
+                && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+            if (!isTyping) {
+                const input = state.selectedTab === "library" ? byId("librarySearchInput") : byId("searchInput");
+                if (input) { e.preventDefault(); input.focus(); }
+            }
+        }
+    });
+}
+
+/* ============================================================
+   INITIALIZATION
+   ============================================================ */
+async function init() {
+    applyDataIcons(document);
+    hookVersionControls();
+    hookSettingsControls();
+    hookLibraryControls();
+    hookGlobalControls();
+    initWorkshop();
+    renderSettingsSubtabs();
+
+    // Handshake + version
+    try {
+        await window.spikeApi.ping();
+        const version = await window.spikeApi.getAppVersion();
+        setText("appVersionText", `v${version}`);
+    } catch {
+        setText("appVersionText", "v0.1.0");
+    }
+
+    await applyAppIcon();
+
+    // Load all data in parallel
+    await Promise.all([
+        refreshVersionOptions(),
+        refreshSettingsPage(),
+        refreshLibrarySnapshot(),
+        refreshQueueSnapshot(),
+        refreshStellarisyncStatus(),
+        refreshGameRunningStatus()
+    ]);
+
+    // Auto-scan local mods on startup
+    setLibraryStatus("Auto-scanning local mods...");
+    const scanResult = await window.spikeApi.scanLocalMods();
+    if (scanResult.added > 0 || scanResult.alreadyKnown > 0) {
+        await refreshLibrarySnapshot();
+    }
+    setLibraryStatus(scanResult.message);
+
+    await refreshVersionResults();
+    syncSearchClearButton();
+    activateTab("version");
+
+    // Polling: queue every 1.3s, game status every 3s, stellarisync every 2 min
+    if (state.queuePollingHandle) clearInterval(state.queuePollingHandle);
+    state.queuePollingHandle = setInterval(() => void refreshQueueSnapshot(), 1300);
+
+    if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
+    state.gamePollingHandle = setInterval(() => void refreshGameRunningStatus(), 3000);
+
+    if (state.stellarisyncPollingHandle) clearInterval(state.stellarisyncPollingHandle);
+    state.stellarisyncPollingHandle = setInterval(() => void refreshStellarisyncStatus(), 120000);
+}
+
+void init();
