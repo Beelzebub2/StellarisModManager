@@ -9,8 +9,8 @@
         "start": "npm run build && electron .",
         "check": "tsc -p tsconfig.json --noEmit",
         "postinstall": "electron-rebuild -f -w better-sqlite3",
-        "pack": "electron-builder --dir",
-        "dist": "electron-builder"
+        "pack": "npm run build && electron-builder --win dir",
+        "dist": "npm run build && electron-builder --win dir"
     },
     "build": {
         "appId": "com.stellaris.modmanager",
@@ -18,10 +18,15 @@
         "directories": {
             "output": "release"
         },
+        "files": [
+            "dist/**/*",
+            "assets/**/*",
+            "package.json"
+        ],
         "win": {
             "icon": "assets/app.ico",
             "target": [
-                "nsis"
+                "dir"
             ]
         },
         "mac": {

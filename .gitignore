@@ -10,6 +10,9 @@ ElectronSpike/dist/
 ElectronSpike/out/
 ElectronSpike/release/
 
+# Inno Setup installer output
+Output/
+
 # npm / yarn / pnpm lock artifacts (keep package-lock.json committed)
 npm-debug.log*
 yarn-debug.log*
