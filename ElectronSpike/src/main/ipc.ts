@@ -52,7 +52,9 @@ import {
     stopSteamCmdProbe
 } from "./services/steamCmdProbe";
 import {
+    cancelAllVersionModActions,
     cancelVersionModAction,
+    clearVersionQueueHistory,
     clearVersionResultCache,
     getVersionModDetail,
     getVersionQueueSnapshot,
@@ -100,7 +102,9 @@ const CHANNELS = {
     versionQuery: "spike:queryVersionMods",
     versionAction: "spike:queueVersionModAction",
     versionActionCancel: "spike:cancelVersionModAction",
+    versionActionCancelAll: "spike:cancelAllVersionModActions",
     versionQueue: "spike:getVersionQueueSnapshot",
+    versionQueueClearHistory: "spike:clearVersionQueueHistory",
     versionDetail: "spike:getVersionModDetail",
     launchGame: "spike:launchGame",
     gameRunningStatus: "spike:getGameRunningStatus",
@@ -189,7 +193,9 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.versionQuery);
     ipcMain.removeHandler(CHANNELS.versionAction);
     ipcMain.removeHandler(CHANNELS.versionActionCancel);
+    ipcMain.removeHandler(CHANNELS.versionActionCancelAll);
     ipcMain.removeHandler(CHANNELS.versionQueue);
+    ipcMain.removeHandler(CHANNELS.versionQueueClearHistory);
     ipcMain.removeHandler(CHANNELS.versionDetail);
     ipcMain.removeHandler(CHANNELS.launchGame);
     ipcMain.removeHandler(CHANNELS.gameRunningStatus);
@@ -383,8 +389,16 @@ export function registerIpcHandlers(): void {
         return cancelVersionModAction(workshopId);
     });
 
+    ipcMain.handle(CHANNELS.versionActionCancelAll, async () => {
+        return cancelAllVersionModActions();
+    });
+
     ipcMain.handle(CHANNELS.versionQueue, async () => {
         return getVersionQueueSnapshot();
+    });
+
+    ipcMain.handle(CHANNELS.versionQueueClearHistory, async (_event, workshopIds?: string[]) => {
+        return clearVersionQueueHistory(workshopIds);
     });
 
     ipcMain.handle(CHANNELS.versionDetail, async (_event, workshopId: string, selectedVersion: string) => {

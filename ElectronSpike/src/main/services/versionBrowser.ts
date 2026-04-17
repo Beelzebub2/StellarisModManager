@@ -13,6 +13,7 @@ import type {
     VersionModCard,
     VersionModDetail,
     VersionOption,
+    VersionQueueCommandResult,
     VersionQueueItem,
     VersionQueueSnapshot,
     VersionSortMode,
@@ -257,12 +258,16 @@ function stripHtml(value: string): string {
         .trim();
 }
 
-function queueItemSort(a: VersionQueueItem, b: VersionQueueItem): number {
-    return b.updatedAtUtc.localeCompare(a.updatedAtUtc);
-}
-
 function getQueueItem(workshopId: string): VersionQueueItem | undefined {
     return queueItems.get(workshopId);
+}
+
+function isQueueItemActive(item: VersionQueueItem | undefined): boolean {
+    if (!item) {
+        return false;
+    }
+
+    return item.status === "queued" || item.status === "running";
 }
 
 function upsertQueueItem(
@@ -285,27 +290,32 @@ function upsertQueueItem(
     queueItems.set(workshopId, next);
     if (!existing) {
         queueOrder.unshift(workshopId);
+    } else if (status === "queued") {
+        const index = queueOrder.indexOf(workshopId);
+        if (index > 0) {
+            queueOrder.splice(index, 1);
+            queueOrder.unshift(workshopId);
+        }
     }
 
     queueMessages.set(workshopId, message);
     return next;
 }
 
-function removePendingQueueItem(workshopId: string): boolean {
+function removePendingQueueItem(workshopId: string): { workshopId: string; action: "install" | "uninstall" } | null {
     const index = queuePending.findIndex((entry) => entry.workshopId === workshopId);
     if (index < 0) {
-        return false;
+        return null;
     }
 
-    queuePending.splice(index, 1);
-    return true;
+    const [removed] = queuePending.splice(index, 1);
+    return removed ?? null;
 }
 
 function getQueueSnapshot(): VersionQueueSnapshot {
     const items = Array.from(new Set(queueOrder))
         .map((workshopId) => queueItems.get(workshopId))
         .filter((item): item is VersionQueueItem => item !== undefined)
-        .sort(queueItemSort)
         .slice(0, 40);
 
     const hasActiveWork = items.some((item) => item.status === "queued" || item.status === "running")
@@ -313,6 +323,29 @@ function getQueueSnapshot(): VersionQueueSnapshot {
         || runningJob !== null;
 
     return { items, hasActiveWork };
+}
+
+function purgeQueueItems(workshopIds: string[]): number {
+    const uniqueIds = Array.from(new Set(workshopIds));
+    let removed = 0;
+
+    for (const workshopId of uniqueIds) {
+        if (!queueItems.has(workshopId)) {
+            continue;
+        }
+
+        queueItems.delete(workshopId);
+        queueMessages.delete(workshopId);
+
+        const orderIndex = queueOrder.indexOf(workshopId);
+        if (orderIndex >= 0) {
+            queueOrder.splice(orderIndex, 1);
+        }
+
+        removed += 1;
+    }
+
+    return removed;
 }
 
 function buildVersionOptions(includeOlderVersions: boolean): VersionOption[] {
@@ -992,17 +1025,66 @@ function resolveDownloadBasePath(): string {
         return configured;
     }
 
-    const discovery = discoverSteamLibraries();
-    if (discovery.existingSteamRoots.length > 0) {
-        return discovery.existingSteamRoots[0];
-    }
-
-    const steamLibrary = discovery.libraries.find((entry) => entry.exists);
-    if (steamLibrary) {
-        return steamLibrary.path;
-    }
-
     return path.join(getLegacyPaths().productDir, "SteamCmdDownloads");
+}
+
+function dedupeResolvedPaths(paths: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+
+    for (const value of paths) {
+        const normalized = path.resolve(value);
+        if (seen.has(normalized)) {
+            continue;
+        }
+
+        seen.add(normalized);
+        result.push(normalized);
+    }
+
+    return result;
+}
+
+function getWorkshopDownloadPathCandidates(downloadBasePath: string, workshopId: string): string[] {
+    const base = path.resolve(downloadBasePath);
+    const directBaseName = path.basename(base).trim();
+
+    const candidates = [
+        path.join(base, "steamapps", "workshop", "content", STELLARIS_APP_ID, workshopId),
+        path.join(base, "workshop", "content", STELLARIS_APP_ID, workshopId),
+        path.join(base, "steamapps", "workshop", "content", workshopId),
+        path.join(base, "workshop", "content", workshopId),
+        path.join(base, STELLARIS_APP_ID, workshopId),
+        path.join(base, workshopId)
+    ];
+
+    if (directBaseName === STELLARIS_APP_ID) {
+        candidates.push(path.join(base, workshopId));
+    }
+
+    return dedupeResolvedPaths(candidates);
+}
+
+async function findDownloadedWorkshopPath(candidates: string[]): Promise<{ foundPath: string | null; hadEmptyPath: boolean }> {
+    let hadEmptyPath = false;
+
+    for (const candidate of candidates) {
+        try {
+            const entries = await fsp.readdir(candidate);
+            if (entries.length > 0) {
+                return { foundPath: candidate, hadEmptyPath: false };
+            }
+
+            hadEmptyPath = true;
+        } catch {
+            // ignore missing/unreadable candidate path
+        }
+    }
+
+    return {
+        foundPath: null,
+        hadEmptyPath
+    };
 }
 
 function getDefaultModsPath(): string {
@@ -1124,6 +1206,25 @@ function parseSteamCmdProgress(line: string): number | null {
     return Math.max(1, Math.min(95, Math.round(parsed)));
 }
 
+function extractSteamCmdFailureDetail(line: string): string | null {
+    const explicit = line.match(/ERROR!\s*Download item\s+\d+\s+failed\s*\([^)]*\)\.?/i);
+    if (explicit) {
+        return explicit[0].trim();
+    }
+
+    const failedDownload = line.match(/Download item\s+\d+\s+failed\s*\([^)]*\)\.?/i);
+    if (failedDownload) {
+        return `ERROR! ${failedDownload[0].trim()}`;
+    }
+
+    const genericError = line.match(/ERROR!\s*[^|\r\n]+/i);
+    if (genericError) {
+        return genericError[0].trim();
+    }
+
+    return null;
+}
+
 async function runSteamCmdDownload(
     workshopId: string,
     reportProgress: (progress: number, message: string) => void
@@ -1141,8 +1242,10 @@ async function runSteamCmdDownload(
     const forceInstallDir = resolveDownloadBasePath();
     await fsp.mkdir(forceInstallDir, { recursive: true });
 
-    const downloadedInstallPath = path.join(forceInstallDir, "steamapps", "workshop", "content", STELLARIS_APP_ID, workshopId);
-    await removeDirectoryIfExists(downloadedInstallPath);
+    const outputCandidates = getWorkshopDownloadPathCandidates(forceInstallDir, workshopId);
+    for (const candidate of outputCandidates) {
+        await removeDirectoryIfExists(candidate);
+    }
 
     const args = [
         "+force_install_dir", forceInstallDir,
@@ -1152,6 +1255,25 @@ async function runSteamCmdDownload(
     ];
 
     reportProgress(6, `Launching SteamCMD for ${workshopId}...`);
+
+    const statusHints: string[] = [];
+    let explicitFailureMessage: string | null = null;
+    const appendStatusHint = (line: string): void => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return;
+        }
+
+        const failureDetail = extractSteamCmdFailureDetail(trimmed);
+        if (failureDetail && !explicitFailureMessage) {
+            explicitFailureMessage = failureDetail;
+        }
+
+        statusHints.push(trimmed);
+        if (statusHints.length > 8) {
+            statusHints.shift();
+        }
+    };
 
     const result = await new Promise<{ ok: boolean; message: string }>((resolve) => {
         const child = spawn(steamCmdPath, args, {
@@ -1184,6 +1306,8 @@ async function runSteamCmdDownload(
                 const parsed = parseSteamCmdProgress(trimmed);
                 if (parsed !== null) {
                     reportProgress(parsed, `Downloading ${workshopId}... ${parsed}%`);
+                } else {
+                    appendStatusHint(trimmed);
                 }
             }
         });
@@ -1192,6 +1316,7 @@ async function runSteamCmdDownload(
             const text = chunk.toString("utf8").trim();
             if (text) {
                 reportProgress(12, `SteamCMD: ${text}`);
+                appendStatusHint(text);
             }
         });
 
@@ -1224,29 +1349,35 @@ async function runSteamCmdDownload(
     if (!result.ok) {
         return {
             ok: false,
-            installPath: downloadedInstallPath,
+            installPath: outputCandidates[0] ?? "",
             message: result.message
         };
     }
 
-    try {
-        const entries = await fsp.readdir(downloadedInstallPath);
-        if (entries.length === 0) {
-            return {
-                ok: false,
-                installPath: downloadedInstallPath,
-                message: "SteamCMD finished but download folder is empty."
-            };
-        }
-    } catch {
+    if (explicitFailureMessage) {
         return {
             ok: false,
-            installPath: downloadedInstallPath,
-            message: "SteamCMD finished but download folder was not found."
+            installPath: outputCandidates[0] ?? "",
+            message: `SteamCMD reported download failure: ${explicitFailureMessage}`
         };
     }
 
-    const deployed = await deployDownloadedModToModsPath(workshopId, downloadedInstallPath, reportProgress);
+    const located = await findDownloadedWorkshopPath(outputCandidates);
+    if (!located.foundPath) {
+        const hint = statusHints.length > 0
+            ? ` Last SteamCMD output: ${statusHints.join(" | ")}`
+            : "";
+
+        return {
+            ok: false,
+            installPath: outputCandidates[0] ?? "",
+            message: located.hadEmptyPath
+                ? `SteamCMD finished but download folder is empty.${hint}`
+                : `SteamCMD finished but download folder was not found.${hint}`
+        };
+    }
+
+    const deployed = await deployDownloadedModToModsPath(workshopId, located.foundPath, reportProgress);
     if (!deployed.ok) {
         return deployed;
     }
@@ -1457,12 +1588,13 @@ export function cancelVersionModAction(workshopIdRaw: string): VersionModActionR
 
     const pendingRemoved = removePendingQueueItem(workshopId);
     if (pendingRemoved) {
-        actionStates.set(workshopId, "not-installed");
-        upsertQueueItem(workshopId, "install", "cancelled", 0, "Queued operation cancelled.");
+        const cancelledAction = pendingRemoved.action;
+        actionStates.set(workshopId, cancelledAction === "install" ? "not-installed" : "installed");
+        upsertQueueItem(workshopId, cancelledAction, "cancelled", 0, "Queued operation cancelled.");
         return {
             ok: true,
             workshopId,
-            actionState: "not-installed",
+            actionState: getActionStateForRequest(workshopId),
             message: `Cancelled queued operation for ${workshopId}.`
         };
     }
@@ -1490,6 +1622,63 @@ export function cancelVersionModAction(workshopIdRaw: string): VersionModActionR
         workshopId,
         actionState: getActionStateForRequest(workshopId),
         message: `No active queued operation found for ${workshopId}.`
+    };
+}
+
+export function cancelAllVersionModActions(): VersionQueueCommandResult {
+    let affected = 0;
+
+    for (const pending of queuePending.splice(0, queuePending.length)) {
+        actionStates.set(pending.workshopId, pending.action === "install" ? "not-installed" : "installed");
+        upsertQueueItem(pending.workshopId, pending.action, "cancelled", 0, "Queued operation cancelled.");
+        affected += 1;
+    }
+
+    if (runningJob) {
+        runningJob.cancelled = true;
+        if (runningJob.process) {
+            try {
+                runningJob.process.kill();
+            } catch {
+                // ignore kill errors
+            }
+        }
+        affected += 1;
+    }
+
+    return {
+        ok: true,
+        message: affected > 0 ? `Cancelled ${affected} queue operation(s).` : "No active queue operations to cancel.",
+        affected
+    };
+}
+
+export function clearVersionQueueHistory(workshopIdsRaw?: string[]): VersionQueueCommandResult {
+    const requestedIds = Array.isArray(workshopIdsRaw)
+        ? workshopIdsRaw.map((value) => sanitizeWorkshopId(String(value ?? ""))).filter((value) => value.length > 0)
+        : [];
+
+    const requestedSet = requestedIds.length > 0 ? new Set(requestedIds) : null;
+    const targets: string[] = [];
+
+    for (const workshopId of Array.from(new Set(queueOrder))) {
+        if (requestedSet && !requestedSet.has(workshopId)) {
+            continue;
+        }
+
+        const item = queueItems.get(workshopId);
+        if (!item || isQueueItemActive(item)) {
+            continue;
+        }
+
+        targets.push(workshopId);
+    }
+
+    const removed = purgeQueueItems(targets);
+    return {
+        ok: true,
+        message: removed > 0 ? `Cleared ${removed} queue history item(s).` : "No finished queue history to clear.",
+        affected: removed
     };
 }
 

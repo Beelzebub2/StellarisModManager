@@ -24,6 +24,7 @@ import type {
     VersionModActionRequest,
     VersionModActionResult,
     VersionOption,
+    VersionQueueCommandResult,
     VersionQueueSnapshot,
     SteamDiscoverySummary,
     SteamCmdProbeEvent,
@@ -98,8 +99,12 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:queueVersionModAction", request) as Promise<VersionModActionResult>,
     cancelVersionModAction: (workshopId: string) =>
         ipcRenderer.invoke("spike:cancelVersionModAction", workshopId) as Promise<VersionModActionResult>,
+    cancelAllVersionModActions: () =>
+        ipcRenderer.invoke("spike:cancelAllVersionModActions") as Promise<VersionQueueCommandResult>,
     getVersionQueueSnapshot: () =>
         ipcRenderer.invoke("spike:getVersionQueueSnapshot") as Promise<VersionQueueSnapshot>,
+    clearVersionQueueHistory: (workshopIds?: string[]) =>
+        ipcRenderer.invoke("spike:clearVersionQueueHistory", workshopIds) as Promise<VersionQueueCommandResult>,
     getVersionModDetail: (workshopId: string, selectedVersion: string) =>
         ipcRenderer.invoke("spike:getVersionModDetail", workshopId, selectedVersion) as Promise<VersionModDetail | null>,
     queryWorkshopMods: (query: WorkshopBrowserQuery) =>

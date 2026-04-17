@@ -513,6 +513,7 @@ body.drawer-open {
     flex-direction: column;
     min-height: 0;
     height: 100%;
+    gap: 6px;
 }
 
 .queue-head {
@@ -522,13 +523,36 @@ body.drawer-open {
     gap: 8px;
 }
 
+.queue-toolbar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.queue-tool-btn {
+    min-height: 26px;
+    padding: 3px 8px;
+    font-size: 10.5px;
+    font-weight: 700;
+}
+
+.queue-overall {
+    display: grid;
+    gap: 4px;
+}
+
+.queue-overall-label {
+    margin: 0;
+    font-size: 10.5px;
+}
+
 .queue-list {
     min-height: 0;
     min-width: 0;
     flex: 1;
     overflow: auto;
     display: grid;
-    gap: 4px;
+    gap: 6px;
     align-content: start;
     padding-right: 2px;
 }
@@ -555,7 +579,7 @@ body.drawer-open {
 }
 
 .queue-overall-progress {
-    height: 4px;
+    height: 5px;
     border-radius: var(--r-pill);
     overflow: hidden;
     background: var(--bg-4);
@@ -567,7 +591,7 @@ body.drawer-open {
     height: 100%;
     border-radius: var(--r-pill);
     background: linear-gradient(90deg, var(--accent), var(--accent-hover));
-    transition: width 200ms var(--ease);
+    transition: width 140ms linear;
 }
 
 .queue-item {
@@ -576,16 +600,30 @@ body.drawer-open {
     border-radius: var(--r-sm);
     padding: 8px;
     display: grid;
-    gap: 4px;
+    gap: 6px;
     min-width: 0;
     overflow: hidden;
+    transition: border-color var(--duration) var(--ease), background var(--duration) var(--ease);
+}
+
+.queue-item[data-status="running"] {
+    border-color: var(--accent-border);
+    background: color-mix(in srgb, var(--bg-3) 86%, var(--accent) 14%);
+}
+
+.queue-item[data-status="failed"] {
+    border-color: var(--danger-border);
+}
+
+.queue-item[data-status="completed"] {
+    border-color: var(--success-border);
 }
 
 .queue-item-top {
     display: flex;
     justify-content: space-between;
     gap: 8px;
-    font-size: 11px;
+    font-size: 11.5px;
     min-width: 0;
 }
 
@@ -600,13 +638,58 @@ body.drawer-open {
 }
 
 .queue-stage {
-    color: var(--accent);
+    color: var(--text-2);
     font-weight: 600;
     flex-shrink: 0;
+    text-transform: capitalize;
+    border: 1px solid var(--border);
+    border-radius: var(--r-pill);
+    padding: 1px 7px;
+    background: var(--bg-2);
+    font-size: 10px;
+}
+
+.queue-stage[data-status="queued"],
+.queue-stage[data-status="running"] {
+    color: var(--accent);
+    border-color: var(--accent-border);
+    background: var(--accent-soft);
+}
+
+.queue-stage[data-status="completed"] {
+    color: var(--success);
+    border-color: var(--success-border);
+    background: var(--success-soft);
+}
+
+.queue-stage[data-status="failed"],
+.queue-stage[data-status="cancelled"] {
+    color: var(--danger);
+    border-color: var(--danger-border);
+    background: var(--danger-soft);
+}
+
+.queue-item-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text-3);
+}
+
+.queue-item-action {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.queue-item-percent {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
 }
 
 .queue-progress {
-    height: 3px;
+    height: 4px;
     border-radius: var(--r-pill);
     overflow: hidden;
     background: var(--bg-4);
@@ -617,14 +700,15 @@ body.drawer-open {
     height: 100%;
     border-radius: var(--r-pill);
     background: var(--accent);
-    transition: width 200ms var(--ease);
+    transition: width 140ms linear;
 }
 
 .queue-item-workshop {
     font-size: 10px;
     opacity: 0.7;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
     min-width: 0;
 }
 
@@ -632,6 +716,42 @@ body.drawer-open {
     overflow-wrap: anywhere;
     word-break: break-word;
     min-width: 0;
+    margin: 0;
+    font-size: 10.5px;
+    line-height: 1.35;
+}
+
+.queue-item-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-width: 0;
+}
+
+.queue-item-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.queue-item-btn {
+    min-height: 24px;
+    padding: 2px 8px;
+    font-size: 10px;
+    border-radius: var(--r-xs);
+}
+
+.queue-item-btn.queue-btn-cancel {
+    color: var(--danger);
+    border-color: var(--danger-border);
+    background: var(--danger-soft);
+}
+
+.queue-item-btn.queue-btn-cancel:hover:not(:disabled) {
+    background: rgba(248, 113, 113, 0.18);
+    border-color: rgba(248, 113, 113, 0.4);
+    box-shadow: none;
 }
 
 .sidebar-controls {

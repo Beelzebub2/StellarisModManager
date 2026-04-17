@@ -76,13 +76,17 @@
                         <span id="queueLoadChip" class="status-chip status-chip-muted">Idle</span>
                     </div>
                     <p id="queueSummary" class="muted">No active installs.</p>
-                    <div class="queue-overall-progress"><span id="queueOverallBar"></span></div>
-                    <div id="queueList" class="queue-list">
-                        <div class="queue-empty">
-                            <span class="queue-empty-icon" data-icon="queue"></span>
-                            <span>No active installs</span>
-                        </div>
+                    <div class="queue-toolbar">
+                        <button id="queueCancelAll" class="button-secondary queue-tool-btn" type="button">Cancel
+                            all</button>
+                        <button id="queueClearFinished" class="button-secondary queue-tool-btn" type="button">Clear
+                            finished</button>
                     </div>
+                    <div class="queue-overall">
+                        <div class="queue-overall-progress"><span id="queueOverallBar"></span></div>
+                        <p id="queueOverallLabel" class="muted queue-overall-label">No queue activity.</p>
+                    </div>
+                    <div id="queueList" class="queue-list" aria-live="polite"></div>
                 </section>
 
                 <section class="sidebar-block sidebar-controls">

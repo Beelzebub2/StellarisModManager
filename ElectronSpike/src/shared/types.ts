@@ -203,6 +203,12 @@ export interface VersionQueueSnapshot {
     hasActiveWork: boolean;
 }
 
+export interface VersionQueueCommandResult {
+    ok: boolean;
+    message: string;
+    affected: number;
+}
+
 export interface VersionModDetail {
     workshopId: string;
     workshopUrl: string;
@@ -354,7 +360,9 @@ export interface SpikeApi {
     queryVersionMods: (query: VersionBrowserQuery) => Promise<VersionBrowserResult>;
     queueVersionModAction: (request: VersionModActionRequest) => Promise<VersionModActionResult>;
     cancelVersionModAction: (workshopId: string) => Promise<VersionModActionResult>;
+    cancelAllVersionModActions: () => Promise<VersionQueueCommandResult>;
     getVersionQueueSnapshot: () => Promise<VersionQueueSnapshot>;
+    clearVersionQueueHistory: (workshopIds?: string[]) => Promise<VersionQueueCommandResult>;
     getVersionModDetail: (workshopId: string, selectedVersion: string) => Promise<VersionModDetail | null>;
     queryWorkshopMods: (query: WorkshopBrowserQuery) => Promise<WorkshopBrowserResult>;
     clearWorkshopCache: () => Promise<void>;
