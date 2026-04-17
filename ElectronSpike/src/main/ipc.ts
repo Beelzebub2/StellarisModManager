@@ -26,6 +26,7 @@ import {
     exportLibraryMods,
     getLibrarySnapshot,
     importLibraryMods,
+    getCompatibilityTags,
     moveLibraryMod,
     reorderLibraryMod,
     renameLibraryProfile,
@@ -94,6 +95,7 @@ const CHANNELS = {
     libraryCheckUpdates: "spike:checkLibraryUpdates",
     libraryExport: "spike:exportLibraryMods",
     libraryImport: "spike:importLibraryMods",
+    libraryGetCompatibilityTags: "spike:getCompatibilityTags",
     libraryReportCompatibility: "spike:reportLibraryCompatibility",
     libraryScanLocal: "spike:scanLocalMods",
     steamDiscovery: "spike:getSteamDiscoverySummary",
@@ -188,6 +190,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.libraryCheckUpdates);
     ipcMain.removeHandler(CHANNELS.libraryExport);
     ipcMain.removeHandler(CHANNELS.libraryImport);
+    ipcMain.removeHandler(CHANNELS.libraryGetCompatibilityTags);
     ipcMain.removeHandler(CHANNELS.libraryReportCompatibility);
     ipcMain.removeHandler(CHANNELS.libraryScanLocal);
     ipcMain.removeHandler(CHANNELS.steamDiscovery);
@@ -317,7 +320,7 @@ export function registerIpcHandlers(): void {
             };
         }
 
-        const result = exportLibraryMods(selection.filePath);
+        const result = await exportLibraryMods(selection.filePath);
         if (result.ok) {
             return {
                 ok: true,
@@ -346,6 +349,10 @@ export function registerIpcHandlers(): void {
         }
 
         return importLibraryMods(selection.filePaths[0]);
+    });
+
+    ipcMain.handle(CHANNELS.libraryGetCompatibilityTags, async () => {
+        return getCompatibilityTags();
     });
 
     ipcMain.handle(CHANNELS.libraryReportCompatibility, async (_event, request: LibraryCompatibilityReportRequest) => {

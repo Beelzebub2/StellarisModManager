@@ -296,8 +296,63 @@
                                 </div>
 
                                 <section id="libraryDetailTagsSection" class="detail-block">
-                                    <h4>Tags</h4>
+                                    <h4>Descriptor Tags</h4>
                                     <p id="libraryDetailTags" class="muted">No tags.</p>
+                                </section>
+
+                                <section class="feedback-panel">
+                                    <header class="feedback-header">
+                                        <h4>Community Feedback</h4>
+                                        <span id="feedbackStateBadge" class="feedback-state-badge feedback-state-nodata">No data</span>
+                                    </header>
+
+                                    <div class="feedback-consensus">
+                                        <div class="consensus-bar">
+                                            <span id="consensusBarWorks" class="consensus-bar-works" style="width:0%"></span>
+                                            <span id="consensusBarBroken" class="consensus-bar-broken" style="width:0%"></span>
+                                        </div>
+                                        <div class="consensus-stats">
+                                            <span id="consensusWorksLabel" class="consensus-stat consensus-stat-works">0 works</span>
+                                            <span id="consensusTotalLabel" class="consensus-stat consensus-stat-total">0 reports</span>
+                                            <span id="consensusBrokenLabel" class="consensus-stat consensus-stat-broken">0 broken</span>
+                                        </div>
+                                    </div>
+
+                                    <div id="feedbackTrustedTags" class="feedback-trusted-tags hidden">
+                                        <p class="feedback-section-label">Community tags</p>
+                                        <div id="feedbackTrustedTagList" class="feedback-trusted-tag-list"></div>
+                                    </div>
+
+                                    <div id="feedbackDisputedGroups" class="feedback-disputed hidden">
+                                        <p id="feedbackDisputedText" class="muted"></p>
+                                    </div>
+
+                                    <div class="feedback-vote">
+                                        <p class="feedback-section-label">Your vote</p>
+                                        <div class="feedback-vote-row">
+                                            <button id="libraryActionWorks" type="button" class="vote-btn vote-btn-works">
+                                                <span class="nav-icon" data-icon="thumbsUp"></span> Works
+                                            </button>
+                                            <button id="libraryActionBroken" type="button" class="vote-btn vote-btn-broken">
+                                                <span class="nav-icon" data-icon="thumbsDown"></span> Broken
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div class="feedback-your-tags">
+                                        <div class="feedback-your-tags-head">
+                                            <p class="feedback-section-label">Your tags</p>
+                                            <div class="feedback-tag-toolbar">
+                                                <button id="libraryClearTags" type="button" class="feedback-tool-btn" title="Clear all tags">Clear</button>
+                                                <button id="libraryResetTags" type="button" class="feedback-tool-btn" title="Reset to last saved">Reset</button>
+                                            </div>
+                                        </div>
+                                        <div id="libraryReportTagList" class="feedback-tag-list"></div>
+                                        <div class="feedback-tag-footer">
+                                            <p id="librarySelectedTagsInfo" class="muted feedback-tag-info"></p>
+                                            <button id="librarySubmitTagsOnly" type="button" class="button-secondary feedback-save-btn">Save tags</button>
+                                        </div>
+                                    </div>
                                 </section>
 
                                 <section class="library-detail-actions-grid">
@@ -307,12 +362,6 @@
                                     </button>
                                     <button id="libraryActionReinstall" type="button" class="action-btn">
                                         <span class="nav-icon" data-icon="reinstall"></span> Reinstall
-                                    </button>
-                                    <button id="libraryActionWorks" type="button" class="action-btn action-btn-success">
-                                        <span class="nav-icon" data-icon="thumbsUp"></span> Works for me
-                                    </button>
-                                    <button id="libraryActionBroken" type="button" class="action-btn action-btn-danger">
-                                        <span class="nav-icon" data-icon="thumbsDown"></span> Broken for me
                                     </button>
                                     <button id="libraryActionWorkshop" type="button" class="action-btn">
                                         <span class="nav-icon" data-icon="workshop"></span> Workshop

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+    CompatibilityTagCatalogResult,
     DbSummary,
     DownloadActionRequest,
     DownloadActionResult,
@@ -78,6 +79,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:exportLibraryMods") as Promise<LibraryActionResult>,
     importLibraryMods: () =>
         ipcRenderer.invoke("spike:importLibraryMods") as Promise<LibraryImportResult>,
+    getCompatibilityTags: () =>
+        ipcRenderer.invoke("spike:getCompatibilityTags") as Promise<CompatibilityTagCatalogResult>,
     reportLibraryCompatibility: (request: LibraryCompatibilityReportRequest) =>
         ipcRenderer.invoke("spike:reportLibraryCompatibility", request) as Promise<LibraryActionResult>,
     scanLocalMods: () =>

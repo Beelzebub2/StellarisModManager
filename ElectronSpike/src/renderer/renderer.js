@@ -33,7 +33,10 @@ const state = {
         snapshot: null,
         searchText: "",
         showEnabledOnly: false,
-        selectedModId: null
+        selectedModId: null,
+        availableTags: [],
+        selectedReportTags: [],
+        savedReportTagsByModVersion: {}
     }
 };
 
@@ -1266,6 +1269,242 @@ function getFilteredLibraryMods() {
         });
 }
 
+function normalizeTagKey(value) {
+    return String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+}
+
+function normalizeTagList(values) {
+    if (!Array.isArray(values)) {
+        return [];
+    }
+
+    const deduped = [];
+    const seen = new Set();
+    for (const value of values) {
+        const key = normalizeTagKey(value);
+        if (!key || seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        deduped.push(key);
+    }
+
+    return deduped;
+}
+
+function getLibraryReportVersionForMod(mod) {
+    if (!mod) {
+        return "";
+    }
+
+    const snapshotVersion = String(state.library.snapshot?.lastDetectedGameVersion || "").trim();
+    const modVersion = String(mod.gameVersion || "").trim();
+    return snapshotVersion || modVersion;
+}
+
+function getLibraryTagDraftKey(mod) {
+    if (!mod || !mod.workshopId) {
+        return "";
+    }
+
+    const version = getLibraryReportVersionForMod(mod);
+    return `${mod.workshopId}::${version || "unknown"}`;
+}
+
+function persistLibraryTagDraftForSelectedMod() {
+    const mod = getSelectedLibraryMod();
+    const key = getLibraryTagDraftKey(mod);
+    if (!key) {
+        return;
+    }
+
+    state.library.savedReportTagsByModVersion[key] = normalizeTagList(state.library.selectedReportTags);
+}
+
+function restoreLibraryTagDraftForSelectedMod() {
+    const mod = getSelectedLibraryMod();
+    const key = getLibraryTagDraftKey(mod);
+    if (!key) {
+        state.library.selectedReportTags = [];
+        return;
+    }
+
+    const draft = state.library.savedReportTagsByModVersion[key];
+    state.library.selectedReportTags = normalizeTagList(draft);
+}
+
+function renderLibraryReportTagList() {
+    const list = byId("libraryReportTagList");
+    if (!list) return;
+
+    const tags = state.library.availableTags || [];
+    if (tags.length <= 0) {
+        list.innerHTML = "<p class='muted'>No tags loaded from Stellarisync.</p>";
+        return;
+    }
+
+    const selected = new Set(state.library.selectedReportTags || []);
+    list.innerHTML = tags.map((tag) => {
+        const key = normalizeTagKey(tag.key);
+        const activeClass = selected.has(key) ? " is-selected" : "";
+        const title = tag.description ? ` title="${escapeHtml(tag.description)}"` : "";
+        return `<button type=\"button\" class=\"library-report-tag${activeClass}\" data-tag-key=\"${escapeHtml(key)}\"${title}>${escapeHtml(tag.label)}</button>`;
+    }).join("\n");
+
+    for (const button of list.querySelectorAll("button[data-tag-key]")) {
+        button.addEventListener("click", () => {
+            const key = normalizeTagKey(button.getAttribute("data-tag-key") || "");
+            if (!key) return;
+
+            if (state.library.selectedReportTags.includes(key)) {
+                state.library.selectedReportTags = state.library.selectedReportTags.filter((value) => value !== key);
+            } else {
+                state.library.selectedReportTags = [...state.library.selectedReportTags, key];
+            }
+
+            state.library.selectedReportTags = normalizeTagList(state.library.selectedReportTags);
+
+            renderLibraryReportTagList();
+            renderSelectedTagsInfo();
+        });
+    }
+}
+
+function renderSelectedTagsInfo() {
+    if (!state.library.selectedReportTags || state.library.selectedReportTags.length <= 0) {
+        setText("librarySelectedTagsInfo", "No tags selected.");
+        return;
+    }
+
+    const count = state.library.selectedReportTags.length;
+    const noun = count === 1 ? "tag" : "tags";
+    setText("librarySelectedTagsInfo", `${count} ${noun} selected.`);
+}
+
+function formatConsensusLabel(value) {
+    const normalized = String(value || "")
+        .replaceAll("_", " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    if (!normalized) {
+        return "Unknown";
+    }
+
+    return normalized
+        .split(" ")
+        .map((word) => (word ? `${word.slice(0, 1).toUpperCase()}${word.slice(1)}` : ""))
+        .join(" ");
+}
+
+function renderCommunityConsensus(mod) {
+    const summary = mod?.communityCompatibility || null;
+    const stateBadge = byId("feedbackStateBadge");
+    const barWorks = byId("consensusBarWorks");
+    const barBroken = byId("consensusBarBroken");
+    const trustedSection = byId("feedbackTrustedTags");
+    const trustedList = byId("feedbackTrustedTagList");
+    const disputedSection = byId("feedbackDisputedGroups");
+    const disputedText = byId("feedbackDisputedText");
+    const worksBtn = byId("libraryActionWorks");
+    const brokenBtn = byId("libraryActionBroken");
+
+    if (worksBtn) worksBtn.classList.remove("is-voted");
+    if (brokenBtn) brokenBtn.classList.remove("is-voted");
+
+    if (!summary) {
+        if (stateBadge) {
+            stateBadge.textContent = "No data";
+            stateBadge.className = "feedback-state-badge feedback-state-nodata";
+        }
+        if (barWorks) barWorks.style.width = "0%";
+        if (barBroken) barBroken.style.width = "0%";
+        setText("consensusWorksLabel", "0 works");
+        setText("consensusTotalLabel", "0 reports");
+        setText("consensusBrokenLabel", "0 broken");
+        if (trustedSection) trustedSection.classList.add("hidden");
+        if (disputedSection) disputedSection.classList.add("hidden");
+        return;
+    }
+
+    const total = Number(summary.totalReports || 0);
+    const works = Number(summary.workedCount || 0);
+    const broken = Number(summary.notWorkedCount || 0);
+    const worksPercent = total > 0 ? Math.round((works * 100) / total) : 0;
+    const brokenPercent = total > 0 ? 100 - worksPercent : 0;
+
+    // State badge
+    const rawState = String(summary.state || "no_data");
+    const stateLabel = formatConsensusLabel(rawState);
+    if (stateBadge) {
+        stateBadge.textContent = stateLabel;
+        if (rawState === "trusted") {
+            stateBadge.className = "feedback-state-badge feedback-state-trusted";
+        } else if (rawState === "disputed") {
+            stateBadge.className = "feedback-state-badge feedback-state-disputed";
+        } else if (rawState === "insufficient_votes") {
+            stateBadge.className = "feedback-state-badge feedback-state-insufficient";
+        } else {
+            stateBadge.className = "feedback-state-badge feedback-state-nodata";
+        }
+    }
+
+    // Consensus bar
+    if (barWorks) barWorks.style.width = `${worksPercent}%`;
+    if (barBroken) barBroken.style.width = `${brokenPercent}%`;
+
+    // Stats
+    setText("consensusWorksLabel", `${works} works`);
+    setText("consensusTotalLabel", `${total} report${total !== 1 ? "s" : ""}`);
+    setText("consensusBrokenLabel", `${broken} broken`);
+
+    // Highlight the user's current vote
+    const reporterId = state.settingsModel?.compatibilityReporterId || "";
+    if (reporterId && summary.userVotes) {
+        const myVote = summary.userVotes[reporterId.toLowerCase()] || "";
+        if (myVote === "worked" && worksBtn) worksBtn.classList.add("is-voted");
+        if (myVote === "not_worked" && brokenBtn) brokenBtn.classList.add("is-voted");
+    }
+
+    // Trusted community tags
+    const trustedTags = (summary.tagConsensus || [])
+        .filter((entry) => entry.state === "trusted")
+        .sort((a, b) => b.votes - a.votes)
+        .slice(0, 5);
+
+    if (trustedTags.length > 0 && trustedSection && trustedList) {
+        trustedSection.classList.remove("hidden");
+        trustedList.innerHTML = trustedTags.map((entry) =>
+            `<span class="feedback-trusted-tag">${escapeHtml(entry.tagLabel)} <span class="feedback-trusted-tag-confidence">${entry.confidencePercent}%</span></span>`
+        ).join("");
+    } else if (trustedSection) {
+        trustedSection.classList.add("hidden");
+    }
+
+    // Disputed groups
+    const disputedGroups = (summary.groupConsensus || [])
+        .filter((entry) => entry.state === "disputed");
+
+    if (disputedGroups.length > 0 && disputedSection && disputedText) {
+        disputedSection.classList.remove("hidden");
+        const lines = disputedGroups.map((entry) => {
+            const options = (entry.options || [])
+                .map((option) => `${option.tagLabel} (${option.votes})`)
+                .join(" vs ");
+            const groupLabel = formatConsensusLabel(entry.groupLabel || entry.groupKey || "group");
+            return `${groupLabel}: ${options}`;
+        });
+        disputedText.textContent = `Disputed: ${lines.join("; ")}`;
+    } else if (disputedSection) {
+        disputedSection.classList.add("hidden");
+    }
+}
+
 function renderLibraryDetail(mod) {
     const empty = byId("libraryDetailEmpty");
     const detail = byId("libraryDetail");
@@ -1275,6 +1514,9 @@ function renderLibraryDetail(mod) {
     if (!mod) {
         if (empty) empty.classList.remove("hidden");
         if (detail) detail.classList.add("hidden");
+        renderCommunityConsensus(null);
+        renderLibraryReportTagList();
+        renderSelectedTagsInfo();
         return;
     }
 
@@ -1295,12 +1537,17 @@ function renderLibraryDetail(mod) {
 
     const updateBtn = byId("libraryActionUpdate");
     if (updateBtn) updateBtn.disabled = !mod.hasUpdate;
+
+    renderCommunityConsensus(mod);
+    renderLibraryReportTagList();
+    renderSelectedTagsInfo();
 }
 
 function renderLibraryList() {
     const list = byId("libraryList");
     if (!list) return;
     const mods = getFilteredLibraryMods();
+    const previousSelectedModId = state.library.selectedModId;
 
     if (mods.length === 0) {
         list.innerHTML = "<div class='library-empty muted'>No installed mods match the current filter.</div>";
@@ -1310,6 +1557,10 @@ function renderLibraryList() {
 
     if (!mods.some((m) => m.id === state.library.selectedModId)) {
         state.library.selectedModId = mods[0].id;
+    }
+
+    if (previousSelectedModId !== state.library.selectedModId) {
+        restoreLibraryTagDraftForSelectedMod();
     }
 
     list.innerHTML = mods.map((mod) => {
@@ -1344,7 +1595,12 @@ function renderLibraryList() {
         row.addEventListener("click", () => {
             const id = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
             if (!Number.isFinite(id) || id <= 0) return;
+            if (state.library.selectedModId === id) {
+                return;
+            }
+
             state.library.selectedModId = id;
+            restoreLibraryTagDraftForSelectedMod();
             renderLibraryList();
         });
 
@@ -1501,8 +1757,36 @@ function renderLibrarySummary() {
     setText("libraryUpdatesFooter", `Updates: ${s.updatesAvailable}`);
 }
 
+async function loadCompatibilityTags() {
+    const result = await window.spikeApi.getCompatibilityTags();
+    if (result.ok) {
+        state.library.availableTags = Array.isArray(result.tags) ? result.tags : [];
+    } else if (!Array.isArray(state.library.availableTags) || state.library.availableTags.length === 0) {
+        state.library.availableTags = Array.isArray(result.tags) ? result.tags : [];
+    }
+
+    const validTagKeys = new Set((state.library.availableTags || []).map((tag) => normalizeTagKey(tag.key)));
+    state.library.selectedReportTags = normalizeTagList(
+        (state.library.selectedReportTags || []).filter((tagKey) => validTagKeys.has(tagKey))
+    );
+
+    const nextSavedSelections = {};
+    for (const [key, tags] of Object.entries(state.library.savedReportTagsByModVersion || {})) {
+        nextSavedSelections[key] = normalizeTagList(tags).filter((tagKey) => validTagKeys.has(tagKey));
+    }
+    state.library.savedReportTagsByModVersion = nextSavedSelections;
+
+    renderLibraryReportTagList();
+    renderSelectedTagsInfo();
+
+    if (!result.ok) {
+        setLibraryStatus(result.message);
+    }
+}
+
 async function refreshLibrarySnapshot() {
     try {
+        await loadCompatibilityTags();
         const snapshot = await window.spikeApi.getLibrarySnapshot();
         state.library.snapshot = snapshot;
         syncVisibleVersionCardActionStates();
@@ -1536,8 +1820,57 @@ async function runLibraryCompatibilityReport(worked) {
     const snapshot = state.library.snapshot;
     const gv = (snapshot?.lastDetectedGameVersion || mod.gameVersion || "").trim();
     if (!gv) { setLibraryStatus("Game version is required to report compatibility."); return; }
-    const result = await window.spikeApi.reportLibraryCompatibility({ workshopId: mod.workshopId, gameVersion: gv, worked });
+    const result = await window.spikeApi.reportLibraryCompatibility({
+        workshopId: mod.workshopId,
+        gameVersion: gv,
+        worked,
+        outcome: worked ? "worked" : "not_worked",
+        selectedTags: state.library.selectedReportTags || []
+    });
     setLibraryStatus(result.message);
+    if (result.ok) {
+        persistLibraryTagDraftForSelectedMod();
+    }
+    await refreshLibrarySnapshot();
+}
+
+async function runLibraryTagOnlySubmission() {
+    const mod = getSelectedLibraryMod();
+    if (!mod) { setLibraryStatus("Select a mod first."); return; }
+
+    const selectedTags = normalizeTagList(state.library.selectedReportTags || []);
+
+    const snapshot = state.library.snapshot;
+    const gv = (snapshot?.lastDetectedGameVersion || mod.gameVersion || "").trim();
+    if (!gv) { setLibraryStatus("Game version is required to submit tags."); return; }
+
+    if (selectedTags.length <= 0) {
+        const confirmed = await showModal(
+            "Clear Submitted Tags",
+            "This will remove all tags from your existing vote for this mod/version. Continue?",
+            "Remove Tags",
+            "Cancel"
+        );
+        if (!confirmed) {
+            return;
+        }
+    }
+
+    const result = await window.spikeApi.reportLibraryCompatibility({
+        workshopId: mod.workshopId,
+        gameVersion: gv,
+        selectedTags,
+        tagsOnly: true
+    });
+
+    setLibraryStatus(result.message);
+    if (result.ok) {
+        state.library.selectedReportTags = selectedTags;
+        persistLibraryTagDraftForSelectedMod();
+        renderLibraryReportTagList();
+        renderSelectedTagsInfo();
+    }
+    await refreshLibrarySnapshot();
 }
 
 async function getWorkshopOverlayActionState(workshopId) {
@@ -2023,6 +2356,22 @@ function hookLibraryControls() {
         const result = await window.spikeApi.scanLocalMods();
         setLibraryStatus(result.message);
         if (result.added > 0) await refreshLibrarySnapshot();
+    });
+
+    byId("librarySubmitTagsOnly")?.addEventListener("click", () => void runLibraryTagOnlySubmission());
+
+    byId("libraryClearTags")?.addEventListener("click", () => {
+        state.library.selectedReportTags = [];
+        renderLibraryReportTagList();
+        renderSelectedTagsInfo();
+        setLibraryStatus("Tag selection cleared.");
+    });
+
+    byId("libraryResetTags")?.addEventListener("click", () => {
+        restoreLibraryTagDraftForSelectedMod();
+        renderLibraryReportTagList();
+        renderSelectedTagsInfo();
+        setLibraryStatus("Tags restored to last saved.");
     });
 
     // Detail actions

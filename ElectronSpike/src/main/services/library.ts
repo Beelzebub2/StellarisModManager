@@ -4,9 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
+    CompatibilityTagCatalogResult,
+    CompatibilityTagConsensus,
+    CompatibilityTagDefinition,
+    CompatibilityTagGroupConsensus,
+    ConsensusState,
     LibraryActionResult,
     LibraryCompatibilityReportRequest,
     LibraryImportResult,
+    LibraryCompatibilitySummary,
     LibraryModItem,
     LibraryMoveDirectionRequest,
     LibraryReorderRequest,
@@ -25,6 +31,7 @@ import { queueDownload } from "./downloadManager";
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
 const STELLARISYNC_BASE_URL = process.env.STELLARISYNC_BASE_URL?.trim() || "https://stellarisync.rrmtools.uk";
 const STELLARIS_APP_ID = "281990";
+const COMMUNITY_CACHE_TTL_MS = 45_000;
 
 interface TableInfoRow {
     name: string;
@@ -68,7 +75,27 @@ interface SteamDetailsResponse {
     };
 }
 
+interface RemoteCommunityCompatEntry {
+    workedCount?: number;
+    count?: number;
+    notWorkedCount?: number;
+    totalReports?: number;
+    workedPercentage?: number;
+    state?: string;
+    tagConsensus?: CompatibilityTagConsensus[];
+    groupConsensus?: CompatibilityTagGroupConsensus[];
+    lastReportedUtc?: string | null;
+}
+
+interface RemoteCommunityTagsResponse {
+    tags?: CompatibilityTagDefinition[];
+}
+
 const updateFlagsByWorkshopId = new Map<string, boolean>();
+const communityCompatByMod = new Map<string, Record<string, LibraryCompatibilitySummary>>();
+let communityTagsCache: CompatibilityTagDefinition[] = [];
+let communityFetchedAt = 0;
+let communityRefreshInFlight: Promise<void> | null = null;
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -136,6 +163,194 @@ function parseTags(value: string | null | undefined): string[] {
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0);
 }
+
+function toConsensusState(value: string | null | undefined): ConsensusState {
+    const normalized = String(value ?? "").trim().toLowerCase();
+    if (
+        normalized === "trusted"
+        || normalized === "disputed"
+        || normalized === "insufficient_votes"
+        || normalized === "no_data"
+    ) {
+        return normalized;
+    }
+
+    return "insufficient_votes";
+}
+
+function normalizePatch(value: string | null | undefined): string | null {
+    const token = String(value ?? "").match(/(\d+\.\d+(?:\.\d+)?)/);
+    return token ? token[1] : null;
+}
+
+function normalizeMajorMinor(value: string | null | undefined): string | null {
+    const token = normalizePatch(value)?.match(/(\d+\.\d+)/);
+    return token ? token[1] : null;
+}
+
+function toLibraryCompatibilitySummary(entry: RemoteCommunityCompatEntry | null | undefined): LibraryCompatibilitySummary {
+    const workedCount = Number(entry?.workedCount ?? entry?.count ?? 0) || 0;
+    const notWorkedCount = Number(entry?.notWorkedCount ?? 0) || 0;
+    const totalReports = Number(entry?.totalReports ?? workedCount + notWorkedCount) || 0;
+    const workedPercentage = Number(entry?.workedPercentage ?? (totalReports > 0 ? Math.round((workedCount * 100) / totalReports) : 0)) || 0;
+
+    return {
+        workedCount,
+        notWorkedCount,
+        totalReports,
+        workedPercentage,
+        state: toConsensusState(entry?.state),
+        tagConsensus: Array.isArray(entry?.tagConsensus) ? entry?.tagConsensus : [],
+        groupConsensus: Array.isArray(entry?.groupConsensus) ? entry?.groupConsensus : [],
+        lastReportedUtc: typeof entry?.lastReportedUtc === "string" ? entry.lastReportedUtc : null,
+    };
+}
+
+function getCompatibilitySummaryForVersion(
+    byVersion: Record<string, LibraryCompatibilitySummary> | undefined,
+    selectedVersion: string | null | undefined
+): LibraryCompatibilitySummary | null {
+    if (!byVersion || Object.keys(byVersion).length <= 0) {
+        return null;
+    }
+
+    const selectedPatch = normalizePatch(selectedVersion);
+    const selectedMajorMinor = normalizeMajorMinor(selectedVersion);
+
+    if (selectedPatch && byVersion[selectedPatch]) {
+        return byVersion[selectedPatch];
+    }
+
+    if (selectedMajorMinor && byVersion[selectedMajorMinor]) {
+        return byVersion[selectedMajorMinor];
+    }
+
+    return null;
+}
+
+function normalizeTagDefinitions(value: unknown): CompatibilityTagDefinition[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const normalized: CompatibilityTagDefinition[] = [];
+    const seen = new Set<string>();
+
+    for (const raw of value) {
+        if (typeof raw !== "object" || raw === null) {
+            continue;
+        }
+
+        const key = String((raw as { key?: string }).key ?? "").trim().toLowerCase();
+        const label = String((raw as { label?: string }).label ?? "").trim();
+        if (!key || !label || seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        normalized.push({
+            key,
+            label,
+            description: String((raw as { description?: string }).description ?? "").trim() || null,
+            conflictGroup: String((raw as { conflictGroup?: string }).conflictGroup ?? "").trim() || null,
+            createdBy: String((raw as { createdBy?: string }).createdBy ?? "").trim() === "system" ? "system" : "user",
+            createdAtUtc: String((raw as { createdAtUtc?: string }).createdAtUtc ?? "").trim() || nowIso(),
+        });
+    }
+
+    return normalized.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+async function fetchJsonWithTimeout<T>(url: string, timeoutMs = 12_000): Promise<T> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                Accept: "application/json"
+            },
+            signal: controller.signal
+        });
+
+        if (!response.ok) {
+            throw new Error(`Request failed with HTTP ${response.status}: ${url}`);
+        }
+
+        return (await response.json()) as T;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function refreshCommunityCache(force = false): Promise<void> {
+    if (!force && Date.now() - communityFetchedAt < COMMUNITY_CACHE_TTL_MS) {
+        return;
+    }
+
+    if (communityRefreshInFlight) {
+        await communityRefreshInFlight;
+        return;
+    }
+
+    communityRefreshInFlight = (async () => {
+        const [compatRaw, tagsPayload] = await Promise.all([
+            fetchJsonWithTimeout<Record<string, Record<string, RemoteCommunityCompatEntry>>>(`${STELLARISYNC_BASE_URL}/mods/community-compat`),
+            fetchJsonWithTimeout<RemoteCommunityTagsResponse>(`${STELLARISYNC_BASE_URL}/mods/community-tags`)
+        ]);
+
+        const nextCompat = new Map<string, Record<string, LibraryCompatibilitySummary>>();
+        for (const [modId, byVersionRaw] of Object.entries(compatRaw)) {
+            if (!isValidWorkshopId(modId) || typeof byVersionRaw !== "object" || byVersionRaw === null) {
+                continue;
+            }
+
+            const byVersion: Record<string, LibraryCompatibilitySummary> = {};
+            for (const [versionKey, entryRaw] of Object.entries(byVersionRaw)) {
+                const patchKey = normalizePatch(versionKey) || versionKey.trim();
+                if (!patchKey) {
+                    continue;
+                }
+
+                byVersion[patchKey] = toLibraryCompatibilitySummary(entryRaw);
+            }
+
+            nextCompat.set(modId, byVersion);
+        }
+
+        communityCompatByMod.clear();
+        for (const [modId, byVersion] of nextCompat.entries()) {
+            communityCompatByMod.set(modId, byVersion);
+        }
+
+        communityTagsCache = normalizeTagDefinitions(tagsPayload?.tags);
+        communityFetchedAt = Date.now();
+    })()
+        .catch(() => {
+            // Keep stale cache on failures.
+        })
+        .finally(() => {
+            communityRefreshInFlight = null;
+        });
+
+    await communityRefreshInFlight;
+}
+
+function normalizeDetectedGameVersion(rawVersion: string | null | undefined): string | null {
+    const value = String(rawVersion ?? "").trim();
+    if (!value) {
+        return null;
+    }
+
+    const match = value.match(/(\d+)\.(\d+)(?:\.\d+)?/);
+    if (!match) {
+        return null;
+    }
+
+    return `${match[1]}.${match[2]}`;
+}
+
 
 function openDb(): Database.Database | null {
     const dbPath = getLegacyPaths().modsDbPath;
@@ -350,14 +565,18 @@ function mapProfileRow(row: DbProfileRow): LibraryProfile {
     };
 }
 
-function mapModRow(row: DbModRow): LibraryModItem {
+function mapModRow(row: DbModRow, defaultGameVersion: string | null): LibraryModItem {
     const workshopId = sanitizeWorkshopId(row.WorkshopId);
+    const gameVersion = row.GameVersion?.trim() || defaultGameVersion || null;
+    const byVersion = communityCompatByMod.get(workshopId);
+    const communityCompatibility = getCompatibilitySummaryForVersion(byVersion, gameVersion);
+
     return {
         id: row.Id,
         workshopId,
         name: row.Name,
         version: row.Version,
-        gameVersion: row.GameVersion?.trim() || null,
+        gameVersion,
         isEnabled: row.IsEnabled === 1,
         loadOrder: Number(row.LoadOrder) || 0,
         installedAtUtc: row.InstalledAt || null,
@@ -369,11 +588,17 @@ function mapModRow(row: DbModRow): LibraryModItem {
         tags: parseTags(row.Tags),
         description: row.Description?.trim() || null,
         thumbnailUrl: row.ThumbnailUrl?.trim() || null,
-        hasUpdate: updateFlagsByWorkshopId.get(workshopId) === true
+        hasUpdate: updateFlagsByWorkshopId.get(workshopId) === true,
+        communityCompatibility
     };
 }
 
 function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
+    const settings = loadSettingsSnapshot();
+    const fallbackGameVersion = normalizeDetectedGameVersion(settings?.lastDetectedGameVersion ?? "")
+        || settings?.lastDetectedGameVersion?.trim()
+        || null;
+
     if (!hasTable(db, "Mods")) {
         return {
             mods: [],
@@ -382,8 +607,8 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
             totalMods: 0,
             enabledMods: 0,
             updatesAvailable: 0,
-            compatibilityReporterId: loadSettingsSnapshot()?.compatibilityReporterId?.trim() || null,
-            lastDetectedGameVersion: loadSettingsSnapshot()?.lastDetectedGameVersion?.trim() || null
+            compatibilityReporterId: settings?.compatibilityReporterId?.trim() || null,
+            lastDetectedGameVersion: settings?.lastDetectedGameVersion?.trim() || null
         };
     }
 
@@ -397,8 +622,8 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
             totalMods: 0,
             enabledMods: 0,
             updatesAvailable: 0,
-            compatibilityReporterId: loadSettingsSnapshot()?.compatibilityReporterId?.trim() || null,
-            lastDetectedGameVersion: loadSettingsSnapshot()?.lastDetectedGameVersion?.trim() || null
+            compatibilityReporterId: settings?.compatibilityReporterId?.trim() || null,
+            lastDetectedGameVersion: settings?.lastDetectedGameVersion?.trim() || null
         };
     }
 
@@ -429,7 +654,7 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
         )
         .all() as DbModRow[];
 
-    const mods = modRows.map(mapModRow);
+    const mods = modRows.map((row) => mapModRow(row, fallbackGameVersion));
 
     let profiles: LibraryProfile[] = [];
     if (hasTable(db, "Profiles")) {
@@ -477,8 +702,6 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
     const activeProfileId = profiles.find((profile) => profile.isActive)?.id ?? null;
     const enabledMods = mods.filter((mod) => mod.isEnabled).length;
     const updatesAvailable = mods.filter((mod) => mod.hasUpdate).length;
-    const settings = loadSettingsSnapshot();
-
     return {
         mods,
         profiles,
@@ -609,7 +832,9 @@ function fetchDetailsInChunks(ids: string[]): Promise<Map<string, SteamPublished
     return run().then(() => result);
 }
 
-export function getLibrarySnapshot(): LibrarySnapshot {
+export async function getLibrarySnapshot(): Promise<LibrarySnapshot> {
+    await refreshCommunityCache(false);
+
     const db = openLibraryDb();
     if (!db) {
         return buildEmptySnapshot();
@@ -1004,13 +1229,13 @@ export async function checkLibraryUpdates(): Promise<LibraryActionResult> {
     }
 }
 
-export function exportLibraryMods(filePath: string): LibraryActionResult {
+export async function exportLibraryMods(filePath: string): Promise<LibraryActionResult> {
     const targetPath = (filePath ?? "").trim();
     if (!targetPath) {
         return { ok: false, message: "A destination path is required." };
     }
 
-    const snapshot = getLibrarySnapshot();
+    const snapshot = await getLibrarySnapshot();
     const sorted = snapshot.mods
         .slice()
         .sort((a, b) => a.loadOrder - b.loadOrder || a.name.localeCompare(b.name));
@@ -1107,6 +1332,63 @@ export async function importLibraryMods(filePath: string): Promise<LibraryImport
     }
 }
 
+function getOrCreateCompatibilityReporterId(): string | null {
+    let reporterId = loadSettingsSnapshot()?.compatibilityReporterId?.trim() || null;
+    if (reporterId) {
+        return reporterId;
+    }
+
+    reporterId = crypto.randomUUID();
+    const currentSettings = loadSettingsSnapshot();
+    if (!currentSettings) {
+        return reporterId;
+    }
+
+    currentSettings.compatibilityReporterId = reporterId;
+    saveSettingsSnapshot(currentSettings);
+    return reporterId;
+}
+
+function normalizeSelectedTags(value: string[] | undefined): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const seen = new Set<string>();
+    const normalized: string[] = [];
+    for (const rawTag of value) {
+        const key = String(rawTag ?? "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "");
+        if (!key || key.length < 2 || key.length > 50 || seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        normalized.push(key);
+    }
+
+    return normalized;
+}
+
+export async function getCompatibilityTags(): Promise<CompatibilityTagCatalogResult> {
+    try {
+        const payload = await fetchJsonWithTimeout<RemoteCommunityTagsResponse>(`${STELLARISYNC_BASE_URL}/mods/community-tags`);
+        const tags = normalizeTagDefinitions(payload?.tags);
+        communityTagsCache = tags;
+        return {
+            ok: true,
+            message: tags.length > 0 ? `Loaded ${tags.length} compatibility tag(s).` : "No compatibility tags available.",
+            tags,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown tags error";
+        return {
+            ok: false,
+            message: `Failed to load compatibility tags: ${message}`,
+            tags: communityTagsCache,
+        };
+    }
+}
+
 export async function reportLibraryCompatibility(request: LibraryCompatibilityReportRequest): Promise<LibraryActionResult> {
     const workshopId = sanitizeWorkshopId(request.workshopId);
     let gameVersion = (request.gameVersion ?? "").trim();
@@ -1123,44 +1405,96 @@ export async function reportLibraryCompatibility(request: LibraryCompatibilityRe
         return { ok: false, message: "Game version is required for compatibility reporting." };
     }
 
-    let reporterId = loadSettingsSnapshot()?.compatibilityReporterId?.trim() || null;
-
+    const reporterId = getOrCreateCompatibilityReporterId();
     if (!reporterId) {
-        reporterId = crypto.randomUUID();
-        const currentSettings = loadSettingsSnapshot();
-        if (currentSettings) {
-            currentSettings.compatibilityReporterId = reporterId;
-            saveSettingsSnapshot(currentSettings);
-        }
+        return { ok: false, message: "Could not determine compatibility reporter identity." };
     }
 
+    const tagsOnly = request.tagsOnly === true;
+    const outcome = tagsOnly
+        ? undefined
+        : request.outcome
+            ? request.outcome
+            : request.worked === false
+                ? "not_worked"
+                : "worked";
+    const selectedTags = normalizeSelectedTags(request.selectedTags);
+
     try {
+        const requestBody: Record<string, unknown> = {
+            modId: workshopId,
+            gameVersion,
+            selectedTags,
+            reporterId,
+            reporter: reporterId,
+            tagsOnly,
+        };
+
+        if (outcome) {
+            requestBody.worked = outcome === "worked";
+            requestBody.outcome = outcome;
+        }
+
         const response = await fetch(`${STELLARISYNC_BASE_URL}/mods/community-compat/report`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                modId: workshopId,
-                gameVersion,
-                worked: request.worked,
-                reporterId,
-                reporter: reporterId
-            })
+            body: JSON.stringify(requestBody)
         });
 
         if (!response.ok) {
+            let errorMessage = `Compatibility report failed with HTTP ${response.status}.`;
+            try {
+                const errorPayload = await response.json() as { error?: string };
+                if (typeof errorPayload?.error === "string" && errorPayload.error.trim().length > 0) {
+                    errorMessage = errorPayload.error.trim();
+                }
+            } catch {
+                // keep fallback HTTP status message
+            }
+
             return {
                 ok: false,
-                message: `Compatibility report failed with HTTP ${response.status}.`
+                message: errorMessage
+            };
+        }
+
+        const payload = await response.json() as {
+            state?: string;
+            confidencePercent?: number;
+            totalReports?: number;
+            previousOutcome?: "worked" | "not_worked" | null;
+        };
+
+        await refreshCommunityCache(true);
+
+        const consensusState = toConsensusState(payload?.state);
+        const confidence = Number(payload?.confidencePercent ?? 0) || 0;
+        const totalReports = Number(payload?.totalReports ?? 0) || 0;
+        const statusText = consensusState === "trusted"
+            ? `Trusted consensus (${confidence}%).`
+            : consensusState === "disputed"
+                ? `Disputed community feedback (${confidence}% lead).`
+                : "More reports are needed for consensus.";
+
+        if (tagsOnly) {
+            const previousOutcomeLabel = payload?.previousOutcome === "not_worked"
+                ? "Broken for me"
+                : "Works for me";
+            return {
+                ok: true,
+                message: selectedTags.length > 0
+                    ? `Saved tags for your '${previousOutcomeLabel}' vote. ${statusText} (${totalReports} total report(s)).`
+                    : `Removed all tags from your '${previousOutcomeLabel}' vote. ${statusText} (${totalReports} total report(s)).`
             };
         }
 
         return {
             ok: true,
-            message: request.worked
-                ? "Submitted 'Works for me' report."
-                : "Submitted 'Broken for me' report."
+            message: outcome === "worked"
+                ? `Submitted 'Works for me' report. ${statusText} (${totalReports} total report(s)).`
+                : `Submitted 'Broken for me' report. ${statusText} (${totalReports} total report(s)).`
         };
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown compatibility-report error";

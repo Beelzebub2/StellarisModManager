@@ -226,6 +226,55 @@ export interface VersionModDetail {
     queueMessage: string | null;
 }
 
+export type ConsensusState = "trusted" | "disputed" | "insufficient_votes" | "no_data";
+
+export interface CompatibilityTagDefinition {
+    key: string;
+    label: string;
+    description: string | null;
+    conflictGroup: string | null;
+    createdBy: "system" | "user";
+    createdAtUtc: string;
+}
+
+export interface CompatibilityTagConsensus {
+    tagKey: string;
+    tagLabel: string;
+    votes: number;
+    totalVotes: number;
+    confidencePercent: number;
+    state: ConsensusState;
+}
+
+export interface CompatibilityTagGroupOption {
+    tagKey: string;
+    tagLabel: string;
+    votes: number;
+}
+
+export interface CompatibilityTagGroupConsensus {
+    groupKey: string;
+    groupLabel: string;
+    state: ConsensusState;
+    leadingTagKey: string | null;
+    leadingTagLabel: string | null;
+    leadingVotes: number;
+    totalVotes: number;
+    confidencePercent: number;
+    options: CompatibilityTagGroupOption[];
+}
+
+export interface LibraryCompatibilitySummary {
+    workedCount: number;
+    notWorkedCount: number;
+    totalReports: number;
+    workedPercentage: number;
+    state: ConsensusState;
+    tagConsensus: CompatibilityTagConsensus[];
+    groupConsensus: CompatibilityTagGroupConsensus[];
+    lastReportedUtc: string | null;
+}
+
 export interface LibraryProfile {
     id: number;
     name: string;
@@ -252,6 +301,7 @@ export interface LibraryModItem {
     description: string | null;
     thumbnailUrl: string | null;
     hasUpdate: boolean;
+    communityCompatibility: LibraryCompatibilitySummary | null;
 }
 
 export interface LibrarySnapshot {
@@ -298,7 +348,16 @@ export interface LibrarySetSharedProfileIdRequest {
 export interface LibraryCompatibilityReportRequest {
     workshopId: string;
     gameVersion: string;
-    worked: boolean;
+    worked?: boolean;
+    outcome?: "worked" | "not_worked";
+    selectedTags?: string[];
+    tagsOnly?: boolean;
+}
+
+export interface CompatibilityTagCatalogResult {
+    ok: boolean;
+    message: string;
+    tags: CompatibilityTagDefinition[];
 }
 
 export interface LibraryImportResult extends LibraryActionResult {
@@ -392,6 +451,7 @@ export interface SpikeApi {
     checkLibraryUpdates: () => Promise<LibraryActionResult>;
     exportLibraryMods: () => Promise<LibraryActionResult>;
     importLibraryMods: () => Promise<LibraryImportResult>;
+    getCompatibilityTags: () => Promise<CompatibilityTagCatalogResult>;
     reportLibraryCompatibility: (request: LibraryCompatibilityReportRequest) => Promise<LibraryActionResult>;
     scanLocalMods: () => Promise<ScanLocalModsResult>;
     getSteamDiscoverySummary: () => Promise<SteamDiscoverySummary>;
