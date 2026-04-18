@@ -33,15 +33,17 @@ pub fn launch_background(installer_path: &Path) -> Result<InstallerProcess, Stri
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
-        let child = Command::new(installer_path)
-            .args([
-                "/VERYSILENT",
-                "/NORESTART",
-                "/CLOSEAPPLICATIONS",
-                "/SUPPRESSMSGBOXES",
-                "/SP-",
-                &format!("/LOG={}", log_path.display()),
-            ])
+        // Command::new on an executable with a 'requireAdministrator' manifest returns OS Error 740 
+        // if this updater process is not elevated. Invoking via PowerShell's Start-Process ensures 
+        // that ShellExecute is used, correctly bringing up the UAC elevation prompt for the user.
+        let ps_args = format!(
+            "$p = Start-Process -FilePath '{}' -ArgumentList '/VERYSILENT /NORESTART /CLOSEAPPLICATIONS /SUPPRESSMSGBOXES /SP- /LOG=\"{}\"' -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode",
+            installer_path.display(),
+            log_path.display()
+        );
+
+        let child = Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps_args])
             .current_dir(
                 installer_path
                     .parent()
@@ -52,7 +54,7 @@ pub fn launch_background(installer_path: &Path) -> Result<InstallerProcess, Stri
             .stderr(Stdio::null())
             .creation_flags(CREATE_NEW_PROCESS_GROUP)
             .spawn()
-            .map_err(|e| format!("failed to launch installer: {e}"))?;
+            .map_err(|e| format!("failed to launch installer via shell: {e}"))?;
 
         return Ok(InstallerProcess {
             child,
