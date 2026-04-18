@@ -2803,9 +2803,61 @@ function hookLibraryControls() {
         );
         if (sharedId === null) return;
         if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
-        const result = await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
-        setLibraryStatus(result.message);
+        const syncResult = await window.spikeApi.syncLibrarySharedProfile({
+            profileId: active.id,
+            sharedProfileId: sharedId
+        });
+        setLibraryStatus(syncResult.message);
         await refreshLibrarySnapshot();
+
+        if (!syncResult.ok || syncResult.missingWorkshopIds.length <= 0) {
+            return;
+        }
+
+        const profileLabel = syncResult.profileName
+            ? `shared profile '${syncResult.profileName}'`
+            : "the shared profile";
+        const shouldInstall = await showModal(
+            "Install Missing Mods",
+            `${syncResult.missingWorkshopIds.length} mod(s) from ${profileLabel} are missing locally. Queue them for install now?`,
+            "Queue installs",
+            "Not now"
+        );
+        if (!shouldInstall) {
+            setLibraryStatus(`${syncResult.missingWorkshopIds.length} missing mod(s) not queued.`);
+            return;
+        }
+
+        let queuedCount = 0;
+        let skippedCount = 0;
+        for (const workshopId of syncResult.missingWorkshopIds) {
+            const queueResult = await window.spikeApi.queueDownload({
+                workshopId,
+                modName: workshopId,
+                action: "install"
+            });
+            if (queueResult.ok) {
+                queuedCount += 1;
+            } else {
+                skippedCount += 1;
+            }
+        }
+
+        if (queuedCount > 0) {
+            await refreshQueueSnapshot();
+        }
+
+        if (queuedCount > 0 && skippedCount > 0) {
+            setLibraryStatus(`Queued ${queuedCount} missing mod(s); skipped ${skippedCount}.`);
+            return;
+        }
+
+        if (queuedCount > 0) {
+            setLibraryStatus(`Queued ${queuedCount} missing mod(s) for installation.`);
+            return;
+        }
+
+        setLibraryStatus("Missing mods were not queued (they may already be queued or invalid).");
     });
 
     byId("libraryShareProfile")?.addEventListener("click", async () => {

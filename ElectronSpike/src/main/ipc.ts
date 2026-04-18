@@ -10,6 +10,7 @@ import type {
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
+    LibrarySyncSharedProfileRequest,
     SettingsSnapshot,
     SteamCmdProbeRequest,
     SystemSummary,
@@ -35,6 +36,7 @@ import {
     scanLocalMods,
     setLibraryModEnabled,
     setLibraryProfileSharedId,
+    syncLibrarySharedProfile,
     uninstallLibraryMod
 } from "./services/library";
 import { logError, logInfo } from "./services/logger";
@@ -94,6 +96,7 @@ const CHANNELS = {
     libraryDeleteProfile: "spike:deleteLibraryProfile",
     libraryActivateProfile: "spike:activateLibraryProfile",
     librarySetSharedProfileId: "spike:setLibraryProfileSharedId",
+    librarySyncSharedProfile: "spike:syncLibrarySharedProfile",
     librarySetModEnabled: "spike:setLibraryModEnabled",
     libraryMoveMod: "spike:moveLibraryMod",
     libraryReorderMod: "spike:reorderLibraryMod",
@@ -193,6 +196,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.libraryDeleteProfile);
     ipcMain.removeHandler(CHANNELS.libraryActivateProfile);
     ipcMain.removeHandler(CHANNELS.librarySetSharedProfileId);
+    ipcMain.removeHandler(CHANNELS.librarySyncSharedProfile);
     ipcMain.removeHandler(CHANNELS.librarySetModEnabled);
     ipcMain.removeHandler(CHANNELS.libraryMoveMod);
     ipcMain.removeHandler(CHANNELS.libraryReorderMod);
@@ -313,6 +317,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.librarySetSharedProfileId, async (_event, request: LibrarySetSharedProfileIdRequest) => {
         return setLibraryProfileSharedId(request);
+    });
+
+    ipcMain.handle(CHANNELS.librarySyncSharedProfile, async (_event, request: LibrarySyncSharedProfileRequest) => {
+        return syncLibrarySharedProfile(request);
     });
 
     ipcMain.handle(CHANNELS.librarySetModEnabled, async (_event, request: LibrarySetModEnabledRequest) => {

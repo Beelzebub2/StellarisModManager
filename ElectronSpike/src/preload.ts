@@ -18,6 +18,8 @@ import type {
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
+    LibrarySyncSharedProfileRequest,
+    LibrarySyncSharedProfileResult,
     LibrarySnapshot,
     SettingsAutoDetectResult,
     SettingsSaveResult,
@@ -71,6 +73,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:activateLibraryProfile", profileId) as Promise<LibraryActionResult>,
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) =>
         ipcRenderer.invoke("spike:setLibraryProfileSharedId", request) as Promise<LibraryActionResult>,
+    syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) =>
+        ipcRenderer.invoke("spike:syncLibrarySharedProfile", request) as Promise<LibrarySyncSharedProfileResult>,
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) =>
         ipcRenderer.invoke("spike:setLibraryModEnabled", request) as Promise<LibraryActionResult>,
     moveLibraryMod: (request: LibraryMoveDirectionRequest) =>

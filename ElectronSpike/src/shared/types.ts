@@ -350,6 +350,19 @@ export interface LibrarySetSharedProfileIdRequest {
     sharedProfileId: string;
 }
 
+export interface LibrarySyncSharedProfileRequest {
+    profileId: number;
+    sharedProfileId: string;
+}
+
+export interface LibrarySyncSharedProfileResult extends LibraryActionResult {
+    profileName: string | null;
+    missingWorkshopIds: string[];
+    enabledCount: number;
+    disabledCount: number;
+    syncedLoadOrderCount: number;
+}
+
 export interface LibraryCompatibilityReportRequest {
     workshopId: string;
     gameVersion: string;
@@ -474,6 +487,7 @@ export interface SpikeApi {
     deleteLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
     activateLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) => Promise<LibraryActionResult>;
+    syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) => Promise<LibrarySyncSharedProfileResult>;
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) => Promise<LibraryActionResult>;
     moveLibraryMod: (request: LibraryMoveDirectionRequest) => Promise<LibraryActionResult>;
     reorderLibraryMod: (request: LibraryReorderRequest) => Promise<LibraryActionResult>;

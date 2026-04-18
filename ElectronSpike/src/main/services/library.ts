@@ -20,6 +20,8 @@ import type {
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
+    LibrarySyncSharedProfileRequest,
+    LibrarySyncSharedProfileResult,
     LibrarySnapshot,
     ScanLocalModsResult
 } from "../../shared/types";
@@ -91,6 +93,20 @@ interface RemoteCommunityTagsResponse {
     tags?: CompatibilityTagDefinition[];
 }
 
+interface RemoteSharedProfilePayload {
+    id?: string;
+    name?: string;
+    creator?: string;
+    mods?: unknown;
+}
+
+interface SyncModRow {
+    Id: number;
+    WorkshopId: string;
+    IsEnabled: number;
+    LoadOrder: number;
+}
+
 const updateFlagsByWorkshopId = new Map<string, boolean>();
 const communityCompatByMod = new Map<string, Record<string, LibraryCompatibilitySummary>>();
 let communityTagsCache: CompatibilityTagDefinition[] = [];
@@ -135,6 +151,10 @@ function sanitizeWorkshopId(value: string): string {
 
 function isValidWorkshopId(value: string): boolean {
     return /^\d{6,}$/.test(value);
+}
+
+function isValidSharedProfileId(value: string): boolean {
+    return /^[a-f0-9]{32}$/i.test(value);
 }
 
 function parseTags(value: string | null | undefined): string[] {
@@ -1028,6 +1048,186 @@ export function setLibraryProfileSharedId(request: LibrarySetSharedProfileIdRequ
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown shared-id error";
         return { ok: false, message: `Failed to update shared profile ID: ${message}` };
+    } finally {
+        db.close();
+    }
+}
+
+function buildSharedProfileSyncFailure(message: string): LibrarySyncSharedProfileResult {
+    return {
+        ok: false,
+        message,
+        profileName: null,
+        missingWorkshopIds: [],
+        enabledCount: 0,
+        disabledCount: 0,
+        syncedLoadOrderCount: 0
+    };
+}
+
+function normalizeSharedProfileMods(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const rawEntry of value) {
+        const workshopId = sanitizeWorkshopId(typeof rawEntry === "string" ? rawEntry : "");
+        if (!isValidWorkshopId(workshopId) || seen.has(workshopId)) {
+            continue;
+        }
+
+        seen.add(workshopId);
+        ordered.push(workshopId);
+    }
+
+    return ordered;
+}
+
+async function fetchSharedProfile(sharedProfileId: string): Promise<RemoteSharedProfilePayload> {
+    const url = `${STELLARISYNC_BASE_URL}/profiles/${encodeURIComponent(sharedProfileId)}`;
+    const response = await fetch(url, {
+        method: "GET",
+        headers: {
+            Accept: "application/json"
+        }
+    });
+
+    if (!response.ok) {
+        let reason = `Request failed with HTTP ${response.status}.`;
+        try {
+            const payload = await response.json() as { error?: string };
+            if (typeof payload.error === "string" && payload.error.trim()) {
+                reason = payload.error.trim();
+            }
+        } catch {
+            // keep fallback message
+        }
+
+        throw new Error(reason);
+    }
+
+    return (await response.json()) as RemoteSharedProfilePayload;
+}
+
+export async function syncLibrarySharedProfile(
+    request: LibrarySyncSharedProfileRequest
+): Promise<LibrarySyncSharedProfileResult> {
+    const sharedProfileId = (request.sharedProfileId ?? "").trim();
+    if (!sharedProfileId) {
+        return buildSharedProfileSyncFailure("Shared profile ID is required.");
+    }
+
+    if (!isValidSharedProfileId(sharedProfileId)) {
+        return buildSharedProfileSyncFailure("Invalid shared profile ID format.");
+    }
+
+    const db = openLibraryDb();
+    if (!db) {
+        return buildSharedProfileSyncFailure("mods.db is not available.");
+    }
+
+    try {
+        const profile = db
+            .prepare("SELECT Id FROM Profiles WHERE Id = ?")
+            .get(request.profileId) as { Id: number } | undefined;
+        if (!profile) {
+            return buildSharedProfileSyncFailure("Profile not found.");
+        }
+
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            return buildSharedProfileSyncFailure("Could not determine workshop ID column in Mods table.");
+        }
+
+        const remoteProfile = await fetchSharedProfile(sharedProfileId);
+        const remoteMods = normalizeSharedProfileMods(remoteProfile.mods);
+        const localRows = db
+            .prepare(
+                `SELECT Id, ${workshopColumn} AS WorkshopId, IsEnabled, LoadOrder
+                 FROM Mods`
+            )
+            .all() as SyncModRow[];
+
+        const localByWorkshopId = new Map<string, SyncModRow>();
+        for (const row of localRows) {
+            const workshopId = sanitizeWorkshopId(row.WorkshopId);
+            if (isValidWorkshopId(workshopId) && !localByWorkshopId.has(workshopId)) {
+                localByWorkshopId.set(workshopId, row);
+            }
+        }
+
+        const missingWorkshopIds: string[] = [];
+        const wantedRows: SyncModRow[] = [];
+        const wantedSet = new Set(remoteMods);
+
+        for (const workshopId of remoteMods) {
+            const local = localByWorkshopId.get(workshopId);
+            if (!local) {
+                missingWorkshopIds.push(workshopId);
+                continue;
+            }
+
+            wantedRows.push(local);
+        }
+
+        const rowsToDisable = localRows.filter((row) => {
+            const workshopId = sanitizeWorkshopId(row.WorkshopId);
+            return row.IsEnabled === 1 && !wantedSet.has(workshopId);
+        });
+
+        let enabledCount = 0;
+        let disabledCount = 0;
+
+        const tx = db.transaction(() => {
+            db.prepare("UPDATE Profiles SET SharedProfileId = ? WHERE Id = ?").run(sharedProfileId, request.profileId);
+
+            const setEnabledAndOrderStmt = db.prepare("UPDATE Mods SET IsEnabled = ?, LoadOrder = ? WHERE Id = ?");
+            for (const row of rowsToDisable) {
+                setEnabledAndOrderStmt.run(0, row.LoadOrder, row.Id);
+                disabledCount += 1;
+            }
+
+            let order = 0;
+            for (const row of wantedRows) {
+                if (row.IsEnabled !== 1) {
+                    enabledCount += 1;
+                }
+
+                setEnabledAndOrderStmt.run(1, order, row.Id);
+                order += 1;
+            }
+
+            normalizeLoadOrder(db);
+            saveActiveProfileSnapshot(db);
+            syncDlcLoadFromDb(db);
+        });
+
+        tx();
+
+        const profileName = typeof remoteProfile.name === "string" && remoteProfile.name.trim()
+            ? remoteProfile.name.trim()
+            : null;
+        const missingCount = missingWorkshopIds.length;
+        const syncedLoadOrderCount = wantedRows.length;
+        const profileLabel = profileName ? ` '${profileName}'` : "";
+
+        return {
+            ok: true,
+            message: missingCount > 0
+                ? `Shared profile${profileLabel} synced. Enabled ${enabledCount}, disabled ${disabledCount}, synced load order for ${syncedLoadOrderCount} mod(s). ${missingCount} mod(s) are missing locally.`
+                : `Shared profile${profileLabel} synced. Enabled ${enabledCount}, disabled ${disabledCount}, synced load order for ${syncedLoadOrderCount} mod(s).`,
+            profileName,
+            missingWorkshopIds,
+            enabledCount,
+            disabledCount,
+            syncedLoadOrderCount
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown shared-profile sync error";
+        return buildSharedProfileSyncFailure(`Failed to sync shared profile: ${message}`);
     } finally {
         db.close();
     }
