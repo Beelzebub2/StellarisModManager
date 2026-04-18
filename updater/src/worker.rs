@@ -105,6 +105,18 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
 
     match wait_result {
         Ok(0) => {
+            if let Some(app_exe) = cli.app_exe.as_deref() {
+                let app_path = PathBuf::from(app_exe);
+                if let Err(e) = install::try_start_app(&app_path) {
+                    log::error(&format!("app relaunch failed: {e}"));
+                    let _ = tx.send(UpdateEvent::Failed(
+                        "Update installed, but relaunch failed. Start the app manually.".into(),
+                    ));
+                    return;
+                }
+            }
+
+            install::try_delete_file(&dl.file_path);
             let _ = tx.send(UpdateEvent::InstallProgress {
                 progress: 1.0,
                 elapsed_secs: 0,

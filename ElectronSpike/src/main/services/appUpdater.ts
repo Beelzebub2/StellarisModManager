@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import https from "node:https";
 import http from "node:http";
@@ -149,6 +150,41 @@ function resolveUpdaterExecutable(): string | null {
     return null;
 }
 
+function stageUpdaterToTemp(sourceUpdaterPath: string): { updaterPath: string; cleanupRoot: string } {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "StellarisModManager-updater-"));
+    const tempUpdaterDir = path.join(tempRoot, "Updater");
+    fs.mkdirSync(tempUpdaterDir, { recursive: true });
+
+    const sourceDir = path.dirname(sourceUpdaterPath);
+    const updaterBaseName = path.parse(sourceUpdaterPath).name.toLowerCase();
+
+    for (const entry of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+        if (!entry.isFile()) {
+            continue;
+        }
+
+        const entryBaseName = path.parse(entry.name).name.toLowerCase();
+        if (!entryBaseName.startsWith(updaterBaseName)) {
+            continue;
+        }
+
+        fs.copyFileSync(
+            path.join(sourceDir, entry.name),
+            path.join(tempUpdaterDir, entry.name)
+        );
+    }
+
+    const stagedUpdaterPath = path.join(tempUpdaterDir, path.basename(sourceUpdaterPath));
+    if (!fs.existsSync(stagedUpdaterPath)) {
+        fs.copyFileSync(sourceUpdaterPath, stagedUpdaterPath);
+    }
+
+    return {
+        updaterPath: stagedUpdaterPath,
+        cleanupRoot: tempRoot
+    };
+}
+
 export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppUpdateResult> {
     if (!release || !release.downloadUrl || !release.version) {
         return { ok: false, message: "Missing download URL or version." };
@@ -163,6 +199,19 @@ export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppU
         };
     }
 
+    let stagedUpdaterPath = updaterPath;
+    let cleanupRoot = "";
+    try {
+        const staged = stageUpdaterToTemp(updaterPath);
+        stagedUpdaterPath = staged.updaterPath;
+        cleanupRoot = staged.cleanupRoot;
+        logInfo(`Staged updater to temp: ${stagedUpdaterPath}`);
+    } catch (error) {
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        logError(`Failed to stage updater to temp: ${msg}`);
+        return { ok: false, message: `Failed to prepare updater: ${msg}` };
+    }
+
     const args = ["--url", release.downloadUrl, "--version", release.version];
     if (release.sha256) {
         args.push("--sha256", release.sha256);
@@ -172,15 +221,18 @@ export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppU
     if (release.releaseUrl) {
         args.push("--release-url", release.releaseUrl);
     }
+    args.push("--app-exe", app.getPath("exe"));
+    args.push("--cleanup-root", cleanupRoot);
 
     try {
-        const child = spawn(updaterPath, args, {
+        const child = spawn(stagedUpdaterPath, args, {
             detached: true,
             stdio: "ignore",
-            windowsHide: false
+            windowsHide: false,
+            cwd: path.dirname(stagedUpdaterPath)
         });
         child.unref();
-        logInfo(`Spawned updater: ${updaterPath} (pid=${child.pid ?? "?"})`);
+        logInfo(`Spawned updater: ${stagedUpdaterPath} (pid=${child.pid ?? "?"})`);
     } catch (error) {
         const msg = error instanceof Error ? error.message : "Unknown error";
         logError(`Failed to spawn updater: ${msg}`);

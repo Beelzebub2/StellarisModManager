@@ -153,6 +153,13 @@ impl eframe::App for UpdaterApp {
             // Don't block on join — worker threads are cooperative.
             drop(h);
         }
+
+        if let Some(root) = self.cli.cleanup_root.as_deref() {
+            let root = std::path::Path::new(root);
+            if !root.as_os_str().is_empty() {
+                install::schedule_self_delete(root);
+            }
+        }
     }
 }
 
@@ -161,12 +168,12 @@ fn render_window(ui: &mut egui::Ui, app: &mut UpdaterApp, frame: &mut eframe::Fr
 
     // Outer padded container for a "card" feel on top of BG_BASE.
     egui::Frame::none()
-        .inner_margin(Margin::symmetric(24.0, 14.0))
+        .inner_margin(Margin::symmetric(20.0, 12.0))
         .show(ui, |ui| {
             render_header(ui, app);
-            ui.add_space(12.0);
+            ui.add_space(10.0);
             render_body(ui, app);
-            ui.add_space(12.0);
+            ui.add_space(10.0);
             render_footer(ui, app, frame);
         });
 }
@@ -251,9 +258,9 @@ fn render_body(ui: &mut egui::Ui, app: &UpdaterApp) {
         .fill(theme::BG_1)
         .stroke(Stroke::new(1.0, theme::BORDER))
         .rounding(Rounding::same(10.0))
-        .inner_margin(Margin::symmetric(18.0, 14.0))
+        .inner_margin(Margin::symmetric(16.0, 12.0))
         .show(ui, |ui| {
-            ui.set_min_height(116.0);
+            ui.set_min_height(108.0);
             match &app.state {
                 UiState::Connecting => render_connecting(ui),
                 UiState::Downloading {

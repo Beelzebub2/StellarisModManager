@@ -23,6 +23,14 @@ pub struct Cli {
     #[arg(long)]
     pub release_url: Option<String>,
 
+    /// App executable to relaunch after a successful update.
+    #[arg(long)]
+    pub app_exe: Option<String>,
+
+    /// Temporary updater root to delete after this process exits.
+    #[arg(long)]
+    pub cleanup_root: Option<String>,
+
     /// Run a simulated lifecycle instead of downloading.
     #[arg(long, default_value_t = false)]
     pub demo: bool,
