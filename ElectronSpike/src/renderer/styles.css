@@ -151,6 +151,76 @@ body[data-theme="starlight-white"] {
     --danger-border: rgba(185, 28, 28, 0.22);
 }
 
+body[data-theme="ivory-white"] {
+    --bg-base: #fbfaf6;
+    --bg-1: #fffefb;
+    --bg-2: #fbf8f1;
+    --bg-3: #f5efe5;
+    --bg-4: #ece4d7;
+
+    --surface: #f2ecdf;
+    --surface-hover: #ece3d2;
+    --surface-active: #e5dac6;
+
+    --border: rgba(71, 50, 23, 0.16);
+    --border-hover: rgba(71, 50, 23, 0.26);
+    --border-strong: rgba(71, 50, 23, 0.36);
+
+    --text: #1f2937;
+    --text-2: #4b5563;
+    --text-3: #6b7280;
+
+    --accent: #0e7490;
+    --accent-hover: #0891b2;
+    --accent-soft: rgba(14, 116, 144, 0.12);
+    --accent-border: rgba(14, 116, 144, 0.28);
+
+    --success: #166534;
+    --success-soft: rgba(22, 101, 52, 0.10);
+    --success-border: rgba(22, 101, 52, 0.22);
+    --warning: #a16207;
+    --warning-soft: rgba(161, 98, 7, 0.11);
+    --warning-border: rgba(161, 98, 7, 0.24);
+    --danger: #b91c1c;
+    --danger-soft: rgba(185, 28, 28, 0.10);
+    --danger-border: rgba(185, 28, 28, 0.22);
+}
+
+body[data-theme="frost-white"] {
+    --bg-base: #f4f9ff;
+    --bg-1: #ffffff;
+    --bg-2: #f3f8ff;
+    --bg-3: #e9f2ff;
+    --bg-4: #dce9fb;
+
+    --surface: #e7f0ff;
+    --surface-hover: #dce9fd;
+    --surface-active: #d1e2fb;
+
+    --border: rgba(30, 58, 138, 0.16);
+    --border-hover: rgba(30, 58, 138, 0.28);
+    --border-strong: rgba(30, 58, 138, 0.40);
+
+    --text: #0f172a;
+    --text-2: #334155;
+    --text-3: #64748b;
+
+    --accent: #1d4ed8;
+    --accent-hover: #2563eb;
+    --accent-soft: rgba(29, 78, 216, 0.12);
+    --accent-border: rgba(29, 78, 216, 0.30);
+
+    --success: #047857;
+    --success-soft: rgba(4, 120, 87, 0.10);
+    --success-border: rgba(4, 120, 87, 0.24);
+    --warning: #b45309;
+    --warning-soft: rgba(180, 83, 9, 0.11);
+    --warning-border: rgba(180, 83, 9, 0.24);
+    --danger: #be123c;
+    --danger-soft: rgba(190, 18, 60, 0.10);
+    --danger-border: rgba(190, 18, 60, 0.22);
+}
+
 /* ============================================================
    RESET & BASE
    ============================================================ */

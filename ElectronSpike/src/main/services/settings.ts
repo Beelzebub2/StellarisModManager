@@ -10,7 +10,14 @@ import type {
 import { getLegacyPaths } from "./paths";
 import { discoverSteamLibraries } from "./steamDiscovery";
 
-const THEME_PALETTE_OPTIONS = ["Obsidian Ember", "Graphite Moss", "Nocturne Slate", "Starlight White"];
+const THEME_PALETTE_OPTIONS = [
+    "Obsidian Ember",
+    "Graphite Moss",
+    "Nocturne Slate",
+    "Starlight White",
+    "Ivory White",
+    "Frost White"
+];
 const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "SteamKit2", "SteamCmd"];
 
 function coerceString(value: unknown): string | undefined {

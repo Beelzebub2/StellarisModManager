@@ -45,8 +45,16 @@ const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
     "Graphite Moss": "graphite-moss",
     "Nocturne Slate": "nocturne-slate",
-    "Starlight White": "starlight-white"
+    "Starlight White": "starlight-white",
+    "Ivory White": "ivory-white",
+    "Frost White": "frost-white"
 });
+
+const LIGHT_THEME_PALETTES = new Set([
+    "Starlight White",
+    "Ivory White",
+    "Frost White"
+]);
 
 const ICON_PATHS = Object.freeze({
     versions: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
@@ -146,7 +154,40 @@ function normalizeThemePaletteName(value) {
     if (raw === "graphite moss") return "Graphite Moss";
     if (raw === "nocturne slate") return "Nocturne Slate";
     if (raw === "starlight white") return "Starlight White";
+    if (raw === "ivory white") return "Ivory White";
+    if (raw === "frost white") return "Frost White";
     return "Obsidian Ember";
+}
+
+function buildThemePaletteOptionsMarkup(palettes) {
+    const dark = [];
+    const light = [];
+
+    for (const palette of palettes || []) {
+        const normalized = normalizeThemePaletteName(palette);
+        if (LIGHT_THEME_PALETTES.has(normalized)) {
+            light.push(normalized);
+        } else {
+            dark.push(normalized);
+        }
+    }
+
+    const uniqueDark = [...new Set(dark)];
+    const uniqueLight = [...new Set(light)];
+
+    const renderOptions = (items) => items
+        .map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`)
+        .join("");
+
+    const chunks = [];
+    if (uniqueDark.length > 0) {
+        chunks.push(`<optgroup label="Dark Themes">${renderOptions(uniqueDark)}</optgroup>`);
+    }
+    if (uniqueLight.length > 0) {
+        chunks.push(`<optgroup label="Light Themes">${renderOptions(uniqueLight)}</optgroup>`);
+    }
+
+    return chunks.join("");
 }
 
 function applyThemePalette(paletteName) {
@@ -1266,7 +1307,7 @@ async function refreshSettingsPage() {
         ]);
 
         const paletteSelect = byId("settingsThemeInput");
-        if (paletteSelect) paletteSelect.innerHTML = palettes.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+        if (paletteSelect) paletteSelect.innerHTML = buildThemePaletteOptionsMarkup(palettes);
 
         const runtimeSelect = byId("settingsWorkshopRuntimeInput");
         if (runtimeSelect) runtimeSelect.innerHTML = runtimes.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
