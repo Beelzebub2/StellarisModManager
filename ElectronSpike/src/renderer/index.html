@@ -316,8 +316,12 @@
                                 </div>
 
                                 <section id="libraryDetailTagsSection" class="detail-block">
-                                    <h4>Descriptor Tags</h4>
-                                    <p id="libraryDetailTags" class="muted">No tags.</p>
+                                    <div class="detail-block-head">
+                                        <h4>Descriptor Tags</h4>
+                                        <button id="libraryDetailTagsToggle" type="button" class="feedback-tool-btn"
+                                            hidden>Show all</button>
+                                    </div>
+                                    <div id="libraryDetailTags" class="tag-list descriptor-tag-list">No tags.</div>
                                 </section>
 
                                 <section class="feedback-panel">
@@ -345,7 +349,7 @@
                                     </div>
 
                                     <div id="feedbackTrustedTags" class="feedback-trusted-tags hidden">
-                                        <p class="feedback-section-label">Community tags</p>
+                                        <p class="feedback-section-label">Trusted community tags</p>
                                         <div id="feedbackTrustedTagList" class="feedback-trusted-tag-list"></div>
                                     </div>
 

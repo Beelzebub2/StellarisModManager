@@ -23,6 +23,7 @@ const DETAIL_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const RESULT_CACHE_TTL_MS = 20 * 60 * 1000;
 const THUMBNAIL_CACHE_TTL_MS = 5 * 24 * 60 * 60 * 1000;
 const MAX_STEAM_PAGE_PROBES_PER_QUERY = 20;
+const CACHE_FLUSH_DEBOUNCE_MS = 1_500;
 
 const knownVersions: Readonly<Record<string, string>> = {
     "4.3": "Cetus",
@@ -142,6 +143,10 @@ let initialized = false;
 let mapsCache: VersionMapsCache | null = null;
 let detailCacheById = new Map<string, CachedFileDetails>();
 let resultCacheByKey = new Map<string, CachedResultEntry>();
+let detailsCacheDirty = false;
+let resultCacheDirty = false;
+let cacheFlushTimer: ReturnType<typeof setTimeout> | null = null;
+const thumbnailWarmInFlight = new Map<string, Promise<void>>();
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -417,6 +422,44 @@ async function saveResultCache(): Promise<void> {
     } satisfies ResultCacheStore);
 }
 
+function scheduleCacheFlush(): void {
+    if (cacheFlushTimer) {
+        return;
+    }
+
+    cacheFlushTimer = setTimeout(() => {
+        cacheFlushTimer = null;
+        void flushDirtyCaches();
+    }, CACHE_FLUSH_DEBOUNCE_MS);
+}
+
+async function flushDirtyCaches(): Promise<void> {
+    const shouldSaveDetails = detailsCacheDirty;
+    const shouldSaveResults = resultCacheDirty;
+
+    if (!shouldSaveDetails && !shouldSaveResults) {
+        return;
+    }
+
+    if (shouldSaveDetails) {
+        try {
+            await saveDetailsCache();
+            detailsCacheDirty = false;
+        } catch {
+            scheduleCacheFlush();
+        }
+    }
+
+    if (shouldSaveResults) {
+        try {
+            await saveResultCache();
+            resultCacheDirty = false;
+        } catch {
+            scheduleCacheFlush();
+        }
+    }
+}
+
 async function ensureVersionMaps(): Promise<VersionMapsCache> {
     await ensureInitialized();
 
@@ -469,6 +512,8 @@ async function fetchPublishedFileDetails(ids: string[]): Promise<Map<string, Ste
         }
     }
 
+    let detailCacheChanged = false;
+
     for (let offset = 0; offset < missingIds.length; offset += 100) {
         const chunk = missingIds.slice(offset, offset + 100);
         const formData = new URLSearchParams();
@@ -503,13 +548,18 @@ async function fetchPublishedFileDetails(ids: string[]): Promise<Map<string, Ste
                     fetchedAtUtc: nowIso(),
                     detail
                 });
+                detailCacheChanged = true;
             }
         } catch {
             // ignore partial detail fetch failures
         }
     }
 
-    await saveDetailsCache();
+    if (detailCacheChanged) {
+        detailsCacheDirty = true;
+        scheduleCacheFlush();
+    }
+
     return result;
 }
 
@@ -548,6 +598,46 @@ async function ensureThumbnailCached(workshopId: string, previewUrl: string | nu
     } catch {
         return previewUrl;
     }
+}
+
+function queueThumbnailWarmup(workshopId: string, previewUrl: string | null): void {
+    if (!previewUrl) {
+        return;
+    }
+
+    const key = `${workshopId}|${previewUrl}`;
+    if (thumbnailWarmInFlight.has(key)) {
+        return;
+    }
+
+    const warmPromise = (async () => {
+        await ensureThumbnailCached(workshopId, previewUrl);
+    })().finally(() => {
+        thumbnailWarmInFlight.delete(key);
+    });
+
+    thumbnailWarmInFlight.set(key, warmPromise);
+}
+
+async function resolveCardThumbnailUrl(workshopId: string, previewUrl: string | null): Promise<string | null> {
+    if (!previewUrl) {
+        return null;
+    }
+
+    const fileName = ensureThumbnailFileName(workshopId, previewUrl);
+    const filePath = path.join(thumbnailsDir, fileName);
+
+    try {
+        const stat = await fsp.stat(filePath);
+        if (Date.now() - stat.mtimeMs < THUMBNAIL_CACHE_TTL_MS) {
+            return pathToFileURL(filePath).toString();
+        }
+    } catch {
+        // warmup below
+    }
+
+    queueThumbnailWarmup(workshopId, previewUrl);
+    return previewUrl;
 }
 
 function buildQueryCacheKey(query: VersionBrowserQuery): string {
@@ -687,6 +777,8 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
     const sortMode = toWorkshopSortMode(query.sortMode);
 
     let cached = resultCacheByKey.get(key);
+    let resultEntryChanged = false;
+
     if (!cached || !isCacheFresh(cached.cachedAtUtc, RESULT_CACHE_TTL_MS)) {
         cached = {
             cachedAtUtc: nowIso(),
@@ -694,6 +786,7 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
             steamPage: 1,
             exhausted: false
         };
+        resultEntryChanged = true;
     } else {
         cached.cards = Array.isArray(cached.cards) ? cached.cards : [];
         cached.steamPage = Number.isFinite(cached.steamPage) && cached.steamPage > 0 ? Math.trunc(cached.steamPage) : 1;
@@ -706,10 +799,12 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
     while (!cached.exhausted && cached.cards.length < targetCount && pageRequests < MAX_STEAM_PAGE_PROBES_PER_QUERY) {
         const pageIds = await scrapeSteamWorkshopPage(sortMode, searchText, cached.steamPage);
         cached.steamPage += 1;
+        resultEntryChanged = true;
         pageRequests += 1;
 
         if (pageIds.length === 0) {
             cached.exhausted = true;
+            resultEntryChanged = true;
             break;
         }
 
@@ -721,20 +816,20 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
         }
 
         const details = await fetchPublishedFileDetails(candidateIds);
-        for (const workshopId of candidateIds) {
+        const pageCards = await Promise.all(candidateIds.map(async (workshopId) => {
             const detail = details.get(workshopId);
             if (!detail || !isVersionCompatible(workshopId, maps, selectedVersion, detail)) {
                 seenIds.add(workshopId);
-                continue;
+                return null;
             }
 
             const title = (detail.title ?? "").trim() || `Workshop Mod ${workshopId}`;
             const subscribersRaw = Number(detail.lifetime_subscriptions ?? 0);
             const totalSubscribers = Number.isFinite(subscribersRaw) ? subscribersRaw : 0;
             const community = getCommunityStats(maps.communityCompat, workshopId, selectedVersion);
-            const previewImageUrl = await ensureThumbnailCached(workshopId, detail.preview_url?.trim() || null);
+            const previewImageUrl = await resolveCardThumbnailUrl(workshopId, detail.preview_url?.trim() || null);
 
-            cached.cards.push({
+            return {
                 workshopId,
                 workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`,
                 name: title,
@@ -744,9 +839,18 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
                 communityWorksCount: community.works,
                 communityNotWorksCount: community.notWorks,
                 communityWorksPercent: community.percent
-            });
+            } satisfies CachedResultCard;
+        }));
 
-            seenIds.add(workshopId);
+        for (const card of pageCards) {
+            if (!card) {
+                continue;
+            }
+
+            cached.cards.push(card);
+            seenIds.add(card.workshopId);
+            resultEntryChanged = true;
+
             if (cached.cards.length >= targetCount) {
                 break;
             }
@@ -754,13 +858,17 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
 
         if (pageIds.length < 10) {
             cached.exhausted = true;
+            resultEntryChanged = true;
         }
     }
 
-    cached.cachedAtUtc = nowIso();
-    resultCacheByKey.set(key, cached);
+    if (resultEntryChanged) {
+        cached.cachedAtUtc = nowIso();
+        resultCacheByKey.set(key, cached);
+        resultCacheDirty = true;
+        scheduleCacheFlush();
+    }
 
-    await saveResultCache();
     return cached.cards;
 }
 
@@ -773,6 +881,8 @@ export function getVersionOptions(showOlderVersions: boolean): VersionOption[] {
 export function clearVersionResultCache(): void {
     resultCacheByKey.clear();
     mapsCache = null;
+    resultCacheDirty = true;
+    scheduleCacheFlush();
 }
 
 export async function queryVersionMods(query: VersionBrowserQuery): Promise<VersionBrowserResult> {

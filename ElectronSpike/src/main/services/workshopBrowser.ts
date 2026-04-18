@@ -57,6 +57,7 @@ const thumbnailsDir = path.join(cacheRoot, "thumbnails");
 let initialized = false;
 const detailCache = new Map<string, CachedDetail>();
 const browseCache = new Map<string, BrowseCacheEntry>();
+const thumbnailWarmInFlight = new Map<string, Promise<void>>();
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -255,9 +256,7 @@ async function fetchPublishedFileDetails(ids: string[]): Promise<Map<string, Ste
 async function ensureThumbnailCached(workshopId: string, previewUrl: string | null): Promise<string | null> {
     if (!previewUrl) return null;
 
-    const extMatch = previewUrl.match(/\.([a-zA-Z0-9]{2,5})(?:\?|$)/);
-    const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : ".jpg";
-    const filePath = path.join(thumbnailsDir, `${workshopId}${ext}`);
+    const filePath = path.join(thumbnailsDir, ensureThumbnailFileName(workshopId, previewUrl));
 
     try {
         const stat = await fsp.stat(filePath);
@@ -278,6 +277,50 @@ async function ensureThumbnailCached(workshopId: string, previewUrl: string | nu
     } catch {
         return previewUrl;
     }
+}
+
+function ensureThumbnailFileName(workshopId: string, previewUrl: string): string {
+    const extMatch = previewUrl.match(/\.([a-zA-Z0-9]{2,5})(?:\?|$)/);
+    const ext = extMatch ? `.${extMatch[1].toLowerCase()}` : ".jpg";
+    return `${workshopId}${ext}`;
+}
+
+function queueThumbnailWarmup(workshopId: string, previewUrl: string | null): void {
+    if (!previewUrl) {
+        return;
+    }
+
+    const key = `${workshopId}|${previewUrl}`;
+    if (thumbnailWarmInFlight.has(key)) {
+        return;
+    }
+
+    const warmPromise = (async () => {
+        await ensureThumbnailCached(workshopId, previewUrl);
+    })().finally(() => {
+        thumbnailWarmInFlight.delete(key);
+    });
+
+    thumbnailWarmInFlight.set(key, warmPromise);
+}
+
+async function resolveCardThumbnailUrl(workshopId: string, previewUrl: string | null): Promise<string | null> {
+    if (!previewUrl) {
+        return null;
+    }
+
+    const filePath = path.join(thumbnailsDir, ensureThumbnailFileName(workshopId, previewUrl));
+    try {
+        const stat = await fsp.stat(filePath);
+        if (Date.now() - stat.mtimeMs < THUMBNAIL_CACHE_TTL_MS) {
+            return pathToFileURL(filePath).toString();
+        }
+    } catch {
+        // warmup below
+    }
+
+    queueThumbnailWarmup(workshopId, previewUrl);
+    return previewUrl;
 }
 
 
@@ -301,7 +344,7 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
         if (detail) {
             const title = (detail.title ?? "").trim() || `Workshop Mod ${searchText}`;
             const subs = Number(detail.lifetime_subscriptions ?? 0);
-            const previewImageUrl = await ensureThumbnailCached(searchText, detail.preview_url?.trim() || null);
+            const previewImageUrl = await resolveCardThumbnailUrl(searchText, detail.preview_url?.trim() || null);
             const tags = (detail.tags ?? []).map((t) => (t.tag ?? "").trim()).filter(Boolean).slice(0, 12);
 
             return {
@@ -353,18 +396,18 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
 
     // Fetch metadata for all scraped IDs
     const details = await fetchPublishedFileDetails(workshopIds);
-    const cards: WorkshopModCard[] = [];
-
-    for (const workshopId of workshopIds) {
+    const cards = (await Promise.all(workshopIds.map(async (workshopId) => {
         const detail = details.get(workshopId);
-        if (!detail) continue;
+        if (!detail) {
+            return null;
+        }
 
         const title = (detail.title ?? "").trim() || `Workshop Mod ${workshopId}`;
         const subs = Number(detail.lifetime_subscriptions ?? 0);
-        const previewImageUrl = await ensureThumbnailCached(workshopId, detail.preview_url?.trim() || null);
+        const previewImageUrl = await resolveCardThumbnailUrl(workshopId, detail.preview_url?.trim() || null);
         const tags = (detail.tags ?? []).map((t) => (t.tag ?? "").trim()).filter(Boolean).slice(0, 12);
 
-        cards.push({
+        return {
             workshopId,
             workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${workshopId}`,
             name: title,
@@ -372,8 +415,8 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
             totalSubscribers: Number.isFinite(subs) ? subs : 0,
             tags,
             actionState: getActionStateForCard(workshopId)
-        });
-    }
+        } satisfies WorkshopModCard;
+    }))).filter((card): card is WorkshopModCard => card !== null);
 
     // Trim to requested page size
     const pagedCards = cards.slice(0, pageSize);

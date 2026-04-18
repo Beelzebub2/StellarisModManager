@@ -15,6 +15,7 @@ const state = {
     settingsTab: "general",
     downloadEventUnsubscribe: null,
     searchDebounceHandle: null,
+    versionRequestSeq: 0,
     activeDetailWorkshopId: null,
     activeCards: [],
     settingsModel: null,
@@ -35,6 +36,8 @@ const state = {
         searchText: "",
         showEnabledOnly: false,
         selectedModId: null,
+        dragSourceModId: null,
+        descriptorTagsExpanded: false,
         availableTags: [],
         selectedReportTags: [],
         savedReportTagsByModVersion: {}
@@ -535,38 +538,76 @@ function renderCards(cards) {
 
     container.innerHTML = cards.map(cardTemplate).join("\n");
 
-    for (const btn of container.querySelectorAll("button[data-action='open-detail']")) {
-        btn.addEventListener("click", () => void openDetailDrawer(btn.getAttribute("data-workshop-id") || ""));
-    }
-    for (const card of container.querySelectorAll(".mod-card")) {
-        card.addEventListener("click", (e) => {
-            // Don't navigate if they clicked a button inside the card
-            if (e.target.closest("button")) return;
-            const workshopId = card.getAttribute("data-workshop-id") || "";
-            const url = card.getAttribute("data-workshop-url") || "";
-            if (url) {
-                state.workshopReturnContext = {
-                    fromTab: "version",
-                    workshopId,
-                    scrollTop: container.scrollTop
-                };
-                activateTab("workshop");
-                const webview = byId("workshopWebview");
-                if (webview) webview.loadURL(url);
-                const urlInput = byId("workshopUrl");
-                if (urlInput) urlInput.value = url;
-            }
-        });
-    }
     for (const btn of container.querySelectorAll("button[data-action='toggle-mod']")) {
         const actionState = btn.getAttribute("data-action-state") || "not-installed";
         applyInstalledHoverLabel(btn, actionState);
-        btn.addEventListener("click", () => {
-            const id = btn.getAttribute("data-workshop-id") || "";
-            const intent = btn.getAttribute("data-intent") === "uninstall" ? "uninstall" : "install";
-            void queueAction(id, intent, "version");
-        });
     }
+}
+
+function hookVersionCardDelegation() {
+    const container = byId("versionCards");
+    if (!container || container.getAttribute("data-events-bound") === "1") {
+        return;
+    }
+
+    container.setAttribute("data-events-bound", "1");
+    container.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const openDetailButton = target.closest("button[data-action='open-detail']");
+        if (openDetailButton && container.contains(openDetailButton)) {
+            const workshopId = openDetailButton.getAttribute("data-workshop-id") || "";
+            if (workshopId) {
+                void openDetailDrawer(workshopId);
+            }
+            return;
+        }
+
+        const toggleButton = target.closest("button[data-action='toggle-mod']");
+        if (toggleButton && container.contains(toggleButton)) {
+            const workshopId = toggleButton.getAttribute("data-workshop-id") || "";
+            const intent = toggleButton.getAttribute("data-intent") === "uninstall" ? "uninstall" : "install";
+            if (workshopId) {
+                void queueAction(workshopId, intent, "version");
+            }
+            return;
+        }
+
+        const card = target.closest(".mod-card");
+        if (!card || !container.contains(card)) {
+            return;
+        }
+
+        if (target.closest("button")) {
+            return;
+        }
+
+        const workshopId = card.getAttribute("data-workshop-id") || "";
+        const url = card.getAttribute("data-workshop-url") || "";
+        if (!url) {
+            return;
+        }
+
+        state.workshopReturnContext = {
+            fromTab: "version",
+            workshopId,
+            scrollTop: container.scrollTop
+        };
+
+        activateTab("workshop");
+        const webview = byId("workshopWebview");
+        if (webview) {
+            webview.loadURL(url);
+        }
+
+        const urlInput = byId("workshopUrl");
+        if (urlInput) {
+            urlInput.value = url;
+        }
+    });
 }
 
 function renderPager(result) {
@@ -597,6 +638,9 @@ async function refreshVersionOptions() {
 }
 
 async function refreshVersionResults() {
+    const requestSeq = state.versionRequestSeq + 1;
+    state.versionRequestSeq = requestSeq;
+
     setLoadingState(true);
     try {
         const result = await window.spikeApi.queryVersionMods({
@@ -607,15 +651,26 @@ async function refreshVersionResults() {
             page: state.page,
             pageSize: state.pageSize
         });
+
+        if (requestSeq !== state.versionRequestSeq) {
+            return;
+        }
+
         renderCards(result.cards);
         renderPager(result);
         setVersionStatus(result.statusText);
         if (state.activeDetailWorkshopId) void refreshDetailDrawer(state.activeDetailWorkshopId);
     } catch (error) {
+        if (requestSeq !== state.versionRequestSeq) {
+            return;
+        }
+
         const msg = error instanceof Error ? error.message : "Unknown error.";
         setVersionStatus(`Version browser failed: ${msg}`);
     } finally {
-        setLoadingState(false);
+        if (requestSeq === state.versionRequestSeq) {
+            setLoadingState(false);
+        }
     }
 }
 
@@ -1050,13 +1105,7 @@ function applyQueueSnapshot(snapshot) {
         })();
     }
 
-    const hasActiveWork = snapshot.hasActiveWork === true;
-    const finishedActiveWork = state.queueHadActiveWork && !hasActiveWork;
-    state.queueHadActiveWork = hasActiveWork;
-
-    if (finishedActiveWork && !state.isLoading && state.selectedTab === "version") {
-        void refreshVersionResults();
-    }
+    state.queueHadActiveWork = snapshot.hasActiveWork === true;
 }
 
 async function queueAction(workshopId, action, source = "version") {
@@ -1065,7 +1114,7 @@ async function queueAction(workshopId, action, source = "version") {
     if (source === "library") setLibraryStatus(result.message);
     else setVersionStatus(result.message);
     await refreshQueueSnapshot();
-    await refreshVersionResults();
+    if (state.activeDetailWorkshopId === workshopId) await refreshDetailDrawer(workshopId);
     if (source === "library") await refreshLibrarySnapshot();
 }
 
@@ -1073,7 +1122,6 @@ async function cancelQueueAction(workshopId) {
     const result = await window.spikeApi.cancelDownload(workshopId);
     setGlobalStatus(result.message);
     await refreshQueueSnapshot();
-    await refreshVersionResults();
     if (state.activeDetailWorkshopId === workshopId) await refreshDetailDrawer(workshopId);
 }
 
@@ -1081,7 +1129,7 @@ async function cancelAllQueueActions() {
     const result = await window.spikeApi.cancelAllDownloads();
     setGlobalStatus(result.message);
     await refreshQueueSnapshot();
-    await refreshVersionResults();
+    if (state.activeDetailWorkshopId) await refreshDetailDrawer(state.activeDetailWorkshopId);
 }
 
 async function clearQueueHistory(workshopIds) {
@@ -1593,7 +1641,84 @@ function formatConsensusLabel(value) {
         .join(" ");
 }
 
-function renderCommunityConsensus(mod) {
+function getDescriptorTagEntries(mod) {
+    const entries = [];
+    const seen = new Set();
+
+    for (const rawTag of mod?.tags || []) {
+        const label = String(rawTag || "").trim();
+        const key = normalizeTagKey(label);
+        if (!key || seen.has(key)) {
+            continue;
+        }
+
+        seen.add(key);
+        entries.push({ key, label });
+    }
+
+    return entries;
+}
+
+function getDescriptorTagKeySet(mod) {
+    const keys = new Set();
+    for (const entry of getDescriptorTagEntries(mod)) {
+        keys.add(entry.key);
+    }
+    return keys;
+}
+
+function updateDescriptorTagsToggle() {
+    const list = byId("libraryDetailTags");
+    const toggle = byId("libraryDetailTagsToggle");
+    if (!list || !toggle) {
+        return;
+    }
+
+    const hasChips = list.querySelector(".tag") !== null;
+    if (!hasChips) {
+        toggle.hidden = true;
+        return;
+    }
+
+    const overflowed = list.scrollHeight > (list.clientHeight + 1);
+    const shouldShowToggle = state.library.descriptorTagsExpanded || overflowed;
+    toggle.hidden = !shouldShowToggle;
+    toggle.textContent = state.library.descriptorTagsExpanded ? "Show less" : "Show all";
+}
+
+function renderDescriptorTags(mod) {
+    const tagsEl = byId("libraryDetailTags");
+    if (!tagsEl) {
+        return;
+    }
+
+    const descriptorTags = getDescriptorTagEntries(mod);
+    const trustedKeys = new Set(
+        (mod?.communityCompatibility?.tagConsensus || [])
+            .filter((entry) => entry.state === "trusted")
+            .map((entry) => normalizeTagKey(entry.tagKey || entry.tagLabel || ""))
+            .filter(Boolean)
+    );
+
+    if (descriptorTags.length === 0) {
+        tagsEl.innerHTML = "<span class='muted'>No tags.</span>";
+        tagsEl.classList.remove("is-clamped", "is-expanded");
+        updateDescriptorTagsToggle();
+        return;
+    }
+
+    tagsEl.innerHTML = descriptorTags.map((entry) => {
+        const overlapClass = trustedKeys.has(entry.key) ? " tag-overlap" : "";
+        const overlapTitle = trustedKeys.has(entry.key) ? " title=\"Also trusted by community\"" : "";
+        return `<span class=\"tag${overlapClass}\"${overlapTitle}>${escapeHtml(entry.label)}</span>`;
+    }).join("");
+
+    tagsEl.classList.toggle("is-expanded", state.library.descriptorTagsExpanded);
+    tagsEl.classList.toggle("is-clamped", !state.library.descriptorTagsExpanded);
+    updateDescriptorTagsToggle();
+}
+
+function renderCommunityConsensus(mod, descriptorTagKeys = new Set()) {
     const summary = mod?.communityCompatibility || null;
     const stateBadge = byId("feedbackStateBadge");
     const barWorks = byId("consensusBarWorks");
@@ -1670,9 +1795,14 @@ function renderCommunityConsensus(mod) {
 
     if (trustedTags.length > 0 && trustedSection && trustedList) {
         trustedSection.classList.remove("hidden");
-        trustedList.innerHTML = trustedTags.map((entry) =>
-            `<span class="feedback-trusted-tag">${escapeHtml(entry.tagLabel)} <span class="feedback-trusted-tag-confidence">${entry.confidencePercent}%</span></span>`
-        ).join("");
+        trustedList.innerHTML = trustedTags.map((entry) => {
+            const entryKey = normalizeTagKey(entry.tagKey || entry.tagLabel || "");
+            const overlapClass = descriptorTagKeys.has(entryKey) ? " is-overlap" : "";
+            const overlapBadge = descriptorTagKeys.has(entryKey)
+                ? "<span class=\"feedback-trusted-tag-overlap\">match</span>"
+                : "";
+            return `<span class=\"feedback-trusted-tag${overlapClass}\">${escapeHtml(entry.tagLabel)} <span class=\"feedback-trusted-tag-confidence\">${entry.confidencePercent}%</span>${overlapBadge}</span>`;
+        }).join("");
     } else if (trustedSection) {
         trustedSection.classList.add("hidden");
     }
@@ -1705,7 +1835,8 @@ function renderLibraryDetail(mod) {
     if (!mod) {
         if (empty) empty.classList.remove("hidden");
         if (detail) detail.classList.add("hidden");
-        renderCommunityConsensus(null);
+        renderDescriptorTags(null);
+        renderCommunityConsensus(null, new Set());
         renderLibraryReportTagList();
         renderSelectedTagsInfo();
         return;
@@ -1720,7 +1851,6 @@ function renderLibraryDetail(mod) {
     setText("libraryDetailSubscribers", `${formatInteger(mod.totalSubscribers)} subscribers`);
     setText("libraryDetailGameVersion", toDisplayValue(mod.gameVersion));
     setText("libraryDetailInstalledAt", formatUtc(mod.lastUpdatedAtUtc || mod.installedAtUtc));
-    setText("libraryDetailTags", mod.tags.length > 0 ? mod.tags.join(", ") : "No tags.");
     setText("libraryDetailDescription", mod.description || "No description available.");
 
     if (mpSafe) mpSafe.classList.toggle("hidden", !mod.isMultiplayerSafe);
@@ -1729,7 +1859,8 @@ function renderLibraryDetail(mod) {
     const updateBtn = byId("libraryActionUpdate");
     if (updateBtn) updateBtn.disabled = !mod.hasUpdate;
 
-    renderCommunityConsensus(mod);
+    renderDescriptorTags(mod);
+    renderCommunityConsensus(mod, getDescriptorTagKeySet(mod));
     renderLibraryReportTagList();
     renderSelectedTagsInfo();
 }
@@ -1752,6 +1883,7 @@ function renderLibraryList() {
 
     if (previousSelectedModId !== state.library.selectedModId) {
         restoreLibraryTagDraftForSelectedMod();
+        state.library.descriptorTagsExpanded = false;
     }
 
     list.innerHTML = mods.map((mod) => {
@@ -1782,134 +1914,223 @@ function renderLibraryList() {
             </article>`;
     }).join("\n");
 
-    // Event listeners
-    for (const row of list.querySelectorAll(".library-row")) {
-        row.addEventListener("click", () => {
-            const id = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
-            if (!Number.isFinite(id) || id <= 0) return;
-            if (state.library.selectedModId === id) {
-                return;
-            }
-
-            state.library.selectedModId = id;
-            restoreLibraryTagDraftForSelectedMod();
-            renderLibraryList();
-        });
-
-        // Drag and drop events
-        row.addEventListener("dragstart", (e) => {
-            if (row.getAttribute("draggable") !== "true") {
-                e.preventDefault();
-                return;
-            }
-            row.classList.add("is-dragging");
-            e.dataTransfer.effectAllowed = "move";
-            e.dataTransfer.setData("text/plain", row.getAttribute("data-mod-id"));
-            // Optional: set custom drag image if needed
-        });
-
-        row.addEventListener("dragend", () => {
-            row.classList.remove("is-dragging");
-            const allRows = list.querySelectorAll(".library-row");
-            for (const r of allRows) {
-                r.classList.remove("drag-over-top", "drag-over-bottom");
-            }
-        });
-
-        row.addEventListener("dragover", (e) => {
-            e.preventDefault(); // Necessary to allow dropping
-            if (row.getAttribute("draggable") !== "true") return;
-
-            const rect = row.getBoundingClientRect();
-            const midpoint = rect.top + rect.height / 2;
-
-            row.classList.remove("drag-over-top", "drag-over-bottom");
-            if (e.clientY < midpoint) {
-                row.classList.add("drag-over-top");
-            } else {
-                row.classList.add("drag-over-bottom");
-            }
-        });
-
-        row.addEventListener("dragleave", () => {
-            row.classList.remove("drag-over-top", "drag-over-bottom");
-        });
-
-        row.addEventListener("drop", async (e) => {
-            e.preventDefault();
-            row.classList.remove("drag-over-top", "drag-over-bottom");
-            if (row.getAttribute("draggable") !== "true") return;
-
-            const sourceIdStr = e.dataTransfer.getData("text/plain");
-            const sourceId = Number.parseInt(sourceIdStr, 10);
-            const targetId = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
-
-            if (!sourceId || !targetId || sourceId === targetId) return;
-
-            // Figure out the new index based on the enabled array
-            const enabledMods = state.library.snapshot.mods.filter((m) => m.isEnabled).sort((a, b) => a.loadOrder - b.loadOrder);
-
-            const rect = row.getBoundingClientRect();
-            const midpoint = rect.top + rect.height / 2;
-            const insertAfter = e.clientY >= midpoint;
-
-            let targetIndex = enabledMods.findIndex((m) => m.id === targetId);
-            if (targetIndex === -1) return;
-
-            // If we are dropping after, the apparent target index is offset by 1
-            if (insertAfter) {
-                targetIndex++;
-            }
-
-            // If the source was before the target, inserting shifts the array left by 1, so offset back
-            const sourceIndex = enabledMods.findIndex((m) => m.id === sourceId);
-            if (sourceIndex !== -1 && sourceIndex < targetIndex) {
-                targetIndex--;
-            }
-
-            const result = await window.spikeApi.reorderLibraryMod({ modId: sourceId, targetIndex: targetIndex });
-            setLibraryStatus(result.message);
-            await refreshLibrarySnapshot();
-        });
-    }
-
-    for (const input of list.querySelectorAll("input[data-action='toggle-enabled']")) {
-        input.addEventListener("click", (e) => e.stopPropagation());
-        input.addEventListener("change", async () => {
-            const id = Number.parseInt(input.getAttribute("data-mod-id") || "0", 10);
-            if (!Number.isFinite(id) || id <= 0) return;
-            const result = await window.spikeApi.setLibraryModEnabled({ modId: id, isEnabled: input.checked === true });
-            setLibraryStatus(result.message);
-            await refreshLibrarySnapshot();
-        });
-    }
-
-    for (const btn of list.querySelectorAll("button[data-action='move-up'], button[data-action='move-down']")) {
-        btn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            const id = Number.parseInt(btn.getAttribute("data-mod-id") || "0", 10);
-            if (!Number.isFinite(id) || id <= 0) return;
-            const dir = btn.getAttribute("data-action") === "move-up" ? "up" : "down";
-            const result = await window.spikeApi.moveLibraryMod({ modId: id, direction: dir });
-            setLibraryStatus(result.message);
-            await refreshLibrarySnapshot();
-        });
-    }
-
-    for (const btn of list.querySelectorAll("button[data-action='remove-mod']")) {
-        btn.addEventListener("click", async (e) => {
-            e.stopPropagation();
-            const id = Number.parseInt(btn.getAttribute("data-mod-id") || "0", 10);
-            if (!Number.isFinite(id) || id <= 0) return;
-            const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
-            if (!confirmed) return;
-            const result = await window.spikeApi.uninstallLibraryMod(id);
-            setLibraryStatus(result.message);
-            await refreshLibrarySnapshot();
-        });
-    }
-
     renderLibraryDetail(getSelectedLibraryMod());
+}
+
+function clearLibraryDragDecorations(list) {
+    for (const row of list.querySelectorAll(".library-row")) {
+        row.classList.remove("drag-over-top", "drag-over-bottom", "is-dragging");
+    }
+}
+
+async function handleLibraryDrop(list, row, clientY, sourceId) {
+    if (!row || row.getAttribute("draggable") !== "true") return;
+
+    const targetId = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+    if (!sourceId || !targetId || sourceId === targetId || !state.library.snapshot) return;
+
+    const enabledMods = state.library.snapshot.mods
+        .filter((m) => m.isEnabled)
+        .sort((a, b) => a.loadOrder - b.loadOrder);
+
+    const rect = row.getBoundingClientRect();
+    const midpoint = rect.top + rect.height / 2;
+    const insertAfter = clientY >= midpoint;
+
+    let targetIndex = enabledMods.findIndex((m) => m.id === targetId);
+    if (targetIndex === -1) return;
+
+    if (insertAfter) {
+        targetIndex++;
+    }
+
+    const sourceIndex = enabledMods.findIndex((m) => m.id === sourceId);
+    if (sourceIndex !== -1 && sourceIndex < targetIndex) {
+        targetIndex--;
+    }
+
+    const result = await window.spikeApi.reorderLibraryMod({ modId: sourceId, targetIndex });
+    setLibraryStatus(result.message);
+    await refreshLibrarySnapshot();
+    clearLibraryDragDecorations(list);
+}
+
+function hookLibraryListDelegation() {
+    const list = byId("libraryList");
+    if (!list || list.getAttribute("data-events-bound") === "1") {
+        return;
+    }
+
+    list.setAttribute("data-events-bound", "1");
+
+    list.addEventListener("click", async (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const toggleInput = target.closest("input[data-action='toggle-enabled']");
+        if (toggleInput) {
+            event.stopPropagation();
+            return;
+        }
+
+        const button = target.closest("button[data-action]");
+        if (button) {
+            event.stopPropagation();
+            const modId = Number.parseInt(button.getAttribute("data-mod-id") || "0", 10);
+            if (!Number.isFinite(modId) || modId <= 0) {
+                return;
+            }
+
+            const action = button.getAttribute("data-action") || "";
+            if (action === "move-up" || action === "move-down") {
+                const direction = action === "move-up" ? "up" : "down";
+                const result = await window.spikeApi.moveLibraryMod({ modId, direction });
+                setLibraryStatus(result.message);
+                await refreshLibrarySnapshot();
+                return;
+            }
+
+            if (action === "remove-mod") {
+                const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
+                if (!confirmed) return;
+                const result = await window.spikeApi.uninstallLibraryMod(modId);
+                setLibraryStatus(result.message);
+                await refreshLibrarySnapshot();
+            }
+
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row)) {
+            return;
+        }
+
+        const id = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+        if (!Number.isFinite(id) || id <= 0 || state.library.selectedModId === id) {
+            return;
+        }
+
+        state.library.selectedModId = id;
+        state.library.descriptorTagsExpanded = false;
+        restoreLibraryTagDraftForSelectedMod();
+        renderLibraryList();
+    });
+
+    list.addEventListener("change", async (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLInputElement)) {
+            return;
+        }
+
+        if (target.getAttribute("data-action") !== "toggle-enabled") {
+            return;
+        }
+
+        const id = Number.parseInt(target.getAttribute("data-mod-id") || "0", 10);
+        if (!Number.isFinite(id) || id <= 0) return;
+
+        const result = await window.spikeApi.setLibraryModEnabled({ modId: id, isEnabled: target.checked === true });
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    });
+
+    list.addEventListener("dragstart", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row)) {
+            return;
+        }
+
+        if (row.getAttribute("draggable") !== "true") {
+            event.preventDefault();
+            return;
+        }
+
+        const modId = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+        if (!Number.isFinite(modId) || modId <= 0) {
+            event.preventDefault();
+            return;
+        }
+
+        state.library.dragSourceModId = modId;
+        row.classList.add("is-dragging");
+        if (event.dataTransfer) {
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", String(modId));
+        }
+    });
+
+    list.addEventListener("dragend", () => {
+        state.library.dragSourceModId = null;
+        clearLibraryDragDecorations(list);
+    });
+
+    list.addEventListener("dragover", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row) || row.getAttribute("draggable") !== "true") {
+            return;
+        }
+
+        event.preventDefault();
+        clearLibraryDragDecorations(list);
+
+        const rect = row.getBoundingClientRect();
+        const midpoint = rect.top + rect.height / 2;
+        if (event.clientY < midpoint) {
+            row.classList.add("drag-over-top");
+        } else {
+            row.classList.add("drag-over-bottom");
+        }
+    });
+
+    list.addEventListener("dragleave", (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row)) {
+            return;
+        }
+
+        const related = event.relatedTarget;
+        if (related instanceof Element && row.contains(related)) {
+            return;
+        }
+
+        row.classList.remove("drag-over-top", "drag-over-bottom");
+    });
+
+    list.addEventListener("drop", async (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row)) {
+            return;
+        }
+
+        event.preventDefault();
+        const sourceIdRaw = event.dataTransfer?.getData("text/plain") || "";
+        const sourceId = Number.parseInt(sourceIdRaw || String(state.library.dragSourceModId || "0"), 10);
+        await handleLibraryDrop(list, row, event.clientY, sourceId);
+        state.library.dragSourceModId = null;
+    });
 }
 
 function renderLibraryProfiles() {
@@ -2261,9 +2482,12 @@ function initWorkshop() {
 
             await Promise.all([
                 refreshQueueSnapshot(),
-                refreshVersionResults(),
                 refreshLibrarySnapshot()
             ]);
+
+            if (state.activeDetailWorkshopId === workshopId) {
+                await refreshDetailDrawer(workshopId);
+            }
 
             const actionState = await getWorkshopOverlayActionState(workshopId);
             webview.send("smm-mod-state", { workshopId, actionState });
@@ -2333,6 +2557,8 @@ async function activateTabGuarded(name) {
    EVENT HOOKS
    ============================================================ */
 function hookVersionControls() {
+    hookVersionCardDelegation();
+
     byId("versionSelect")?.addEventListener("change", (e) => {
         state.selectedVersion = e.target.value;
         state.page = 1;
@@ -2457,6 +2683,8 @@ function hookSettingsControls() {
 }
 
 function hookLibraryControls() {
+    hookLibraryListDelegation();
+
     const closeOpenLibraryMenus = (exceptMenu = null) => {
         for (const menuEl of document.querySelectorAll("details.library-menu[open]")) {
             if (!(menuEl instanceof HTMLDetailsElement)) continue;
@@ -2497,6 +2725,11 @@ function hookLibraryControls() {
     byId("libraryEnabledOnly")?.addEventListener("change", (e) => {
         state.library.showEnabledOnly = e.target.checked === true;
         renderLibraryList();
+    });
+
+    byId("libraryDetailTagsToggle")?.addEventListener("click", () => {
+        state.library.descriptorTagsExpanded = !state.library.descriptorTagsExpanded;
+        renderDescriptorTags(getSelectedLibraryMod());
     });
 
     byId("libraryProfileSelect")?.addEventListener("change", async (e) => {

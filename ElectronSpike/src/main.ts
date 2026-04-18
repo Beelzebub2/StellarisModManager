@@ -6,6 +6,21 @@ import { logError, logInfo } from "./main/services/logger";
 
 let mainWindow: BrowserWindow | null = null;
 
+interface ElectronDataPaths {
+    userDataRoot: string;
+    sessionDataRoot: string;
+    chromiumCacheRoot: string;
+}
+
+function getLocalAppDataRoot(): string {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) {
+        return localAppData;
+    }
+
+    return path.join(app.getPath("temp"), "StellarisModManager", "LocalAppDataFallback");
+}
+
 function resolveAppWindowIconPath(): string | undefined {
     const candidates = [
         path.join(app.getAppPath(), "assets", "app.ico"),
@@ -22,18 +37,33 @@ function resolveAppWindowIconPath(): string | undefined {
     return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
-function configureWritableElectronDataPaths(): void {
-    const userDataRoot = path.join(app.getPath("appData"), "StellarisModManager", "ElectronSpike");
-    const sessionDataRoot = path.join(userDataRoot, "SessionData");
+function configureWritableElectronDataPaths(): ElectronDataPaths {
+    const localRoot = path.join(getLocalAppDataRoot(), "StellarisModManager", "ElectronSpike");
+    const userDataRoot = path.join(localRoot, "UserData");
+    const sessionDataRoot = path.join(localRoot, "SessionData");
+    const chromiumCacheRoot = path.join(sessionDataRoot, "ChromiumCache");
 
     fs.mkdirSync(userDataRoot, { recursive: true });
     fs.mkdirSync(sessionDataRoot, { recursive: true });
+    fs.mkdirSync(chromiumCacheRoot, { recursive: true });
 
     app.setPath("userData", userDataRoot);
     app.setPath("sessionData", sessionDataRoot);
+
+    // Keep cache writes in a known writable location and avoid shader disk-cache corruption churn.
+    app.commandLine.appendSwitch("disk-cache-dir", chromiumCacheRoot);
+    app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
+
+    return { userDataRoot, sessionDataRoot, chromiumCacheRoot };
 }
 
-configureWritableElectronDataPaths();
+const electronDataPaths = configureWritableElectronDataPaths();
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+    app.quit();
+    process.exit(0);
+}
 
 function getRendererEntryPath(): string {
     const candidates = [
@@ -124,6 +154,18 @@ app.on("activate", () => {
     }
 });
 
+app.on("second-instance", () => {
+    if (!mainWindow) {
+        return;
+    }
+
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+
+    mainWindow.focus();
+});
+
 app.on("web-contents-created", (_event, contents) => {
     contents.on("will-attach-webview", (_wae, webPreferences) => {
         webPreferences.preload = path.join(__dirname, "webviewPreload.js");
@@ -133,6 +175,9 @@ app.on("web-contents-created", (_event, contents) => {
 app.whenReady()
     .then(() => {
         app.setAppUserModelId("StellarisModManager.ElectronSpike");
+        logInfo(`Electron userData path: ${electronDataPaths.userDataRoot}`);
+        logInfo(`Electron sessionData path: ${electronDataPaths.sessionDataRoot}`);
+        logInfo(`Electron Chromium cache path: ${electronDataPaths.chromiumCacheRoot}`);
         registerIpcHandlers();
         createMainWindow();
         logInfo("Electron spike started.");
