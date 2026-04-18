@@ -91,15 +91,17 @@ pub fn run(
     let start = Instant::now();
 
     // Progress reporter thread
+    let stop_progress = Arc::new(AtomicBool::new(false));
     let downloaded_rp = downloaded.clone();
     let tx_rp = tx.clone();
+    let stop_progress_rp = stop_progress.clone();
     let cancel_rp = cancel.clone();
     let progress_handle = thread::spawn(move || {
         let mut last_dl: u64 = 0;
         let mut last_tick = Instant::now();
         let mut sent_eof = false;
         loop {
-            if cancel_rp.load(Ordering::Relaxed) {
+            if cancel_rp.load(Ordering::Relaxed) || stop_progress_rp.load(Ordering::Relaxed) {
                 break;
             }
             thread::sleep(Duration::from_millis(120));
@@ -171,8 +173,13 @@ pub fn run(
         }
     }
 
-    cancel.store(true, Ordering::Relaxed);
+    stop_progress.store(true, Ordering::Relaxed);
     let _ = progress_handle.join();
+
+    // Check if the user initiated a real cancellation
+    if cancel.load(Ordering::Relaxed) {
+        return Err("Update cancelled.".into());
+    }
 
     if !chunk_errors.is_empty() {
         return Err(chunk_errors.join("; "));
