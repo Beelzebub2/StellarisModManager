@@ -489,6 +489,31 @@ function applyInstalledHoverLabel(button, actionState) {
     button.onmouseleave = null;
 }
 
+function openWorkshopFromVersionCard(workshopId, workshopUrl, container) {
+    const url = String(workshopUrl || "").trim();
+    if (!url) {
+        return;
+    }
+
+    const scrollTop = container ? container.scrollTop : 0;
+    state.workshopReturnContext = {
+        fromTab: "version",
+        workshopId,
+        scrollTop
+    };
+
+    activateTab("workshop");
+    const webview = byId("workshopWebview");
+    if (webview) {
+        webview.loadURL(url);
+    }
+
+    const urlInput = byId("workshopUrl");
+    if (urlInput) {
+        urlInput.value = url;
+    }
+}
+
 function cardTemplate(card) {
     const safeName = escapeHtml(card.name);
     const thumbnail = card.previewImageUrl
@@ -498,7 +523,7 @@ function cardTemplate(card) {
 
     return `
         <article class="mod-card" data-workshop-id="${card.workshopId}" data-workshop-url="${escapeHtml(card.workshopUrl)}">
-            <button class="mod-thumb" type="button" data-action="open-detail" data-workshop-id="${card.workshopId}">
+            <button class="mod-thumb" type="button" data-action="open-workshop" data-workshop-id="${card.workshopId}" data-workshop-url="${escapeHtml(card.workshopUrl)}">
                 ${thumbnail}
             </button>
             <div class="mod-body">
@@ -557,11 +582,14 @@ function hookVersionCardDelegation() {
             return;
         }
 
-        const openDetailButton = target.closest("button[data-action='open-detail']");
-        if (openDetailButton && container.contains(openDetailButton)) {
-            const workshopId = openDetailButton.getAttribute("data-workshop-id") || "";
-            if (workshopId) {
-                void openDetailDrawer(workshopId);
+        const openWorkshopButton = target.closest("button[data-action='open-workshop'], button[data-action='open-detail']");
+        if (openWorkshopButton && container.contains(openWorkshopButton)) {
+            const workshopId = openWorkshopButton.getAttribute("data-workshop-id") || "";
+            const workshopUrl = openWorkshopButton.getAttribute("data-workshop-url")
+                || openWorkshopButton.closest(".mod-card")?.getAttribute("data-workshop-url")
+                || "";
+            if (workshopId && workshopUrl) {
+                openWorkshopFromVersionCard(workshopId, workshopUrl, container);
             }
             return;
         }
@@ -590,23 +618,7 @@ function hookVersionCardDelegation() {
         if (!url) {
             return;
         }
-
-        state.workshopReturnContext = {
-            fromTab: "version",
-            workshopId,
-            scrollTop: container.scrollTop
-        };
-
-        activateTab("workshop");
-        const webview = byId("workshopWebview");
-        if (webview) {
-            webview.loadURL(url);
-        }
-
-        const urlInput = byId("workshopUrl");
-        if (urlInput) {
-            urlInput.value = url;
-        }
+        openWorkshopFromVersionCard(workshopId, url, container);
     });
 }
 

@@ -33,6 +33,7 @@ pub struct UpdaterApp {
     rx: Receiver<UpdateEvent>,
     worker: Option<WorkerHandle>,
     state: UiState,
+    current_step: usize,
     started: Instant,
 }
 
@@ -49,6 +50,7 @@ impl UpdaterApp {
             rx,
             worker: Some(worker),
             state: UiState::Connecting,
+            current_step: 0,
             started: Instant::now(),
         }
     }
@@ -67,6 +69,7 @@ impl UpdaterApp {
         match ev {
             UpdateEvent::Phase(Phase::Connecting) => {
                 self.state = UiState::Connecting;
+                self.current_step = 0;
             }
             UpdateEvent::Phase(Phase::Downloading) => {
                 if !matches!(self.state, UiState::Downloading { .. }) {
@@ -77,12 +80,15 @@ impl UpdaterApp {
                         eta_secs: 0,
                     };
                 }
+                self.current_step = 1;
             }
             UpdateEvent::Phase(Phase::Verifying) => {
                 self.state = UiState::Verifying(0.0);
+                self.current_step = 2;
             }
             UpdateEvent::Phase(Phase::Launching) => {
                 self.state = UiState::Launching;
+                self.current_step = 3;
             }
             UpdateEvent::Phase(Phase::Installing) => {
                 if !matches!(self.state, UiState::Installing { .. }) {
@@ -91,6 +97,7 @@ impl UpdaterApp {
                         elapsed_secs: 0,
                     };
                 }
+                self.current_step = 4;
             }
             UpdateEvent::Progress {
                 downloaded,
@@ -104,9 +111,11 @@ impl UpdaterApp {
                     bytes_per_sec,
                     eta_secs,
                 };
+                self.current_step = 1;
             }
             UpdateEvent::VerifyProgress(p) => {
                 self.state = UiState::Verifying(p);
+                self.current_step = 2;
             }
             UpdateEvent::InstallProgress {
                 progress,
@@ -116,11 +125,13 @@ impl UpdaterApp {
                     progress: progress.clamp(0.0, 1.0),
                     elapsed_secs,
                 };
+                self.current_step = 4;
             }
             UpdateEvent::Done => {
                 self.state = UiState::Done {
                     auto_close_at: Instant::now() + Duration::from_secs(3),
                 };
+                self.current_step = 5;
             }
             UpdateEvent::Failed(msg) => {
                 self.state = UiState::Failed(msg);
@@ -134,9 +145,19 @@ impl eframe::App for UpdaterApp {
         self.drain_events();
         ctx.request_repaint_after(Duration::from_millis(60));
 
+        egui::SidePanel::left("steps_panel")
+            .frame(egui::Frame::none().fill(theme::BG_1).inner_margin(Margin::symmetric(14.0, 20.0)).stroke(Stroke::new(0.0, Color32::TRANSPARENT)))
+            .exact_width(220.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                render_steps_sidebar(ui, self);
+            });
+
         egui::CentralPanel::default()
-            .frame(egui::Frame::none().fill(theme::BG_BASE).inner_margin(0.0))
-            .show(ctx, |ui| render_window(ui, self, frame));
+            .frame(egui::Frame::none().fill(theme::BG_BASE).inner_margin(Margin::symmetric(24.0, 24.0)))
+            .show(ctx, |ui| {
+                render_main_content(ui, self, frame);
+            });
 
         // Auto-close after Done
         if let UiState::Done { auto_close_at } = self.state {
@@ -163,66 +184,114 @@ impl eframe::App for UpdaterApp {
     }
 }
 
-fn render_window(ui: &mut egui::Ui, app: &mut UpdaterApp, frame: &mut eframe::Frame) {
-    render_custom_topbar(ui);
-
-    // Outer padded container for a "card" feel on top of BG_BASE.
-    egui::Frame::none()
-        .inner_margin(Margin::symmetric(20.0, 12.0))
-        .show(ui, |ui| {
+fn render_main_content(ui: &mut egui::Ui, app: &mut UpdaterApp, frame: &mut eframe::Frame) {
+    egui::TopBottomPanel::top("main_header")
+        .frame(egui::Frame::none().inner_margin(Margin::same(0.0)))
+        .show_inside(ui, |ui| {
             render_header(ui, app);
-            ui.add_space(10.0);
-            render_body(ui, app);
-            ui.add_space(10.0);
+            ui.add_space(16.0);
+        });
+
+    egui::TopBottomPanel::bottom("main_footer")
+        .frame(egui::Frame::none().inner_margin(Margin::same(0.0)))
+        .show_inside(ui, |ui| {
+            ui.add_space(16.0);
             render_footer(ui, app, frame);
+        });
+
+    egui::CentralPanel::default()
+        .frame(egui::Frame::none().inner_margin(Margin::symmetric(0.0, 16.0)))
+        .show_inside(ui, |ui| {
+            render_body(ui, app);
         });
 }
 
-fn render_custom_topbar(ui: &mut egui::Ui) {
-    let bar_height = 34.0;
-    let bar_width = ui.available_width().max(0.0);
-    let (bar_rect, drag_response) = ui.allocate_exact_size(
-        egui::vec2(bar_width, bar_height),
-        egui::Sense::click_and_drag(),
-    );
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum StepStatus {
+    Done,
+    Active,
+    Pending,
+    Failed,
+}
 
-    ui.painter().rect_filled(bar_rect, Rounding::same(0.0), theme::BG_1);
-    ui.painter().line_segment(
-        [bar_rect.left_bottom(), bar_rect.right_bottom()],
-        Stroke::new(1.0, theme::BORDER),
-    );
+const UPDATE_STEPS: [&str; 6] = [
+    "Connecting",
+    "Downloading",
+    "Verifying",
+    "Launching installer",
+    "Installing",
+    "Completed",
+];
 
-    if drag_response.dragged() || drag_response.drag_started() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+fn step_status_for(app: &UpdaterApp, idx: usize) -> StepStatus {
+    let current = app.current_step.min(UPDATE_STEPS.len().saturating_sub(1));
+
+    if matches!(app.state, UiState::Done { .. }) {
+        return StepStatus::Done;
     }
 
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .max_rect(bar_rect.shrink2(egui::vec2(8.0, 3.0)))
-            .layout(Layout::left_to_right(Align::Center)),
-        |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("Stellaris Mod Manager Updater")
-                        .color(theme::TEXT_MUTED)
-                        .font(FontId::proportional(12.0)),
-                );
+    if matches!(app.state, UiState::Failed(_)) {
+        if idx < current {
+            return StepStatus::Done;
+        }
+        if idx == current {
+            return StepStatus::Failed;
+        }
+        return StepStatus::Pending;
+    }
 
-                let remaining = ui.available_width();
-                if remaining > 0.0 {
-                    ui.add_space(remaining);
-                }
+    if idx < current {
+        StepStatus::Done
+    } else if idx == current {
+        StepStatus::Active
+    } else {
+        StepStatus::Pending
+    }
+}
 
-                if chrome_button(ui, "-").clicked() {
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-                if chrome_button(ui, "X").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-        },
+fn render_steps_sidebar(ui: &mut egui::Ui, app: &UpdaterApp) {
+    ui.label(
+        RichText::new("Update Steps")
+            .color(theme::TEXT_STRONG)
+            .font(FontId::proportional(14.0))
+            .strong(),
     );
+    ui.add_space(12.0);
+
+    for (idx, label) in UPDATE_STEPS.iter().enumerate() {
+        let status = step_status_for(app, idx);
+        let (dot_color, text_color) = match status {
+            StepStatus::Done => (theme::SUCCESS, theme::TEXT_STRONG),
+            StepStatus::Active => (theme::ACCENT, theme::ACCENT_HOVER),
+            StepStatus::Pending => (theme::TEXT_DIM, theme::TEXT_MUTED),
+            StepStatus::Failed => (theme::DANGER, theme::DANGER),
+        };
+
+        let row_fill = if status == StepStatus::Active {
+            theme::ACCENT_SOFT
+        } else {
+            Color32::TRANSPARENT
+        };
+
+        egui::Frame::none()
+            .fill(row_fill)
+            .rounding(Rounding::same(6.0))
+            .inner_margin(Margin::symmetric(8.0, 8.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 5.0, dot_color);
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(*label)
+                            .color(text_color)
+                            .font(FontId::proportional(13.0))
+                            .strong(),
+                    );
+                });
+            });
+        ui.add_space(4.0);
+    }
 }
 
 fn render_header(ui: &mut egui::Ui, app: &UpdaterApp) {
@@ -258,9 +327,10 @@ fn render_body(ui: &mut egui::Ui, app: &UpdaterApp) {
         .fill(theme::BG_1)
         .stroke(Stroke::new(1.0, theme::BORDER))
         .rounding(Rounding::same(10.0))
-        .inner_margin(Margin::symmetric(16.0, 12.0))
+        .inner_margin(Margin::symmetric(20.0, 16.0))
         .show(ui, |ui| {
-            ui.set_min_height(108.0);
+            ui.set_min_height(ui.available_height());
+            ui.set_width(ui.available_width());
             match &app.state {
                 UiState::Connecting => render_connecting(ui),
                 UiState::Downloading {
@@ -314,42 +384,54 @@ fn render_downloading(
         progress_bar(ui, pct);
 
         ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            let left = format!(
-                "{} / {}",
-                format_bytes(downloaded),
-                if total > 0 {
-                    format_bytes(total)
-                } else {
-                    "—".to_string()
-                }
-            );
+        let left = format!(
+            "{} / {}",
+            format_bytes(downloaded),
+            if total > 0 {
+                format_bytes(total)
+            } else {
+                "—".to_string()
+            }
+        );
+
+        let right = if total > 0 {
+            format!(
+                "{:.0}%  ·  {}/s  ·  ETA {}",
+                pct * 100.0,
+                format_bytes(bytes_per_sec.max(0.0) as u64),
+                format_eta(eta_secs)
+            )
+        } else {
+            format!("{}/s", format_bytes(bytes_per_sec.max(0.0) as u64))
+        };
+
+        if ui.available_width() >= 560.0 {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&left)
+                        .color(theme::TEXT_STRONG)
+                        .font(FontId::proportional(12.5)),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(&right)
+                            .color(theme::TEXT_MUTED)
+                            .font(FontId::proportional(12.0)),
+                    );
+                });
+            });
+        } else {
             ui.label(
                 RichText::new(left)
                     .color(theme::TEXT_STRONG)
                     .font(FontId::proportional(12.5)),
             );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let right = if total > 0 {
-                    format!(
-                        "{:.0}%  ·  {}/s  ·  ETA {}",
-                        pct * 100.0,
-                        format_bytes(bytes_per_sec.max(0.0) as u64),
-                        format_eta(eta_secs)
-                    )
-                } else {
-                    format!(
-                        "{}/s",
-                        format_bytes(bytes_per_sec.max(0.0) as u64)
-                    )
-                };
-                ui.label(
-                    RichText::new(right)
-                        .color(theme::TEXT_MUTED)
-                        .font(FontId::proportional(12.0)),
-                );
-            });
-        });
+            ui.label(
+                RichText::new(right)
+                    .color(theme::TEXT_MUTED)
+                    .font(FontId::proportional(12.0)),
+            );
+        }
     });
 }
 
@@ -439,40 +521,56 @@ fn render_footer(ui: &mut egui::Ui, app: &mut UpdaterApp, frame: &mut eframe::Fr
     let is_failed = matches!(app.state, UiState::Failed(_));
     let is_done = matches!(app.state, UiState::Done { .. });
 
-    ui.horizontal(|ui| {
-        ui.label(
-            RichText::new(elapsed_label(app.started))
-                .color(theme::TEXT_DIM)
-                .font(FontId::proportional(11.0)),
-        );
-
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if is_failed {
-                if primary_button(ui, "Close").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+    let render_actions = |ui: &mut egui::Ui| {
+        if is_failed {
+            if primary_button(ui, "Close").clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ui.add_space(8.0);
+            if let Some(url) = app.cli.release_url.clone() {
+                if secondary_button(ui, "Download manually").clicked() {
+                    install::open_in_browser(&url);
                 }
                 ui.add_space(8.0);
-                if let Some(url) = app.cli.release_url.clone() {
-                    if secondary_button(ui, "Download manually").clicked() {
-                        install::open_in_browser(&url);
-                    }
-                    ui.add_space(8.0);
-                }
-            } else if is_done {
-                if primary_button(ui, "Close").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            } else {
-                if secondary_button(ui, "Cancel").clicked() {
-                    if let Some(h) = app.worker.as_ref() {
-                        h.cancel
-                            .store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
             }
+        } else if is_done {
+            if primary_button(ui, "Close").clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        } else if secondary_button(ui, "Cancel").clicked() {
+            if let Some(h) = app.worker.as_ref() {
+                h.cancel
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    };
+
+    if ui.available_width() >= 520.0 {
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(elapsed_label(app.started))
+                    .color(theme::TEXT_DIM)
+                    .font(FontId::proportional(11.0)),
+            );
+
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                render_actions(ui);
+            });
         });
-    });
+    } else {
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new(elapsed_label(app.started))
+                    .color(theme::TEXT_DIM)
+                    .font(FontId::proportional(11.0)),
+            );
+            ui.add_space(8.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                render_actions(ui);
+            });
+        });
+    }
     let _ = frame;
 }
 
@@ -552,20 +650,6 @@ fn primary_button(ui: &mut egui::Ui, text: &str) -> Response {
     .stroke(Stroke::new(1.0, theme::ACCENT_BORDER))
     .rounding(Rounding::same(7.0))
     .min_size(egui::vec2(96.0, 32.0));
-    ui.add(btn)
-}
-
-fn chrome_button(ui: &mut egui::Ui, text: &str) -> Response {
-    let btn = egui::Button::new(
-        RichText::new(text)
-            .color(theme::TEXT_STRONG)
-            .font(FontId::proportional(11.5))
-            .strong(),
-    )
-    .fill(theme::BG_2)
-    .stroke(Stroke::new(1.0, theme::BORDER))
-    .rounding(Rounding::same(6.0))
-    .min_size(egui::vec2(24.0, 22.0));
     ui.add(btn)
 }
 

@@ -49,11 +49,10 @@ fn main() -> eframe::Result<()> {
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Stellaris Mod Manager — Update")
-        .with_inner_size([660.0, 420.0])
-        .with_min_inner_size([660.0, 420.0])
-        .with_resizable(false)
-        .with_decorations(false)
-        .with_maximize_button(false);
+        .with_inner_size([780.0, 500.0])
+        .with_min_inner_size([560.0, 360.0])
+        .with_resizable(true)
+        .with_decorations(true);
 
     if let Some(icon) = load_window_icon() {
         viewport = viewport.with_icon(icon);
