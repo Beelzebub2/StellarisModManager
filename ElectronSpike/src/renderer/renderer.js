@@ -26,6 +26,8 @@ const state = {
     stellarisyncPollingHandle: null,
     workshopMouseNavHooked: false,
     workshopReturnContext: null,
+    tabHistory: [],
+    tabForwardStack: [],
     queueHadActiveWork: false,
     queueRowsByWorkshopId: new Map(),
     queueSnapshot: null,
@@ -2529,7 +2531,15 @@ function initWorkshop() {
 /* ============================================================
    TAB NAVIGATION
    ============================================================ */
+let suppressTabHistoryRecord = false;
+
 function activateTab(name) {
+    const prev = state.selectedTab;
+    if (!suppressTabHistoryRecord && prev && prev !== name) {
+        state.tabHistory.push(prev);
+        if (state.tabHistory.length > 50) state.tabHistory.shift();
+        state.tabForwardStack.length = 0;
+    }
     state.selectedTab = name;
 
     const tabs = { version: "tabVersion", library: "tabLibrary", workshop: "tabWorkshop", settings: "tabSettings" };
@@ -2563,6 +2573,40 @@ async function activateTabGuarded(name) {
 
     activateTab(name);
     return true;
+}
+
+async function navigateTabHistoryBack() {
+    if (state.tabHistory.length === 0) return false;
+    const current = state.selectedTab;
+    const target = state.tabHistory[state.tabHistory.length - 1];
+    suppressTabHistoryRecord = true;
+    try {
+        const ok = await activateTabGuarded(target);
+        if (ok) {
+            state.tabHistory.pop();
+            state.tabForwardStack.push(current);
+        }
+        return ok;
+    } finally {
+        suppressTabHistoryRecord = false;
+    }
+}
+
+async function navigateTabHistoryForward() {
+    if (state.tabForwardStack.length === 0) return false;
+    const current = state.selectedTab;
+    const target = state.tabForwardStack[state.tabForwardStack.length - 1];
+    suppressTabHistoryRecord = true;
+    try {
+        const ok = await activateTabGuarded(target);
+        if (ok) {
+            state.tabForwardStack.pop();
+            state.tabHistory.push(current);
+        }
+        return ok;
+    } finally {
+        suppressTabHistoryRecord = false;
+    }
 }
 
 /* ============================================================
@@ -3127,6 +3171,32 @@ function hookGlobalControls() {
         e.preventDefault();
         e.returnValue = "";
     });
+
+    const handleMouseNavButton = (e) => {
+        if (e.button !== 3 && e.button !== 4) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type !== "mouseup") return;
+
+        if (state.selectedTab === "workshop") {
+            const webview = byId("workshopWebview");
+            if (e.button === 3) {
+                if (restoreVersionTabFromWorkshopContext()) return;
+                if (webview?.canGoBack?.()) { webview.goBack(); return; }
+            } else if (e.button === 4) {
+                if (webview?.canGoForward?.()) { webview.goForward(); return; }
+            }
+        }
+
+        if (e.button === 3) {
+            void navigateTabHistoryBack();
+        } else {
+            void navigateTabHistoryForward();
+        }
+    };
+    window.addEventListener("mousedown", handleMouseNavButton);
+    window.addEventListener("mouseup", handleMouseNavButton);
+    window.addEventListener("auxclick", handleMouseNavButton);
 }
 
 /* ============================================================
