@@ -216,6 +216,50 @@ pub fn schedule_self_delete(cleanup_root: &Path) {
     }
 }
 
+/// Blocks until the process with `pid` has exited, or `timeout_ms` elapses.
+///
+/// On Windows this uses `OpenProcess` + `WaitForSingleObject` — a reliable,
+/// zero-overhead wait that doesn't require any additional crates.
+/// On non-Windows platforms we fall back to polling `/proc/<pid>` every 200 ms.
+pub fn wait_for_pid_exit(pid: u32, timeout_ms: u32) {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+
+        extern "system" {
+            fn OpenProcess(desired_access: u32, inherit_handle: i32, process_id: u32) -> *mut c_void;
+            fn WaitForSingleObject(handle: *mut c_void, milliseconds: u32) -> u32;
+            fn CloseHandle(handle: *mut c_void) -> i32;
+        }
+
+        // SYNCHRONIZE lets us wait on the handle but nothing else.
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+
+        let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if handle.is_null() {
+            // Process already gone, or we don't have permission — either way fine.
+            return;
+        }
+
+        unsafe {
+            WaitForSingleObject(handle, timeout_ms);
+            CloseHandle(handle);
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms as u64);
+        while std::time::Instant::now() < deadline {
+            if !std::path::Path::new(&format!("/proc/{}", pid)).exists() {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+}
+
 pub fn open_in_browser(url: &str) {
     log::info(&format!("opening browser: {url}"));
     #[cfg(windows)]

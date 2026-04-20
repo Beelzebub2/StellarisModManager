@@ -222,6 +222,7 @@ export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppU
         args.push("--release-url", release.releaseUrl);
     }
     args.push("--app-exe", app.getPath("exe"));
+    args.push("--app-pid", String(process.pid));
     args.push("--cleanup-root", cleanupRoot);
 
     try {
@@ -232,14 +233,24 @@ export async function startAppUpdate(release: AppReleaseInfo): Promise<StartAppU
             cwd: path.dirname(stagedUpdaterPath)
         });
         child.unref();
-        logInfo(`Spawned updater: ${stagedUpdaterPath} (pid=${child.pid ?? "?"})`);
+        logInfo(`Spawned updater: ${stagedUpdaterPath} (pid=${child.pid ?? "?"}) app-pid=${process.pid}`);
     } catch (error) {
         const msg = error instanceof Error ? error.message : "Unknown error";
         logError(`Failed to spawn updater: ${msg}`);
         return { ok: false, message: `Failed to start updater: ${msg}` };
     }
 
-    // Give the updater a moment to draw its window before the app vanishes.
-    setTimeout(() => app.quit(), 600);
+    // Give the IPC response a moment to reach the renderer before the process
+    // exits, then terminate unconditionally via app.exit(0).
+    //
+    // We use app.exit(0) rather than app.quit() because app.quit() runs the
+    // full Electron lifecycle (before-quit → will-quit → window-all-closed)
+    // which can be delayed or blocked by listeners.  If the main exe is still
+    // locked when the Inno Setup installer tries to replace it, Windows file-
+    // locking will cause the installer to either fail silently or skip the
+    // replacement, leaving the old binary in place.  app.exit(0) exits
+    // immediately and unconditionally, freeing the file lock without racing
+    // against event handlers.
+    setTimeout(() => app.exit(0), 250);
     return { ok: true, message: "Updater launched." };
 }

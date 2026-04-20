@@ -83,7 +83,23 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     }
 
     let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
-    std::thread::sleep(std::time::Duration::from_millis(350));
+
+    // Wait for the main app process to exit before invoking the installer.
+    // If the exe is still locked when Inno Setup tries to replace it, Windows
+    // file-locking will cause the installation to silently fail and the user
+    // will relaunch into the old binary.  We block here (up to 15 s) until
+    // the PID disappears, then give the OS a brief moment to fully release
+    // all file handles before touching the directory.
+    if let Some(pid) = cli.app_pid {
+        log::info(&format!(
+            "waiting for app PID {pid} to exit before running installer…"
+        ));
+        install::wait_for_pid_exit(pid, 15_000);
+        log::info("app process exited (or timed out); proceeding with installer");
+    }
+
+    // Small buffer after PID exit to let the OS flush any pending file handles.
+    std::thread::sleep(std::time::Duration::from_millis(400));
 
     let mut installer = match install::launch_background(&dl.file_path) {
         Ok(p) => p,

@@ -27,6 +27,12 @@ pub struct Cli {
     #[arg(long)]
     pub app_exe: Option<String>,
 
+    /// PID of the app process to wait for before running the installer.
+    /// The updater will block until this process exits (or up to 15 s) so
+    /// the exe lock is released before Inno Setup tries to replace it.
+    #[arg(long)]
+    pub app_pid: Option<u32>,
+
     /// Temporary updater root to delete after this process exits.
     #[arg(long)]
     pub cleanup_root: Option<String>,
