@@ -937,60 +937,7 @@ function shouldUseSteamworks(): boolean {
 }
 
 async function runInstallBatch(firstEntry: { workshopId: string; modName: string; action: "install" | "uninstall" }): Promise<void> {
-<<<<<<< codex/fix-steamworks-download-failure
     const runtime = resolveEffectiveRuntime();
-=======
-    // --- Steamworks path: used when runtime is "Steamworks" or "Auto" (with Steam available) ---
-    if (shouldUseSteamworks()) {
-        const job: RunningJob = {
-            workshopId: firstEntry.workshopId,
-            action: "install",
-            process: null,
-            cancelled: false,
-            sharedProcess: false
-        };
-
-        runningJobs.set(firstEntry.workshopId, job);
-        actionStates.set(firstEntry.workshopId, "installing");
-        upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", 3, "Requesting download from Steam...");
-        logInfo(`Steamworks: install for ${firstEntry.workshopId}`);
-
-        const result = await runSteamworksInstall(firstEntry, job, (progress, message) => {
-            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", progress, message);
-        });
-
-        if (job.cancelled) {
-            actionStates.set(firstEntry.workshopId, "not-installed");
-            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "cancelled", 0, "Install cancelled.");
-        } else if (result.ok) {
-            actionStates.set(firstEntry.workshopId, "installed");
-            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "completed", 100, result.message);
-        } else {
-            // Steamworks failed — try SteamCMD as fallback for this single item
-            logError(`Steamworks install failed for ${firstEntry.workshopId}: ${result.message}. Falling back to SteamCMD.`);
-            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", 3, `Steamworks unavailable, retrying via SteamCMD...`);
-            const fallbackResult = await runSteamCmdDownloadBatch([firstEntry], new Map([[firstEntry.workshopId, job]]), (workshopId, progress, message) => {
-                upsertQueueItem(workshopId, firstEntry.modName, "install", "running", progress, message);
-            });
-            const fallback = fallbackResult.get(firstEntry.workshopId) ?? { ok: false, installPath: "", message: "Unknown error." };
-            if (job.cancelled) {
-                actionStates.set(firstEntry.workshopId, "not-installed");
-                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "cancelled", 0, "Install cancelled.");
-            } else if (fallback.ok) {
-                actionStates.set(firstEntry.workshopId, "installed");
-                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "completed", 100, fallback.message);
-            } else {
-                actionStates.set(firstEntry.workshopId, "error");
-                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "failed", 0, fallback.message);
-            }
-        }
-
-        runningJobs.delete(firstEntry.workshopId);
-        return;
-    }
-
-    // --- SteamCMD fallback path: batch up to MAX_STEAMCMD_BATCH_ITEMS per process ---
->>>>>>> master
     const entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }> = [firstEntry];
 
     while (entries.length < MAX_STEAMCMD_BATCH_ITEMS && queuePending.length > 0) {
