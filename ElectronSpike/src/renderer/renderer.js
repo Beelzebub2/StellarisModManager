@@ -376,13 +376,27 @@ function showPrompt(title, message, defaultValue = "") {
             if (input) input.focus();
         }, 50);
 
+        const handleKeyDown = (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                const input = byId("modalInput");
+                cleanup(input ? input.value.trim() : null);
+                return;
+            }
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                cleanup(null);
+            }
+        };
+
         function cleanup(result) {
             if (overlay) overlay.classList.add("hidden");
             if (extra) extra.innerHTML = "";
             if (confirmBtn) confirmBtn.onclick = null;
             if (cancelBtn) cancelBtn.onclick = null;
             if (backdrop) backdrop.onclick = null;
-            if (inputEl) inputEl.removeEventListener("keydown", handleInputKeydown);
+            document.removeEventListener("keydown", handleKeyDown, true);
             resolve(result);
         }
 
@@ -391,6 +405,7 @@ function showPrompt(title, message, defaultValue = "") {
         };
         if (cancelBtn) cancelBtn.onclick = () => cleanup(null);
         if (backdrop) backdrop.onclick = () => cleanup(null);
+        document.addEventListener("keydown", handleKeyDown, true);
     });
 }
 
@@ -3107,14 +3122,14 @@ function hookLibraryControls() {
     byId("libraryUseSharedId")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
-        const sharedId = await showPrompt(
-            "Use Shared Profile ID",
-            "Paste the shared profile ID to use for this profile:",
-            active.sharedProfileId || ""
-        );
-        if (sharedId === null) return;
-        if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
         try {
+            const sharedId = await showPrompt(
+                "Use Shared Profile ID",
+                "Paste the shared profile ID to use for this profile:",
+                active.sharedProfileId || ""
+            );
+            if (sharedId === null) return;
+            if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
             const syncResult = await window.spikeApi.syncLibrarySharedProfile({
                 profileId: active.id,
                 sharedProfileId: sharedId
@@ -3122,51 +3137,30 @@ function hookLibraryControls() {
             setLibraryStatus(syncResult.message);
             await refreshLibrarySnapshot();
 
-            if (!syncResult.ok) {
-                return;
-            }
-
-            const missingWorkshopIds = Array.isArray(syncResult.missingWorkshopIds)
-                ? syncResult.missingWorkshopIds.filter((id) => isValidWorkshopId(normalizeWorkshopId(id)))
+            const missingWorkshopIds = Array.isArray(syncResult?.missingWorkshopIds)
+                ? syncResult.missingWorkshopIds
                 : [];
-
-            const syncedWorkshopIds = (state.library.snapshot?.mods || [])
-                .filter((mod) => mod.isEnabled)
-                .map((mod) => normalizeWorkshopId(mod.workshopId))
-                .filter((id) => isValidWorkshopId(id));
-
-            const installCandidates = Array.from(new Set([...syncedWorkshopIds, ...missingWorkshopIds]));
-            if (installCandidates.length <= 0) {
+            if (!syncResult.ok || missingWorkshopIds.length <= 0) {
                 return;
             }
 
             const profileLabel = syncResult.profileName
                 ? `shared profile '${syncResult.profileName}'`
                 : "the shared profile";
-            const missingCount = missingWorkshopIds.length;
-            const knownCount = Math.max(installCandidates.length - missingCount, 0);
-
-            let promptMessage = `${installCandidates.length} mod(s) from ${profileLabel} can be installed for this profile. Queue installs now?`;
-            if (missingCount > 0 && knownCount > 0) {
-                promptMessage = `${installCandidates.length} mod(s) from ${profileLabel} can be installed (${missingCount} missing locally, ${knownCount} already known). Queue installs now?`;
-            } else if (missingCount > 0) {
-                promptMessage = `${missingCount} mod(s) from ${profileLabel} are missing locally. Queue installs now?`;
-            }
-
             const shouldInstall = await showModal(
-                "Install Profile Mods",
-                promptMessage,
+                "Install Missing Mods",
+                `${missingWorkshopIds.length} mod(s) from ${profileLabel} are missing locally. Queue them for install now?`,
                 "Queue installs",
                 "Not now"
             );
             if (!shouldInstall) {
-                setLibraryStatus(`${installCandidates.length} profile mod(s) not queued.`);
+                setLibraryStatus(`${missingWorkshopIds.length} missing mod(s) not queued.`);
                 return;
             }
 
             let queuedCount = 0;
             let skippedCount = 0;
-            for (const workshopId of installCandidates) {
+            for (const workshopId of missingWorkshopIds) {
                 const queueResult = await window.spikeApi.queueDownload({
                     workshopId,
                     modName: workshopId,
@@ -3184,18 +3178,18 @@ function hookLibraryControls() {
             }
 
             if (queuedCount > 0 && skippedCount > 0) {
-                setLibraryStatus(`Queued ${queuedCount} profile mod(s); skipped ${skippedCount}.`);
+                setLibraryStatus(`Queued ${queuedCount} missing mod(s); skipped ${skippedCount}.`);
                 return;
             }
 
             if (queuedCount > 0) {
-                setLibraryStatus(`Queued ${queuedCount} profile mod(s) for installation.`);
+                setLibraryStatus(`Queued ${queuedCount} missing mod(s) for installation.`);
                 return;
             }
 
-            setLibraryStatus("Profile mods were not queued (they may already be queued or invalid).");
+            setLibraryStatus("Missing mods were not queued (they may already be queued or invalid).");
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Unknown shared profile sync error";
+            const message = error instanceof Error ? error.message : String(error);
             setLibraryStatus(`Failed to sync shared profile: ${message}`);
         }
     });

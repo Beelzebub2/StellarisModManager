@@ -107,6 +107,8 @@ interface SyncModRow {
     WorkshopId: string;
     IsEnabled: number;
     LoadOrder: number;
+    InstalledPath?: string;
+    DescriptorPath?: string;
 }
 
 const updateFlagsByWorkshopId = new Map<string, boolean>();
@@ -1166,9 +1168,12 @@ export async function syncLibrarySharedProfile(
 
         const remoteProfile = await fetchSharedProfile(sharedProfileId);
         const remoteMods = normalizeSharedProfileMods(remoteProfile.mods);
+        const settings = loadSettingsSnapshot();
+        const modsPath = settings?.modsPath?.trim() || getDefaultModsDirectory();
+        const workshopRoots = getWorkshopContentRoots(settings?.steamCmdDownloadPath);
         const localRows = db
             .prepare(
-                `SELECT Id, ${workshopColumn} AS WorkshopId, IsEnabled, LoadOrder
+                `SELECT Id, ${workshopColumn} AS WorkshopId, IsEnabled, LoadOrder, InstalledPath, DescriptorPath
                  FROM Mods`
             )
             .all() as SyncModRow[];
@@ -1187,7 +1192,7 @@ export async function syncLibrarySharedProfile(
 
         for (const workshopId of remoteMods) {
             const local = localByWorkshopId.get(workshopId);
-            if (!local) {
+            if (!local || !isWorkshopModInstalledLocally(workshopId, local, modsPath, workshopRoots)) {
                 missingWorkshopIds.push(workshopId);
                 continue;
             }
@@ -2007,6 +2012,49 @@ function resolveInstalledPath(
     }
 
     return "";
+}
+
+function isWorkshopModInstalledLocally(
+    workshopId: string,
+    localRow: SyncModRow | undefined,
+    modsPath: string,
+    workshopRoots: string[]
+): boolean {
+    const normalizedId = sanitizeWorkshopId(workshopId);
+    if (!isValidWorkshopId(normalizedId)) {
+        return false;
+    }
+
+    const candidatePaths: string[] = [];
+    const installedPath = (localRow?.InstalledPath ?? "").trim();
+    const descriptorPath = (localRow?.DescriptorPath ?? "").trim();
+
+    if (installedPath) {
+        candidatePaths.push(installedPath);
+    }
+    if (descriptorPath) {
+        candidatePaths.push(descriptorPath);
+    }
+
+    candidatePaths.push(
+        path.join(modsPath, normalizedId),
+        path.join(modsPath, `${normalizedId}.mod`)
+    );
+
+    for (const root of workshopRoots) {
+        candidatePaths.push(
+            path.join(root, normalizedId),
+            path.join(root, normalizedId, "descriptor.mod")
+        );
+    }
+
+    for (const candidate of candidatePaths) {
+        if (fs.existsSync(candidate)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 export function scanLocalMods(): ScanLocalModsResult {

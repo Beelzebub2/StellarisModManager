@@ -23,6 +23,7 @@ const STELLARIS_APP_ID = "281990";
 const MAX_CONCURRENT_DOWNLOADS = 3;
 const MAX_STEAMCMD_BATCH_ITEMS = 8;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
+type DownloadRuntime = "Auto" | "SteamKit2" | "SteamCmd";
 
 type EventEmitter = (event: DownloadQueueEvent) => void;
 
@@ -244,6 +245,28 @@ function resolveDownloadBasePath(): string {
     const settings = loadSettingsSnapshot();
     const configured = settings?.steamCmdDownloadPath?.trim();
     return configured || path.join(getLegacyPaths().productDir, "SteamCmdDownloads");
+}
+
+function normalizeDownloadRuntime(value: string | undefined): DownloadRuntime {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (normalized === "steamkit2") return "SteamKit2";
+    if (normalized === "steamcmd") return "SteamCmd";
+    return "Auto";
+}
+
+function resolveEffectiveRuntime(): DownloadRuntime {
+    const settings = loadSettingsSnapshot();
+    const configuredRuntime = normalizeDownloadRuntime(settings?.workshopDownloadRuntime);
+    if (configuredRuntime !== "Auto") {
+        return configuredRuntime;
+    }
+
+    const steamCmdPath = settings?.steamCmdPath?.trim() ?? "";
+    if (steamCmdPath && fs.existsSync(steamCmdPath)) {
+        return "SteamCmd";
+    }
+
+    return "SteamKit2";
 }
 
 function dedupeResolvedPaths(paths: string[]): string[] {
@@ -860,12 +883,19 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
     runningJobs.set(entry.workshopId, job);
 
     if (entry.action === "install") {
+        const runtime = resolveEffectiveRuntime();
         actionStates.set(entry.workshopId, "installing");
         upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 3, "Preparing download...");
 
-        const installResult = await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
-            upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
-        });
+        const installResult = runtime === "SteamCmd"
+            ? await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
+                upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+            })
+            : {
+                ok: false,
+                installPath: "",
+                message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
+            };
 
         if (job.cancelled) {
             actionStates.set(entry.workshopId, "not-installed");
@@ -907,6 +937,9 @@ function shouldUseSteamworks(): boolean {
 }
 
 async function runInstallBatch(firstEntry: { workshopId: string; modName: string; action: "install" | "uninstall" }): Promise<void> {
+<<<<<<< codex/fix-steamworks-download-failure
+    const runtime = resolveEffectiveRuntime();
+=======
     // --- Steamworks path: used when runtime is "Steamworks" or "Auto" (with Steam available) ---
     if (shouldUseSteamworks()) {
         const job: RunningJob = {
@@ -957,6 +990,7 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
     }
 
     // --- SteamCMD fallback path: batch up to MAX_STEAMCMD_BATCH_ITEMS per process ---
+>>>>>>> master
     const entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }> = [firstEntry];
 
     while (entries.length < MAX_STEAMCMD_BATCH_ITEMS && queuePending.length > 0) {
@@ -1004,17 +1038,22 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
         );
     }
 
-    logInfo(`SteamCMD: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`}`);
+    logInfo(`Download queue: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`} via ${runtime}`);
 
-    const installResults = await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
-        const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
-        if (!activeEntry) {
-            return;
-        }
+    const installResults = runtime === "SteamCmd"
+        ? await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
+            const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
+            if (!activeEntry) {
+                return;
+            }
 
-        actionStates.set(workshopId, "installing");
-        upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
-    });
+            upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
+        })
+        : new Map(entries.map((entry) => [entry.workshopId, {
+            ok: false,
+            installPath: "",
+            message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
+        }]));
 
     for (const entry of entries) {
         const job = jobsById.get(entry.workshopId);
