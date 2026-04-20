@@ -110,17 +110,34 @@ async function ensureInitialized(): Promise<void> {
 }
 
 function buildBrowseUrl(sortMode: WorkshopSortMode, searchText: string, steamPage: number): string {
+    const steamSort = toSteamBrowseSort(sortMode);
     const params = new URLSearchParams({
         appid: STELLARIS_APP_ID,
         searchtext: searchText,
         childpublishedfileid: "0",
-        browsesort: sortMode,
+        browsesort: steamSort,
         section: "readytouseitems",
-        actualsort: sortMode,
+        actualsort: steamSort,
         days: "-1",
         p: String(steamPage)
     });
     return `${STEAM_WORKSHOP_BROWSE_URL}?${params.toString()}`;
+}
+
+function toSteamBrowseSort(sortMode: WorkshopSortMode): string {
+    switch (sortMode) {
+        case "most-subscribed":
+            return "totaluniquesubscribers";
+        case "most-popular":
+            return "trend";
+        case "recent":
+            return "mostrecent";
+        case "trend":
+            return "trend";
+        case "relevance":
+        default:
+            return "textsearch";
+    }
 }
 
 function buildBrowseCacheKey(sortMode: WorkshopSortMode, searchText: string, steamPage: number): string {

@@ -891,11 +891,15 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
             ? await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
                 upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
             })
-            : {
-                ok: false,
-                installPath: "",
-                message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
-            };
+            : runtime === "SteamKit2"
+                ? await runSteamworksInstall(entry, job, (progress, message) => {
+                    upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+                })
+                : {
+                    ok: false,
+                    installPath: "",
+                    message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
+                };
 
         if (job.cancelled) {
             actionStates.set(entry.workshopId, "not-installed");
@@ -928,16 +932,13 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
     runningJobs.delete(entry.workshopId);
 }
 
-function shouldUseSteamworks(): boolean {
-    const settings = loadSettingsSnapshot();
-    const runtime = (settings?.workshopDownloadRuntime ?? "Auto").toLowerCase();
-    if (runtime === "steamcmd") return false;
-    // "Steamworks" → always use steamworks; "Auto" → use steamworks if available
-    return isSteamworksAvailable();
-}
-
 async function runInstallBatch(firstEntry: { workshopId: string; modName: string; action: "install" | "uninstall" }): Promise<void> {
     const runtime = resolveEffectiveRuntime();
+    if (runtime !== "SteamCmd") {
+        await runJob(firstEntry);
+        return;
+    }
+
     const entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }> = [firstEntry];
 
     while (entries.length < MAX_STEAMCMD_BATCH_ITEMS && queuePending.length > 0) {
@@ -987,20 +988,14 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
 
     logInfo(`Download queue: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`} via ${runtime}`);
 
-    const installResults = runtime === "SteamCmd"
-        ? await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
-            const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
-            if (!activeEntry) {
-                return;
-            }
+    const installResults = await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
+        const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
+        if (!activeEntry) {
+            return;
+        }
 
-            upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
-        })
-        : new Map(entries.map((entry) => [entry.workshopId, {
-            ok: false,
-            installPath: "",
-            message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
-        }]));
+        upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
+    });
 
     for (const entry of entries) {
         const job = jobsById.get(entry.workshopId);
@@ -1038,7 +1033,10 @@ async function processQueue(): Promise<void> {
 
                 logInfo(`Download queue: starting ${next.action} for ${next.workshopId} (${runningJobs.size + 1}/${MAX_CONCURRENT_DOWNLOADS} slots)`);
                 // Don't await — fire-and-forget to enable queue throughput.
-                const runner = next.action === "install" ? runInstallBatch(next) : runJob(next);
+                const runtime = next.action === "install" ? resolveEffectiveRuntime() : "SteamCmd";
+                const runner = next.action === "install" && runtime === "SteamCmd"
+                    ? runInstallBatch(next)
+                    : runJob(next);
                 void runner.catch((err) => {
                     logError(`Download job failed for ${next.workshopId}: ${err instanceof Error ? err.message : "unknown"}`);
                 });
