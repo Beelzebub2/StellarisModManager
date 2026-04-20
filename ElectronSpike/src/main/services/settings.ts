@@ -462,7 +462,9 @@ export function validateSettingsSnapshot(settings: SettingsSnapshot): SettingsVa
         warnings.push("Mods path does not exist yet and will be created on demand.");
     }
 
-    if (runtime !== "SteamKit2") {
+    if (runtime === "SteamKit2") {
+        errors.push("SteamKit2 runtime is not available in this build. Use SteamCmd (or Auto with a valid SteamCMD path).");
+    } else {
         if (!steamCmdPath) {
             errors.push("SteamCMD runtime requires a configured SteamCMD path.");
         } else if (!fs.existsSync(steamCmdPath)) {
