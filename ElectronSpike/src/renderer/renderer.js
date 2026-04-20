@@ -148,6 +148,25 @@ function formatUtc(value) {
 
 function formatInteger(value) { return Number(value || 0).toLocaleString(); }
 
+function normalizeWorkshopId(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    if (/^\d{6,}$/.test(raw)) return raw;
+
+    const idParamMatch = raw.match(/[?&]id=(\d{6,})\b/i);
+    if (idParamMatch) return idParamMatch[1];
+
+    const fileDetailsMatch = raw.match(/sharedfiles\/filedetails\/?[^\s]*id=(\d{6,})\b/i);
+    if (fileDetailsMatch) return fileDetailsMatch[1];
+
+    const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
+    return fallbackDigitsMatch ? fallbackDigitsMatch[1] : "";
+}
+
+function isValidWorkshopId(value) {
+    return /^\d{6,}$/.test(value);
+}
+
 function formatVersionBadgeValue(value) {
     const raw = String(value || "").trim();
     if (!raw) return "-";
@@ -329,6 +348,29 @@ function showPrompt(title, message, defaultValue = "") {
 
         if (overlay) overlay.classList.remove("hidden");
 
+        const inputEl = byId("modalInput");
+        const readInputValue = () => {
+            const input = byId("modalInput");
+            return input ? input.value.trim() : null;
+        };
+
+        const handleInputKeydown = (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                cleanup(readInputValue());
+                return;
+            }
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                cleanup(null);
+            }
+        };
+
+        if (inputEl) {
+            inputEl.addEventListener("keydown", handleInputKeydown);
+        }
+
         setTimeout(() => {
             const input = byId("modalInput");
             if (input) input.focus();
@@ -359,8 +401,7 @@ function showPrompt(title, message, defaultValue = "") {
         }
 
         if (confirmBtn) confirmBtn.onclick = () => {
-            const input = byId("modalInput");
-            cleanup(input ? input.value.trim() : null);
+            cleanup(readInputValue());
         };
         if (cancelBtn) cancelBtn.onclick = () => cleanup(null);
         if (backdrop) backdrop.onclick = () => cleanup(null);
@@ -782,6 +823,12 @@ function isDeveloperModeEnabled() {
     return state.settingsModel?.developerMode === true || getCheckboxValue("settingsDeveloperModeInput") === true;
 }
 
+function parseByteProgress(rawMessage) {
+    const match = String(rawMessage || "").match(/(\d+\.?\d*)\s*\/\s*(\d+\.?\d*)\s*(MB|GB|KB)/i);
+    if (!match) return null;
+    return `${match[1]} / ${match[2]} ${match[3].toUpperCase()}`;
+}
+
 function buildQueueMessageForDisplay(item, developerModeEnabled) {
     const status = String(item.status || "").toLowerCase();
     const action = item.action === "uninstall" ? "uninstall" : "install";
@@ -792,15 +839,22 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
     }
 
     if (status === "queued") {
-        return action === "uninstall" ? "Queued for uninstall." : "Queued for install.";
+        return action === "uninstall" ? "Queued for uninstall." : "Waiting for a download slot...";
     }
 
     if (status === "running") {
-        return action === "uninstall" ? "Removing installed files..." : "Downloading from Steam Workshop...";
+        if (/steamworks unavailable|steam not running/i.test(rawMessage) || /steamcmd|SteamCMD/i.test(rawMessage)) {
+            if (/preparing|preparing batch/i.test(rawMessage)) return "Starting download via SteamCMD...";
+            if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
+            return "Downloading via SteamCMD...";
+        }
+        if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
+        if (/already in steam workshop cache|already downloaded/i.test(rawMessage)) return "Deploying cached mod files...";
+        return action === "uninstall" ? "Removing installed files..." : "Downloading via Steam...";
     }
 
     if (status === "completed") {
-        return action === "uninstall" ? "Uninstall completed." : "Install completed.";
+        return action === "uninstall" ? "Uninstall completed." : "Installed successfully.";
     }
 
     if (status === "cancelled") {
@@ -808,18 +862,21 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
     }
 
     if (status === "failed") {
+        if (/steamworks unavailable|steam not running/i.test(rawMessage)) {
+            return "Steam is not running. Start Steam and retry, or switch to SteamCMD in Settings.";
+        }
         if (/download item\s+\d+\s+failed|failed\s*\(failure\)|steamcmd reported download failure/i.test(rawMessage)) {
-            return "Steam download failed. Retry later or verify SteamCMD access.";
+            return "Download failed. Retry later or check SteamCMD in Settings.";
         }
-
         if (/steamcmd path is not configured|executable is missing|configured SteamCMD executable/i.test(rawMessage)) {
-            return "SteamCMD is not configured. Update it in Settings.";
+            return "SteamCMD not configured — update it in Settings or switch runtime to Steamworks.";
         }
-
         if (/timed out/i.test(rawMessage)) {
-            return "SteamCMD timed out while downloading.";
+            return "Download timed out. Retry or check your connection.";
         }
-
+        if (/steam could not start download|check you are logged in/i.test(rawMessage)) {
+            return "Steam could not start download. Make sure you are logged in to Steam.";
+        }
         return "Operation failed. Enable Developer mode for details.";
     }
 
@@ -867,6 +924,29 @@ function queueClampProgress(value) {
     return Math.max(0, Math.min(100, Number(value || 0)));
 }
 
+function formatQueueUpdatedAt(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "never";
+
+    const timestamp = new Date(raw).getTime();
+    if (!Number.isFinite(timestamp)) return raw;
+
+    const deltaMs = Date.now() - timestamp;
+    if (deltaMs < 5000) return "just now";
+
+    const seconds = Math.floor(deltaMs / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+}
+
 function createQueueEmptyState() {
     const empty = document.createElement("div");
     empty.className = "queue-empty";
@@ -887,6 +967,7 @@ function createQueueRow(workshopId) {
     root.className = "queue-item";
     root.setAttribute("data-workshop-id", workshopId);
 
+    // Row 1: name + status badge
     const top = document.createElement("div");
     top.className = "queue-item-top";
 
@@ -898,25 +979,32 @@ function createQueueRow(workshopId) {
 
     top.append(idEl, stageEl);
 
+    // Row 2: progress bar (full width, prominent)
+    const progress = document.createElement("div");
+    progress.className = "queue-progress";
+    const progressBar = document.createElement("span");
+    progress.append(progressBar);
+
+    // Row 3: action label | bytes transferred | percentage
     const meta = document.createElement("div");
     meta.className = "queue-item-meta";
 
     const actionEl = document.createElement("span");
     actionEl.className = "queue-item-action";
 
+    const bytesEl = document.createElement("span");
+    bytesEl.className = "queue-item-bytes mono";
+
     const percentEl = document.createElement("span");
     percentEl.className = "queue-item-percent mono";
 
-    meta.append(actionEl, percentEl);
+    meta.append(actionEl, bytesEl, percentEl);
 
+    // Row 4: status message
     const messageEl = document.createElement("p");
     messageEl.className = "queue-item-message muted";
 
-    const progress = document.createElement("div");
-    progress.className = "queue-progress";
-    const progressBar = document.createElement("span");
-    progress.append(progressBar);
-
+    // Row 5: workshop ID (dev) + action buttons
     const footer = document.createElement("div");
     footer.className = "queue-item-footer";
 
@@ -930,40 +1018,41 @@ function createQueueRow(workshopId) {
     cancelBtn.type = "button";
     cancelBtn.className = "button-secondary queue-item-btn queue-btn-cancel";
     cancelBtn.textContent = "Stop";
-    cancelBtn.title = "Cancel this queue operation";
-    cancelBtn.setAttribute("aria-label", "Cancel this queue operation");
+    cancelBtn.title = "Cancel this download";
+    cancelBtn.setAttribute("aria-label", "Cancel this download");
     cancelBtn.addEventListener("click", () => void cancelQueueAction(workshopId));
 
     const retryBtn = document.createElement("button");
     retryBtn.type = "button";
     retryBtn.className = "button-secondary queue-item-btn";
     retryBtn.textContent = "Retry";
-    retryBtn.title = "Retry this queue operation";
-    retryBtn.setAttribute("aria-label", "Retry this queue operation");
+    retryBtn.title = "Retry this operation";
+    retryBtn.setAttribute("aria-label", "Retry this operation");
     retryBtn.addEventListener("click", () => {
         const action = retryBtn.getAttribute("data-queue-action") || "";
         if (action !== "install" && action !== "uninstall") return;
-        void queueAction(workshopId, action, "version");
+        void queueAction(workshopId, action, "downloads");
     });
 
     const dismissBtn = document.createElement("button");
     dismissBtn.type = "button";
     dismissBtn.className = "button-secondary queue-item-btn";
     dismissBtn.textContent = "Hide";
-    dismissBtn.title = "Remove this finished item from history";
-    dismissBtn.setAttribute("aria-label", "Remove this finished item from history");
+    dismissBtn.title = "Remove from history";
+    dismissBtn.setAttribute("aria-label", "Remove from history");
     dismissBtn.addEventListener("click", () => void clearQueueHistory([workshopId]));
 
     actionsEl.append(cancelBtn, retryBtn, dismissBtn);
     footer.append(workshopEl, actionsEl);
 
-    root.append(top, meta, messageEl, progress, footer);
+    root.append(top, progress, meta, messageEl, footer);
 
     return {
         root,
         idEl,
         stageEl,
         actionEl,
+        bytesEl,
         percentEl,
         messageEl,
         progressBar,
@@ -993,6 +1082,13 @@ function updateQueueRow(view, item) {
     view.actionEl.textContent = queueActionLabel(item.action);
     view.percentEl.textContent = `${Math.round(progress)}%`;
 
+    // Show byte progress extracted from the raw message (e.g. "45.2 / 128.5 MB")
+    const byteProgress = status === "running" ? parseByteProgress(item.message) : null;
+    if (view.bytesEl) {
+        view.bytesEl.textContent = byteProgress ?? "";
+        view.bytesEl.hidden = !byteProgress;
+    }
+
     view.messageEl.textContent = buildQueueMessageForDisplay(item, developerModeEnabled);
     view.progressBar.style.width = `${progress}%`;
 
@@ -1005,7 +1101,6 @@ function updateQueueRow(view, item) {
 
     view.retryBtn.hidden = !canRetry;
     view.retryBtn.disabled = !canRetry;
-    view.retryBtn.textContent = "Retry";
     view.retryBtn.title = item.action === "uninstall" ? "Retry uninstall" : "Retry install";
     view.retryBtn.setAttribute("data-queue-action", item.action);
 
@@ -1022,14 +1117,29 @@ function renderQueueList(snapshot) {
     const queueOverallBar = byId("queueOverallBar");
     const queueCancelAll = byId("queueCancelAll");
     const queueClearFinished = byId("queueClearFinished");
+    const queueMetricRunning = byId("queueMetricRunning");
+    const queueMetricQueued = byId("queueMetricQueued");
+    const queueMetricFinished = byId("queueMetricFinished");
+    const queueMetricFailed = byId("queueMetricFailed");
+    const queueLastUpdated = byId("queueLastUpdated");
 
-    const items = snapshot.items || [];
+    const items = Array.isArray(snapshot.items) ? snapshot.items : [];
     const activeItems = items.filter((i) => i.status === "queued" || i.status === "running");
-    const runningCount = items.filter((i) => i.status === "running").length;
-    const queuedCount = items.filter((i) => i.status === "queued").length;
-    const total = items.length;
-    const active = activeItems.length;
-    const finished = total - active;
+    const runningCount = Number.isFinite(snapshot.runningCount)
+        ? snapshot.runningCount
+        : items.filter((i) => i.status === "running").length;
+    const queuedCount = Number.isFinite(snapshot.queuedCount)
+        ? snapshot.queuedCount
+        : items.filter((i) => i.status === "queued").length;
+    const pendingCount = Number.isFinite(snapshot.pendingCount) ? snapshot.pendingCount : queuedCount;
+    const finished = Number.isFinite(snapshot.finishedCount)
+        ? snapshot.finishedCount
+        : items.filter((i) => i.status === "completed" || i.status === "failed" || i.status === "cancelled").length;
+    const failedCount = Number.isFinite(snapshot.failedCount)
+        ? snapshot.failedCount
+        : items.filter((i) => i.status === "failed").length;
+    const totalTracked = Number.isFinite(snapshot.totalTrackedCount) ? snapshot.totalTrackedCount : items.length;
+    const active = runningCount + queuedCount;
 
     if (queueChip) queueChip.textContent = active > 0 ? `Queue ${active} active` : "Queue idle";
     if (queueLoadChip) {
@@ -1037,7 +1147,7 @@ function renderQueueList(snapshot) {
         if (active > 0) {
             queueLoadChip.classList.add("status-chip-warn");
             queueLoadChip.textContent = `${active} active`;
-        } else if (finished > 0) {
+        } else if (totalTracked > 0) {
             queueLoadChip.classList.add("status-chip-success");
             queueLoadChip.textContent = `${finished} done`;
         } else {
@@ -1047,10 +1157,22 @@ function renderQueueList(snapshot) {
     }
 
     if (summary) {
-        if (total === 0) summary.textContent = "No active installs.";
-        else if (active > 0) summary.textContent = `${runningCount} running, ${queuedCount} queued (${total} tracked)`;
-        else summary.textContent = `${finished} finished operation${finished === 1 ? "" : "s"}.`;
+        if (totalTracked === 0) {
+            summary.textContent = "No download activity yet.";
+        } else if (active > 0) {
+            const slotText = runningCount > 0 ? `${runningCount} of 3 slots active` : "";
+            const queueText = pendingCount > 0 ? `${pendingCount} queued` : "";
+            const parts = [slotText, queueText].filter(Boolean);
+            summary.textContent = parts.join(" \u2022 ") + (finished > 0 ? ` \u2022 ${finished} done` : "");
+        } else {
+            summary.textContent = `${finished} finished${failedCount > 0 ? ` \u2022 ${failedCount} failed` : ""}.`;
+        }
     }
+
+    if (queueMetricRunning) queueMetricRunning.textContent = String(runningCount);
+    if (queueMetricQueued) queueMetricQueued.textContent = String(pendingCount);
+    if (queueMetricFinished) queueMetricFinished.textContent = String(finished);
+    if (queueMetricFailed) queueMetricFailed.textContent = String(failedCount);
 
     if (queueCancelAll) queueCancelAll.disabled = active === 0;
     if (queueClearFinished) queueClearFinished.disabled = finished === 0;
@@ -1065,14 +1187,24 @@ function renderQueueList(snapshot) {
     }
 
     if (queueOverallLabel) {
-        if (total === 0) queueOverallLabel.textContent = "No queue activity.";
-        else if (active > 0) queueOverallLabel.textContent = `${overallPct}% average progress across active tasks.`;
+        if (totalTracked === 0) queueOverallLabel.textContent = "No queue activity.";
+        else if (active > 0) queueOverallLabel.textContent = `${overallPct}% average progress across visible active tasks.`;
         else queueOverallLabel.textContent = `${finished} finished operation${finished === 1 ? "" : "s"}.`;
+    }
+
+    if (queueLastUpdated) {
+        const newestItemUpdate = items
+            .map((item) => String(item.updatedAtUtc || ""))
+            .filter((value) => value.length > 0)
+            .sort()
+            .at(-1);
+        const updatedAt = newestItemUpdate || snapshot.updatedAtUtc || "";
+        queueLastUpdated.textContent = `Last update: ${formatQueueUpdatedAt(updatedAt)}`;
     }
 
     if (!queueList) return;
 
-    if (total === 0) {
+    if (totalTracked === 0) {
         for (const view of state.queueRowsByWorkshopId.values()) {
             view.root.remove();
         }
@@ -1090,8 +1222,13 @@ function renderQueueList(snapshot) {
         emptyState.remove();
     }
 
+    const statusOrder = { running: 0, queued: 1, failed: 2, cancelled: 3, completed: 4 };
+    const sortedItems = [...items].sort((a, b) =>
+        (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
+    );
+
     const renderedIds = new Set();
-    for (const item of items) {
+    for (const item of sortedItems) {
         let view = state.queueRowsByWorkshopId.get(item.workshopId);
         if (!view) {
             view = createQueueRow(item.workshopId);
@@ -1145,12 +1282,22 @@ function applyQueueSnapshot(snapshot) {
 }
 
 async function queueAction(workshopId, action, source = "version") {
-    const modName = getModNameByWorkshopId(workshopId);
-    const result = await window.spikeApi.queueDownload({ workshopId, modName, action });
+    const normalizedWorkshopId = normalizeWorkshopId(workshopId);
+    if (!isValidWorkshopId(normalizedWorkshopId)) {
+        const message = "Invalid workshop ID. Paste the numeric ID or a Steam Workshop URL.";
+        if (source === "library") setLibraryStatus(message);
+        else if (source === "downloads") setGlobalStatus(message);
+        else setVersionStatus(message);
+        return;
+    }
+
+    const modName = getModNameByWorkshopId(normalizedWorkshopId);
+    const result = await window.spikeApi.queueDownload({ workshopId: normalizedWorkshopId, modName, action });
     if (source === "library") setLibraryStatus(result.message);
+    else if (source === "downloads") setGlobalStatus(result.message);
     else setVersionStatus(result.message);
     await refreshQueueSnapshot();
-    if (state.activeDetailWorkshopId === workshopId) await refreshDetailDrawer(workshopId);
+    if (state.activeDetailWorkshopId === normalizedWorkshopId) await refreshDetailDrawer(normalizedWorkshopId);
     if (source === "library") await refreshLibrarySnapshot();
 }
 
@@ -1357,7 +1504,7 @@ function applySettingsToForm(settings) {
 
 function syncSettingsRuntimeVisibility() {
     const runtime = getInputValue("settingsWorkshopRuntimeInput") || "Auto";
-    const hide = runtime.toLowerCase() === "steamkit2";
+    const hide = runtime.toLowerCase() === "steamworks";
     for (const id of ["settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput"]) {
         const el = byId(id);
         if (el) {
@@ -2570,8 +2717,8 @@ function initWorkshop() {
         }
 
         if (e.channel === "smm-query-mod-state") {
-            const workshopId = String(e.args?.[0] ?? "").trim();
-            if (!workshopId) return;
+            const workshopId = normalizeWorkshopId(e.args?.[0]);
+            if (!isValidWorkshopId(workshopId)) return;
 
             const actionState = await getWorkshopOverlayActionState(workshopId);
             webview.send("smm-mod-state", { workshopId, actionState });
@@ -2581,11 +2728,14 @@ function initWorkshop() {
         if (e.channel === "smm-toggle-workshop-mod" || e.channel === "smm-add-workshop-mod") {
             const payload = e.args?.[0];
 
-            const workshopId = typeof payload === "string"
-                ? payload.trim()
-                : String(payload?.workshopId ?? "").trim();
-
-            if (!workshopId) return;
+            const rawWorkshopId = (typeof payload === "string" || typeof payload === "number")
+                ? String(payload)
+                : String(payload?.workshopId ?? payload?.workshop_id ?? payload?.id ?? "");
+            const workshopId = normalizeWorkshopId(rawWorkshopId);
+            if (!isValidWorkshopId(workshopId)) {
+                setLibraryStatus("Invalid workshop ID. Paste the numeric ID or a Steam Workshop URL.");
+                return;
+            }
 
             const action = payload && typeof payload === "object" && payload.action === "uninstall"
                 ? "uninstall"
@@ -2643,13 +2793,25 @@ function activateTab(name) {
     }
     state.selectedTab = name;
 
-    const tabs = { version: "tabVersion", library: "tabLibrary", workshop: "tabWorkshop", settings: "tabSettings" };
+    const tabs = {
+        version: "tabVersion",
+        library: "tabLibrary",
+        downloads: "tabDownloads",
+        workshop: "tabWorkshop",
+        settings: "tabSettings"
+    };
     for (const [tabName, id] of Object.entries(tabs)) {
         const el = byId(id);
         if (el) el.classList.toggle("is-active", tabName === name);
     }
 
-    const pages = { version: "pageVersion", library: "pageLibrary", workshop: "pageWorkshop", settings: "pageSettings" };
+    const pages = {
+        version: "pageVersion",
+        library: "pageLibrary",
+        downloads: "pageDownloads",
+        workshop: "pageWorkshop",
+        settings: "pageSettings"
+    };
     for (const [tabName, id] of Object.entries(pages)) {
         const el = byId(id);
         if (el) el.classList.toggle("hidden", tabName !== name);
@@ -2658,6 +2820,7 @@ function activateTab(name) {
     const statusMap = {
         version: "Version browser ready.",
         library: "Library view ready.",
+        downloads: "Downloads queue ready.",
         workshop: "Workshop browser ready.",
         settings: "Settings view ready."
     };
@@ -3058,7 +3221,11 @@ function hookLibraryControls() {
     byId("libraryImport")?.addEventListener("click", async () => {
         const result = await window.spikeApi.importLibraryMods();
         setLibraryStatus(result.message);
-        if (result.ok && result.queuedCount > 0) await refreshQueueSnapshot();
+        if (result.ok && result.queuedCount > 0) {
+            await refreshQueueSnapshot();
+            await activateTabGuarded("downloads");
+            setGlobalStatus(`${result.message} Check Downloads for live progress.`);
+        }
     });
     byId("libraryScanLocal")?.addEventListener("click", async () => {
         setLibraryStatus("Scanning local mods...");
@@ -3228,6 +3395,7 @@ function hookAppUpdateControls() {
 function hookGlobalControls() {
     byId("tabVersion")?.addEventListener("click", () => void activateTabGuarded("version"));
     byId("tabLibrary")?.addEventListener("click", () => void activateTabGuarded("library"));
+    byId("tabDownloads")?.addEventListener("click", () => void activateTabGuarded("downloads"));
     byId("tabWorkshop")?.addEventListener("click", () => {
         state.workshopReturnContext = null;
         void activateTabGuarded("workshop");

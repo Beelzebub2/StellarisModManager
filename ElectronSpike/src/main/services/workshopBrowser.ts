@@ -78,6 +78,30 @@ function isValidWorkshopId(value: string): boolean {
     return /^\d{6,}$/.test(value);
 }
 
+function sanitizeWorkshopId(value: string): string {
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    if (/^\d{6,}$/.test(raw)) {
+        return raw;
+    }
+
+    const idParamMatch = raw.match(/[?&]id=(\d{6,})\b/i);
+    if (idParamMatch) {
+        return idParamMatch[1];
+    }
+
+    const fileDetailsMatch = raw.match(/sharedfiles\/filedetails\/?[^\s]*id=(\d{6,})\b/i);
+    if (fileDetailsMatch) {
+        return fileDetailsMatch[1];
+    }
+
+    const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
+    return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
+}
+
 async function ensureInitialized(): Promise<void> {
     if (initialized) return;
     await fsp.mkdir(cacheRoot, { recursive: true });
@@ -329,6 +353,7 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
 
     const sortMode = query.sortMode ?? "trend";
     const searchText = (query.searchText ?? "").trim();
+    const normalizedSearchWorkshopId = sanitizeWorkshopId(searchText);
     const pageSize = clampPageSize(query.pageSize);
     const requestedPage = Math.max(1, Math.trunc(query.page ?? 1));
 
@@ -337,14 +362,14 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
     const steamStartPage = (requestedPage - 1) * STEAM_PAGES_PER_APP_PAGE + 1;
 
     // If searching by exact workshop ID, handle it directly
-    if (searchText && /^\d{6,}$/.test(searchText)) {
-        const details = await fetchPublishedFileDetails([searchText]);
-        const detail = details.get(searchText);
+    if (isValidWorkshopId(normalizedSearchWorkshopId)) {
+        const details = await fetchPublishedFileDetails([normalizedSearchWorkshopId]);
+        const detail = details.get(normalizedSearchWorkshopId);
 
         if (detail) {
-            const title = (detail.title ?? "").trim() || `Workshop Mod ${searchText}`;
+            const title = (detail.title ?? "").trim() || `Workshop Mod ${normalizedSearchWorkshopId}`;
             const subs = Number(detail.lifetime_subscriptions ?? 0);
-            const previewImageUrl = await resolveCardThumbnailUrl(searchText, detail.preview_url?.trim() || null);
+            const previewImageUrl = await resolveCardThumbnailUrl(normalizedSearchWorkshopId, detail.preview_url?.trim() || null);
             const tags = (detail.tags ?? []).map((t) => (t.tag ?? "").trim()).filter(Boolean).slice(0, 12);
 
             return {
@@ -353,15 +378,15 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
                 totalMatches: 1,
                 pageSize,
                 cards: [{
-                    workshopId: searchText,
-                    workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${searchText}`,
+                    workshopId: normalizedSearchWorkshopId,
+                    workshopUrl: `https://steamcommunity.com/sharedfiles/filedetails/?id=${normalizedSearchWorkshopId}`,
                     name: title,
                     previewImageUrl,
                     totalSubscribers: Number.isFinite(subs) ? subs : 0,
                     tags,
-                    actionState: getActionStateForCard(searchText)
+                    actionState: getActionStateForCard(normalizedSearchWorkshopId)
                 }],
-                statusText: `Found mod ${searchText}: ${detail.title ?? "Unknown"}`,
+                statusText: `Found mod ${normalizedSearchWorkshopId}: ${detail.title ?? "Unknown"}`,
                 hasMore: false
             };
         }
@@ -372,7 +397,7 @@ export async function queryWorkshopMods(query: WorkshopBrowserQuery): Promise<Wo
             totalMatches: 0,
             pageSize,
             cards: [],
-            statusText: `No mod found with ID ${searchText}.`,
+            statusText: `No mod found with ID ${normalizedSearchWorkshopId}.`,
             hasMore: false
         };
     }

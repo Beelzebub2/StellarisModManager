@@ -201,7 +201,27 @@ function isValidWorkshopId(value: string): boolean {
 }
 
 function sanitizeWorkshopId(value: string): string {
-    return value.trim();
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    if (/^\d{6,}$/.test(raw)) {
+        return raw;
+    }
+
+    const idParamMatch = raw.match(/[?&]id=(\d{6,})\b/i);
+    if (idParamMatch) {
+        return idParamMatch[1];
+    }
+
+    const fileDetailsMatch = raw.match(/sharedfiles\/filedetails\/?[^\s]*id=(\d{6,})\b/i);
+    if (fileDetailsMatch) {
+        return fileDetailsMatch[1];
+    }
+
+    const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
+    return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
 }
 
 function stripHtml(value: string): string {
