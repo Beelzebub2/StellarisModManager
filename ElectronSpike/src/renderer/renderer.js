@@ -1921,12 +1921,36 @@ function renderLibraryDetail(mod) {
     if (detail) detail.classList.remove("hidden");
 
     setText("libraryDetailName", mod.name);
-    setText("libraryDetailWorkshopId", mod.workshopId);
+    setText("libraryDetailWorkshopId", mod.workshopId || "—");
     setText("libraryDetailVersion", toDisplayValue(mod.version));
-    setText("libraryDetailSubscribers", `${formatInteger(mod.totalSubscribers)} subscribers`);
     setText("libraryDetailGameVersion", toDisplayValue(mod.gameVersion));
     setText("libraryDetailInstalledAt", formatUtc(mod.lastUpdatedAtUtc || mod.installedAtUtc));
     setText("libraryDetailDescription", mod.description || "No description available.");
+
+    // Subscriber chip
+    const subChip = byId("libraryDetailSubscribersChip");
+    if (subChip) {
+        if (mod.totalSubscribers > 0) {
+            subChip.textContent = `${formatInteger(mod.totalSubscribers)} subscribers`;
+            subChip.classList.remove("hidden");
+        } else {
+            subChip.classList.add("hidden");
+        }
+    }
+
+    // Thumbnail
+    const thumb = byId("libraryDetailThumb");
+    const thumbFallback = byId("libraryDetailThumbFallback");
+    if (mod.thumbnailUrl) {
+        if (thumb) { thumb.src = mod.thumbnailUrl; thumb.classList.remove("hidden"); }
+        if (thumbFallback) thumbFallback.classList.add("hidden");
+    } else {
+        if (thumb) { thumb.src = ""; thumb.classList.add("hidden"); }
+        if (thumbFallback) {
+            thumbFallback.textContent = (mod.name || "?").slice(0, 1).toUpperCase();
+            thumbFallback.classList.remove("hidden");
+        }
+    }
 
     if (mpSafe) mpSafe.classList.toggle("hidden", !mod.isMultiplayerSafe);
     if (hasUpdate) hasUpdate.classList.toggle("hidden", !mod.hasUpdate);
@@ -3323,6 +3347,12 @@ async function init() {
         await refreshLibrarySnapshot();
     }
     setLibraryStatus(scanResult.message);
+
+    // Fetch subscriber counts and thumbnails from Steam in the background.
+    // This is fire-and-forget; the library re-renders once it completes.
+    window.spikeApi.checkLibraryUpdates().then(async () => {
+        await refreshLibrarySnapshot();
+    }).catch(() => { /* non-fatal */ });
 
     await refreshVersionResults();
     syncSearchClearButton();

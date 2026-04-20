@@ -293,12 +293,17 @@
                                 details.</div>
                             <div id="libraryDetail" class="library-detail hidden">
                                 <div class="library-detail-head">
-                                    <h3 id="libraryDetailName">Mod</h3>
-                                    <div class="library-detail-badges">
-                                        <span id="libraryDetailMpSafe" class="badge badge-community hidden">Multiplayer
-                                            safe</span>
-                                        <span id="libraryDetailHasUpdate" class="badge badge-version hidden">Update
-                                            available</span>
+                                    <div class="library-detail-thumb-wrap">
+                                        <img id="libraryDetailThumb" class="library-detail-thumb hidden" src="" alt="" />
+                                        <div id="libraryDetailThumbFallback" class="library-detail-thumb-fallback">M</div>
+                                    </div>
+                                    <div class="library-detail-head-body">
+                                        <h3 id="libraryDetailName">Mod</h3>
+                                        <div class="library-detail-badges">
+                                            <span id="libraryDetailMpSafe" class="badge badge-community hidden">Multiplayer safe</span>
+                                            <span id="libraryDetailHasUpdate" class="badge badge-version hidden">Update available</span>
+                                            <span id="libraryDetailSubscribersChip" class="badge badge-unverified hidden"></span>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -306,13 +311,11 @@
                                     <div class="library-detail-grid">
                                         <p class="settings-key">Workshop ID</p>
                                         <p id="libraryDetailWorkshopId" class="settings-value accent-text mono">-</p>
-                                        <p class="settings-key">Reported Mod Version</p>
+                                        <p class="settings-key">Mod Version</p>
                                         <p id="libraryDetailVersion" class="settings-value">-</p>
-                                        <p class="settings-key">Subscribers</p>
-                                        <p id="libraryDetailSubscribers" class="settings-value">-</p>
-                                        <p class="settings-key">Detected Game Version</p>
+                                        <p class="settings-key">Game Version</p>
                                         <p id="libraryDetailGameVersion" class="settings-value">-</p>
-                                        <p class="settings-key">Installed</p>
+                                        <p class="settings-key">Last Updated</p>
                                         <p id="libraryDetailInstalledAt" class="settings-value">-</p>
                                     </div>
                                 </div>

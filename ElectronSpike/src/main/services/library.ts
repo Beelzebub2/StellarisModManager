@@ -69,6 +69,8 @@ interface DbModRow {
 interface SteamPublishedFileDetails {
     publishedfileid?: string;
     time_updated?: number | string;
+    subscriptions?: number | string;
+    preview_url?: string;
 }
 
 interface SteamDetailsResponse {
@@ -1403,6 +1405,37 @@ export async function checkLibraryUpdates(): Promise<LibraryActionResult> {
         const details = await fetchDetailsInChunks(workshopIds);
         let updatesAvailable = 0;
 
+        const hasThumbnailCol = modColumns.has("ThumbnailUrl");
+        const hasSubscribersCol = modColumns.has("TotalSubscribers");
+
+        const enrichStmt = db.prepare(
+            `UPDATE Mods
+             SET TotalSubscribers = COALESCE(?, TotalSubscribers)
+                 ${hasThumbnailCol ? ", ThumbnailUrl = COALESCE(NULLIF(?, ''), ThumbnailUrl)" : ""}
+             WHERE ${workshopColumn} = ?`
+        );
+
+        const enrichTx = db.transaction(() => {
+            for (const workshopId of workshopIds) {
+                const detail = details.get(workshopId);
+                if (!detail) continue;
+
+                const subs = Number(detail.subscriptions ?? 0);
+                const subsValue = Number.isFinite(subs) && subs > 0 ? subs : null;
+                const thumbValue = hasThumbnailCol
+                    ? (detail.preview_url?.trim() || null)
+                    : undefined;
+
+                if (hasSubscribersCol && (subsValue !== null || thumbValue !== undefined)) {
+                    enrichStmt.run(
+                        ...(hasThumbnailCol
+                            ? [subsValue, thumbValue, workshopId]
+                            : [subsValue, workshopId])
+                    );
+                }
+            }
+        });
+
         for (const workshopId of workshopIds) {
             const detail = details.get(workshopId);
             const remoteRaw = Number(detail?.time_updated ?? 0);
@@ -1414,6 +1447,8 @@ export async function checkLibraryUpdates(): Promise<LibraryActionResult> {
                 updatesAvailable += 1;
             }
         }
+
+        enrichTx();
 
         return {
             ok: true,
