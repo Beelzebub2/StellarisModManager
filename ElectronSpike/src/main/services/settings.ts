@@ -18,7 +18,7 @@ const THEME_PALETTE_OPTIONS = [
     "Ivory White",
     "Frost White"
 ];
-const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "SteamKit2", "SteamCmd"];
+const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "Steamworks", "SteamCmd"];
 
 function coerceString(value: unknown): string | undefined {
     if (typeof value !== "string") {
@@ -72,8 +72,8 @@ function normalizeRuntime(value: string | undefined): string {
     }
 
     const normalized = value.trim().toLowerCase();
-    if (normalized === "steamkit2") {
-        return "SteamKit2";
+    if (normalized === "steamworks" || normalized === "steamkit2") {
+        return "Steamworks";
     }
 
     if (normalized === "steamcmd") {
@@ -425,8 +425,8 @@ export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
         current.steamCmdDownloadPath = detectedSteamCmdDownloadPath;
     }
 
-    if (detectedSteamCmdPath && normalizeRuntime(coerceString(current.workshopDownloadRuntime)) === "Auto") {
-        current.workshopDownloadRuntime = "SteamCmd";
+    if (normalizeRuntime(coerceString(current.workshopDownloadRuntime)) === "Auto") {
+        current.workshopDownloadRuntime = detectedSteamCmdPath ? "SteamCmd" : "Steamworks";
     }
 
     const detectedVersion = detectGameVersion(current.gamePath);
@@ -462,7 +462,7 @@ export function validateSettingsSnapshot(settings: SettingsSnapshot): SettingsVa
         warnings.push("Mods path does not exist yet and will be created on demand.");
     }
 
-    if (runtime !== "SteamKit2") {
+    if (runtime !== "Steamworks") {
         if (!steamCmdPath) {
             errors.push("SteamCMD runtime requires a configured SteamCMD path.");
         } else if (!fs.existsSync(steamCmdPath)) {

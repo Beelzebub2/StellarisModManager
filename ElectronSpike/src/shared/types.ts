@@ -445,6 +445,12 @@ export interface DownloadQueueSnapshot {
     hasActiveWork: boolean;
     runningCount: number;
     queuedCount: number;
+    pendingCount: number;
+    finishedCount: number;
+    failedCount: number;
+    cancelledCount: number;
+    totalTrackedCount: number;
+    updatedAtUtc: string;
 }
 
 export interface DownloadQueueEvent {

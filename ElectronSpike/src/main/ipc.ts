@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import type {
     DirectoryPickerRequest,
     DownloadActionRequest,
+    DownloadQueueSnapshot,
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
     LibraryReorderRequest,
@@ -140,6 +141,55 @@ const CHANNELS = {
     settingsDetectGameVersion: "spike:detectGameVersion"
 } as const;
 
+let queueCompletionSyncTimer: NodeJS.Timeout | null = null;
+let pendingQueueCompletionKey = "";
+let appliedQueueCompletionKey = "";
+
+function getCompletedQueueOpsKey(snapshot: DownloadQueueSnapshot): string {
+    return (snapshot.items ?? [])
+        .filter((item) => item.status === "completed" && (item.action === "install" || item.action === "uninstall"))
+        .map((item) => `${item.workshopId}:${item.action}:${item.updatedAtUtc}`)
+        .sort()
+        .join("|");
+}
+
+function scheduleQueueCompletionLibrarySync(snapshot: DownloadQueueSnapshot): void {
+    const completionKey = getCompletedQueueOpsKey(snapshot);
+    if (!completionKey || completionKey === appliedQueueCompletionKey || completionKey === pendingQueueCompletionKey) {
+        return;
+    }
+
+    pendingQueueCompletionKey = completionKey;
+    if (queueCompletionSyncTimer) {
+        clearTimeout(queueCompletionSyncTimer);
+    }
+
+    queueCompletionSyncTimer = setTimeout(() => {
+        const nextKey = pendingQueueCompletionKey;
+        pendingQueueCompletionKey = "";
+
+        if (!nextKey || nextKey === appliedQueueCompletionKey) {
+            return;
+        }
+
+        void (async () => {
+            try {
+                const result = await scanLocalMods();
+                if (!result.ok) {
+                    logError(`Queue completion library sync failed: ${result.message}`);
+                    return;
+                }
+
+                appliedQueueCompletionKey = nextKey;
+                logInfo(`Queue completion library sync finished: ${result.message}`);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : "Unknown queue-sync error";
+                logError(`Queue completion library sync crashed: ${message}`);
+            }
+        })();
+    }, 900);
+}
+
 function buildSystemSummary(): SystemSummary {
     const paths = getLegacyPaths();
 
@@ -237,6 +287,20 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.appUpdateStart);
     ipcMain.removeHandler(CHANNELS.appUpdateSkip);
     ipcMain.removeHandler(CHANNELS.settingsDetectGameVersion);
+
+    setDownloadEventEmitter((downloadEvent) => {
+        if (downloadEvent?.kind === "snapshot" && downloadEvent.snapshot) {
+            scheduleQueueCompletionLibrarySync(downloadEvent.snapshot);
+        }
+
+        for (const window of BrowserWindow.getAllWindows()) {
+            if (window.isDestroyed()) {
+                continue;
+            }
+
+            window.webContents.send(CHANNELS.downloadQueueEvent, downloadEvent);
+        }
+    });
 
     ipcMain.handle(CHANNELS.ping, async () => {
         logInfo("Renderer ping received.");
@@ -440,10 +504,7 @@ export function registerIpcHandlers(): void {
         return getVersionModDetail(workshopId, selectedVersion);
     });
 
-    ipcMain.handle(CHANNELS.downloadQueue, async (event, request: DownloadActionRequest) => {
-        setDownloadEventEmitter((downloadEvent) => {
-            event.sender.send(CHANNELS.downloadQueueEvent, downloadEvent);
-        });
+    ipcMain.handle(CHANNELS.downloadQueue, async (_event, request: DownloadActionRequest) => {
         return queueDownload(request);
     });
 

@@ -148,7 +148,27 @@ function dedupePaths(paths: string[]): string[] {
 }
 
 function sanitizeWorkshopId(value: string): string {
-    return (value ?? "").trim();
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    if (/^\d{6,}$/.test(raw)) {
+        return raw;
+    }
+
+    const idParamMatch = raw.match(/[?&]id=(\d{6,})\b/i);
+    if (idParamMatch) {
+        return idParamMatch[1];
+    }
+
+    const fileDetailsMatch = raw.match(/sharedfiles\/filedetails\/?[^\s]*id=(\d{6,})\b/i);
+    if (fileDetailsMatch) {
+        return fileDetailsMatch[1];
+    }
+
+    const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
+    return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
 }
 
 function isValidWorkshopId(value: string): boolean {
@@ -1550,7 +1570,9 @@ export async function importLibraryMods(filePath: string): Promise<LibraryImport
 
         return {
             ok: true,
-            message: `Queued ${queuedCount} mod(s) from import.`,
+            message: ignoredCount > 0
+                ? `Queued ${queuedCount} mod(s) from import; ignored ${ignoredCount} invalid or duplicate entr${ignoredCount === 1 ? "y" : "ies"}.`
+                : `Queued ${queuedCount} mod(s) from import.`,
             queuedCount,
             ignoredCount,
             sourcePath

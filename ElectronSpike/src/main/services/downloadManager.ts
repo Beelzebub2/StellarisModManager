@@ -17,6 +17,7 @@ import { getLegacyPaths } from "./paths";
 import { loadSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
 import { logError, logInfo } from "./logger";
+import { isSteamworksAvailable, runSteamworksDownload } from "./steamworksProvider";
 
 const STELLARIS_APP_ID = "281990";
 const MAX_CONCURRENT_DOWNLOADS = 3;
@@ -67,7 +68,27 @@ function isValidWorkshopId(value: string): boolean {
 }
 
 function sanitizeWorkshopId(value: string): string {
-    return value.trim();
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    if (/^\d{6,}$/.test(raw)) {
+        return raw;
+    }
+
+    const idParamMatch = raw.match(/[?&]id=(\d{6,})\b/i);
+    if (idParamMatch) {
+        return idParamMatch[1];
+    }
+
+    const fileDetailsMatch = raw.match(/sharedfiles\/filedetails\/?[^\s]*id=(\d{6,})\b/i);
+    if (fileDetailsMatch) {
+        return fileDetailsMatch[1];
+    }
+
+    const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
+    return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
 }
 
 function emitSnapshot(): void {
@@ -143,11 +164,30 @@ function getQueueSnapshot(): DownloadQueueSnapshot {
         .filter((item): item is DownloadQueueItem => item !== undefined)
         .slice(0, 60);
 
-    const runningCount = items.filter((i) => i.status === "running").length;
-    const queuedCount = items.filter((i) => i.status === "queued").length;
-    const hasActiveWork = runningCount > 0 || queuedCount > 0 || queuePending.length > 0;
+    const allItems = Array.from(queueItems.values());
+    const queuedNotRunningCount = allItems.filter((i) => i.status === "queued" && !runningJobs.has(i.workshopId)).length;
+    const completedCount = allItems.filter((i) => i.status === "completed").length;
+    const failedCount = allItems.filter((i) => i.status === "failed").length;
+    const cancelledCount = allItems.filter((i) => i.status === "cancelled").length;
 
-    return { items, hasActiveWork, runningCount, queuedCount };
+    const runningCount = runningJobs.size;
+    const queuedCount = Math.max(queuedNotRunningCount, queuePending.length);
+    const pendingCount = queuePending.length;
+    const finishedCount = completedCount + failedCount + cancelledCount;
+    const hasActiveWork = runningCount > 0 || pendingCount > 0;
+
+    return {
+        items,
+        hasActiveWork,
+        runningCount,
+        queuedCount,
+        pendingCount,
+        finishedCount,
+        failedCount,
+        cancelledCount,
+        totalTrackedCount: allItems.length,
+        updatedAtUtc: nowIso()
+    };
 }
 
 function getInstalledWorkshopIdsFromDb(): Set<string> {
@@ -276,7 +316,8 @@ function upsertQuotedDescriptorField(content: string, key: string, value: string
 async function deployDownloadedModToModsPath(
     workshopId: string,
     downloadedInstallPath: string,
-    reportProgress: (progress: number, message: string) => void
+    reportProgress: (progress: number, message: string) => void,
+    keepSource = false
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
     const modsRoot = resolveModsInstallRoot();
     const finalInstallPath = path.join(modsRoot, workshopId);
@@ -318,14 +359,36 @@ async function deployDownloadedModToModsPath(
         return { ok: false, installPath: finalInstallPath, message: `Failed to write descriptor: ${message}` };
     }
 
-    if (path.resolve(downloadedInstallPath) !== path.resolve(finalInstallPath)) {
+    if (!keepSource && path.resolve(downloadedInstallPath) !== path.resolve(finalInstallPath)) {
         await removeDirectoryIfExists(downloadedInstallPath);
     }
 
     return { ok: true, installPath: finalInstallPath, message: `Installed to mods path: ${finalInstallPath}` };
 }
 
-// --- SteamCMD download ---
+// --- Steamworks download (primary) ---
+
+async function runSteamworksInstall(
+    entry: { workshopId: string; modName: string },
+    job: RunningJob,
+    reportProgress: (progress: number, message: string) => void
+): Promise<{ ok: boolean; installPath: string; message: string }> {
+    const downloadResult = await runSteamworksDownload(entry.workshopId, job, reportProgress);
+    if (!downloadResult.ok) return downloadResult;
+
+    // Deploy from Steam's workshop cache to the Stellaris mods folder.
+    // keepSource=true because the source is Steam's workshop cache — we must not delete it.
+    reportProgress(96, `Deploying ${entry.workshopId} to mods path...`);
+    const deployed = await deployDownloadedModToModsPath(entry.workshopId, downloadResult.installPath, reportProgress, true);
+    if (!deployed.ok) return deployed;
+
+    installPathById.set(entry.workshopId, deployed.installPath);
+    await saveInstallState();
+
+    return { ok: true, installPath: deployed.installPath, message: deployed.message };
+}
+
+// --- SteamCMD download (fallback) ---
 
 function parseSteamCmdProgress(line: string): number | null {
     const match = line.match(/(\d{1,3}\.\d{2})%/);
@@ -835,7 +898,65 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
     runningJobs.delete(entry.workshopId);
 }
 
+function shouldUseSteamworks(): boolean {
+    const settings = loadSettingsSnapshot();
+    const runtime = (settings?.workshopDownloadRuntime ?? "Auto").toLowerCase();
+    if (runtime === "steamcmd") return false;
+    // "Steamworks" → always use steamworks; "Auto" → use steamworks if available
+    return isSteamworksAvailable();
+}
+
 async function runInstallBatch(firstEntry: { workshopId: string; modName: string; action: "install" | "uninstall" }): Promise<void> {
+    // --- Steamworks path: used when runtime is "Steamworks" or "Auto" (with Steam available) ---
+    if (shouldUseSteamworks()) {
+        const job: RunningJob = {
+            workshopId: firstEntry.workshopId,
+            action: "install",
+            process: null,
+            cancelled: false,
+            sharedProcess: false
+        };
+
+        runningJobs.set(firstEntry.workshopId, job);
+        actionStates.set(firstEntry.workshopId, "installing");
+        upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", 3, "Requesting download from Steam...");
+        logInfo(`Steamworks: install for ${firstEntry.workshopId}`);
+
+        const result = await runSteamworksInstall(firstEntry, job, (progress, message) => {
+            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", progress, message);
+        });
+
+        if (job.cancelled) {
+            actionStates.set(firstEntry.workshopId, "not-installed");
+            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "cancelled", 0, "Install cancelled.");
+        } else if (result.ok) {
+            actionStates.set(firstEntry.workshopId, "installed");
+            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "completed", 100, result.message);
+        } else {
+            // Steamworks failed — try SteamCMD as fallback for this single item
+            logError(`Steamworks install failed for ${firstEntry.workshopId}: ${result.message}. Falling back to SteamCMD.`);
+            upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "running", 3, `Steamworks unavailable, retrying via SteamCMD...`);
+            const fallbackResult = await runSteamCmdDownloadBatch([firstEntry], new Map([[firstEntry.workshopId, job]]), (workshopId, progress, message) => {
+                upsertQueueItem(workshopId, firstEntry.modName, "install", "running", progress, message);
+            });
+            const fallback = fallbackResult.get(firstEntry.workshopId) ?? { ok: false, installPath: "", message: "Unknown error." };
+            if (job.cancelled) {
+                actionStates.set(firstEntry.workshopId, "not-installed");
+                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "cancelled", 0, "Install cancelled.");
+            } else if (fallback.ok) {
+                actionStates.set(firstEntry.workshopId, "installed");
+                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "completed", 100, fallback.message);
+            } else {
+                actionStates.set(firstEntry.workshopId, "error");
+                upsertQueueItem(firstEntry.workshopId, firstEntry.modName, "install", "failed", 0, fallback.message);
+            }
+        }
+
+        runningJobs.delete(firstEntry.workshopId);
+        return;
+    }
+
+    // --- SteamCMD fallback path: batch up to MAX_STEAMCMD_BATCH_ITEMS per process ---
     const entries: Array<{ workshopId: string; modName: string; action: "install" | "uninstall" }> = [firstEntry];
 
     while (entries.length < MAX_STEAMCMD_BATCH_ITEMS && queuePending.length > 0) {
@@ -855,7 +976,7 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
     const isBatch = entries.length > 1;
     const jobsById = new Map<string, RunningJob>();
 
-    for (const entry of entries) {
+    for (const [index, entry] of entries.entries()) {
         const job: RunningJob = {
             workshopId: entry.workshopId,
             action: "install",
@@ -867,18 +988,23 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
         jobsById.set(entry.workshopId, job);
         runningJobs.set(entry.workshopId, job);
 
-        actionStates.set(entry.workshopId, "installing");
+        const waitingForBatchStart = isBatch && index > 0;
+        actionStates.set(entry.workshopId, waitingForBatchStart ? "queued" : "installing");
         upsertQueueItem(
             entry.workshopId,
             entry.modName,
             "install",
-            "running",
-            3,
-            isBatch ? `Preparing batch download (${entries.length} mods)...` : "Preparing download..."
+            waitingForBatchStart ? "queued" : "running",
+            waitingForBatchStart ? 0 : 3,
+            waitingForBatchStart
+                ? `Waiting for batch start (${index + 1}/${entries.length}).`
+                : isBatch
+                    ? `Preparing SteamCMD batch (${entries.length} mods)...`
+                    : "Preparing SteamCMD download..."
         );
     }
 
-    logInfo(`Download queue: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`}`);
+    logInfo(`SteamCMD: starting install ${isBatch ? `batch (${entries.length} mods)` : `for ${entries[0].workshopId}`}`);
 
     const installResults = await runSteamCmdDownloadBatch(entries, jobsById, (workshopId, progress, message) => {
         const activeEntry = entries.find((entry) => entry.workshopId === workshopId);
@@ -886,6 +1012,7 @@ async function runInstallBatch(firstEntry: { workshopId: string; modName: string
             return;
         }
 
+        actionStates.set(workshopId, "installing");
         upsertQueueItem(workshopId, activeEntry.modName, "install", "running", progress, message);
     });
 
@@ -1000,13 +1127,14 @@ export async function queueDownload(request: DownloadActionRequest): Promise<Dow
 
     const modName = request.modName?.trim() || workshopId;
     queuePending.push({ workshopId, modName, action: request.action });
+    const queuePosition = queuePending.length;
 
     if (request.action === "install") {
         actionStates.set(workshopId, "queued");
-        upsertQueueItem(workshopId, modName, request.action, "queued", 0, "Queued for install.");
+        upsertQueueItem(workshopId, modName, request.action, "queued", 0, `Queued for install. Waiting slot: ${queuePosition}.`);
     } else {
-        actionStates.set(workshopId, "uninstalling");
-        upsertQueueItem(workshopId, modName, request.action, "queued", 0, "Queued for uninstall.");
+        actionStates.set(workshopId, "queued");
+        upsertQueueItem(workshopId, modName, request.action, "queued", 0, `Queued for uninstall. Waiting slot: ${queuePosition}.`);
     }
 
     void processQueue();

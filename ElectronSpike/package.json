@@ -22,7 +22,9 @@
             "dist/**/*",
             "src/renderer/**/*",
             "assets/**/*",
-            "package.json"
+            "package.json",
+            "node_modules/steamworks.js/**/*",
+            "node_modules/better-sqlite3/**/*"
         ],
         "win": {
             "icon": "assets/app.ico",
@@ -41,7 +43,8 @@
         ]
     },
     "dependencies": {
-        "better-sqlite3": "^11.8.1"
+        "better-sqlite3": "^11.8.1",
+        "steamworks.js": "^0.4.0"
     },
     "devDependencies": {
         "@electron/rebuild": "^4.0.3",

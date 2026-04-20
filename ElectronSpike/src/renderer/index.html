@@ -72,7 +72,7 @@
                     </div>
                 </section>
 
-                <section class="sidebar-block">
+                <section class="sidebar-block sidebar-main">
                     <p class="sidebar-title">Workspaces</p>
                     <div class="nav-items">
                         <button id="tabVersion" class="nav-btn is-active" type="button">
@@ -83,42 +83,27 @@
                             <span class="nav-icon" data-icon="library"></span>
                             <span class="nav-label">Library</span>
                         </button>
+                        <button id="tabDownloads" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="queue"></span>
+                            <span class="nav-label">Downloads</span>
+                        </button>
                         <button id="tabWorkshop" class="nav-btn" type="button">
                             <span class="nav-icon" data-icon="workshop"></span>
                             <span class="nav-label">Workshop</span>
                         </button>
                     </div>
-                </section>
 
-                <section class="sidebar-block queue-panel">
-                    <div class="queue-head">
-                        <p class="sidebar-title">Install Queue</p>
-                        <span id="queueLoadChip" class="status-chip status-chip-muted">Idle</span>
+                    <div class="sidebar-main-bottom">
+                        <p class="sidebar-title">Controls</p>
+                        <button id="launchGameBtn" class="nav-btn nav-btn-launch" type="button">
+                            <span class="nav-icon" data-icon="launch"></span>
+                            <span class="nav-label" id="launchGameText">Launch Game</span>
+                        </button>
+                        <button id="tabSettings" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="settings"></span>
+                            <span class="nav-label">Settings</span>
+                        </button>
                     </div>
-                    <p id="queueSummary" class="muted">No active installs.</p>
-                    <div class="queue-toolbar">
-                        <button id="queueCancelAll" class="button-secondary queue-tool-btn" type="button">Cancel
-                            all</button>
-                        <button id="queueClearFinished" class="button-secondary queue-tool-btn" type="button">Clear
-                            finished</button>
-                    </div>
-                    <div class="queue-overall">
-                        <div class="queue-overall-progress"><span id="queueOverallBar"></span></div>
-                        <p id="queueOverallLabel" class="muted queue-overall-label">No queue activity.</p>
-                    </div>
-                    <div id="queueList" class="queue-list" aria-live="polite"></div>
-                </section>
-
-                <section class="sidebar-block sidebar-controls">
-                    <p class="sidebar-title">Controls</p>
-                    <button id="launchGameBtn" class="nav-btn nav-btn-launch" type="button">
-                        <span class="nav-icon" data-icon="launch"></span>
-                        <span class="nav-label" id="launchGameText">Launch Game</span>
-                    </button>
-                    <button id="tabSettings" class="nav-btn" type="button">
-                        <span class="nav-icon" data-icon="settings"></span>
-                        <span class="nav-label">Settings</span>
-                    </button>
                 </section>
             </aside>
 
@@ -294,15 +279,20 @@
                             <div id="libraryDetail" class="library-detail hidden">
                                 <div class="library-detail-head">
                                     <div class="library-detail-thumb-wrap">
-                                        <img id="libraryDetailThumb" class="library-detail-thumb hidden" src="" alt="" />
-                                        <div id="libraryDetailThumbFallback" class="library-detail-thumb-fallback">M</div>
+                                        <img id="libraryDetailThumb" class="library-detail-thumb hidden" src=""
+                                            alt="" />
+                                        <div id="libraryDetailThumbFallback" class="library-detail-thumb-fallback">M
+                                        </div>
                                     </div>
                                     <div class="library-detail-head-body">
                                         <h3 id="libraryDetailName">Mod</h3>
                                         <div class="library-detail-badges">
-                                            <span id="libraryDetailMpSafe" class="badge badge-community hidden">Multiplayer safe</span>
-                                            <span id="libraryDetailHasUpdate" class="badge badge-version hidden">Update available</span>
-                                            <span id="libraryDetailSubscribersChip" class="badge badge-unverified hidden"></span>
+                                            <span id="libraryDetailMpSafe"
+                                                class="badge badge-community hidden">Multiplayer safe</span>
+                                            <span id="libraryDetailHasUpdate" class="badge badge-version hidden">Update
+                                                available</span>
+                                            <span id="libraryDetailSubscribersChip"
+                                                class="badge badge-unverified hidden"></span>
                                         </div>
                                     </div>
                                 </div>
@@ -431,6 +421,59 @@
                         </div>
                         <span id="libraryUpdatesFooter" class="status-chip status-chip-muted">Updates: 0</span>
                     </footer>
+                </section>
+
+                <!-- ======== DOWNLOADS PAGE ======== -->
+                <section id="pageDownloads" class="page-section hidden">
+                    <header class="downloads-header">
+                        <div>
+                            <p class="eyebrow">Downloads</p>
+                            <h2>Install and Uninstall Queue</h2>
+                            <p class="muted">Track queued, active, and finished workshop operations in one place.</p>
+                        </div>
+                        <div class="downloads-header-actions">
+                            <button id="queueCancelAll" class="button-secondary queue-tool-btn" type="button">Cancel
+                                all</button>
+                            <button id="queueClearFinished" class="button-secondary queue-tool-btn" type="button">Clear
+                                finished</button>
+                        </div>
+                    </header>
+
+                    <section class="downloads-metrics">
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Running</p>
+                            <p id="queueMetricRunning" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Queued</p>
+                            <p id="queueMetricQueued" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Finished</p>
+                            <p id="queueMetricFinished" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric downloads-metric-warn">
+                            <p class="downloads-metric-label">Failed</p>
+                            <p id="queueMetricFailed" class="downloads-metric-value">0</p>
+                        </article>
+                    </section>
+
+                    <section class="downloads-overview">
+                        <div class="queue-head">
+                            <p class="sidebar-title">Queue Overview</p>
+                            <span id="queueLoadChip" class="status-chip status-chip-muted">Idle</span>
+                        </div>
+                        <p id="queueSummary" class="muted">No active installs.</p>
+                        <div class="queue-overall">
+                            <div class="queue-overall-progress"><span id="queueOverallBar"></span></div>
+                            <p id="queueOverallLabel" class="muted queue-overall-label">No queue activity.</p>
+                        </div>
+                        <p id="queueLastUpdated" class="muted downloads-last-updated">Last update: never</p>
+                    </section>
+
+                    <section class="downloads-list-shell">
+                        <div id="queueList" class="queue-list" aria-live="polite"></div>
+                    </section>
                 </section>
 
                 <!-- ======== WORKSHOP PAGE ======== -->
