@@ -23,6 +23,7 @@ export interface SettingsSnapshot {
     lastOfferedAppVersion?: string;
     skippedAppVersion?: string;
     publicProfileUsername?: string;
+    hideDisabledMods?: boolean;
 }
 
 export interface SettingsSaveResult {
@@ -532,4 +533,5 @@ export interface SpikeApi {
     checkAppUpdate: () => Promise<AppUpdateCheckResult>;
     startAppUpdate: (release: AppReleaseInfo) => Promise<StartAppUpdateResult>;
     skipAppVersion: (version: string) => Promise<SettingsSaveResult>;
+    detectGameVersion: (gamePath: string) => Promise<string | null>;
 }

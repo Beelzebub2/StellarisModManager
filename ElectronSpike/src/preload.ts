@@ -179,7 +179,9 @@ const api: SpikeApi = {
     startAppUpdate: (release: AppReleaseInfo) =>
         ipcRenderer.invoke("spike:startAppUpdate", release) as Promise<StartAppUpdateResult>,
     skipAppVersion: (version: string) =>
-        ipcRenderer.invoke("spike:skipAppVersion", version) as Promise<SettingsSaveResult>
+        ipcRenderer.invoke("spike:skipAppVersion", version) as Promise<SettingsSaveResult>,
+    detectGameVersion: (gamePath: string) =>
+        ipcRenderer.invoke("spike:detectGameVersion", gamePath) as Promise<string | null>
 };
 
 contextBridge.exposeInMainWorld("spikeApi", api);

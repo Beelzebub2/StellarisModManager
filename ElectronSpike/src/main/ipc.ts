@@ -43,6 +43,7 @@ import { logError, logInfo } from "./services/logger";
 import { getLegacyPaths } from "./services/paths";
 import {
     autoDetectSettingsSnapshot,
+    detectGameVersionFromPath,
     getDownloadRuntimeOptions,
     getThemePaletteOptions,
     loadSettingsSnapshot,
@@ -135,7 +136,8 @@ const CHANNELS = {
     workshopClearCache: "spike:clearWorkshopCache",
     appUpdateCheck: "spike:checkAppUpdate",
     appUpdateStart: "spike:startAppUpdate",
-    appUpdateSkip: "spike:skipAppVersion"
+    appUpdateSkip: "spike:skipAppVersion",
+    settingsDetectGameVersion: "spike:detectGameVersion"
 } as const;
 
 function buildSystemSummary(): SystemSummary {
@@ -234,6 +236,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.appUpdateCheck);
     ipcMain.removeHandler(CHANNELS.appUpdateStart);
     ipcMain.removeHandler(CHANNELS.appUpdateSkip);
+    ipcMain.removeHandler(CHANNELS.settingsDetectGameVersion);
 
     ipcMain.handle(CHANNELS.ping, async () => {
         logInfo("Renderer ping received.");
@@ -562,5 +565,9 @@ export function registerIpcHandlers(): void {
         }
         settings.skippedAppVersion = version;
         return saveSettingsSnapshot(settings);
+    });
+
+    ipcMain.handle(CHANNELS.settingsDetectGameVersion, (_event, gamePath: string) => {
+        return detectGameVersionFromPath(gamePath);
     });
 }

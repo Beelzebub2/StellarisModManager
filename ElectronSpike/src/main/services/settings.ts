@@ -89,8 +89,56 @@ function defaultSettings(): SettingsSnapshot {
         autoDetectGame: true,
         warnBeforeRestartGame: true,
         themePalette: "Obsidian Ember",
-        autoCheckAppUpdates: true
+        autoCheckAppUpdates: true,
+        hideDisabledMods: false
     };
+}
+
+function extractVersionNumber(value: string | undefined): string | undefined {
+    const raw = coerceString(value);
+    if (!raw) {
+        return undefined;
+    }
+
+    // Strip leading "v" then return a clean major.minor.patch string.
+    // Handles both "3.14.159265" and "Shelley v2.5.0 (735cf9b8976d3960ce220e405e459939)".
+    const stripped = raw.replace(/^v/i, "").trim();
+    const match = stripped.match(/^(\d+\.\d+(?:\.\d+)*)/);
+    if (match) {
+        return match[1];
+    }
+
+    // Fallback: find any version-like token anywhere in the string.
+    const anyMatch = raw.match(/\bv?(\d+\.\d+(?:\.\d+)*)\b/i);
+    return anyMatch ? anyMatch[1] : undefined;
+}
+
+function detectGameVersion(gamePath: string | undefined): string | undefined {
+    const root = coerceString(gamePath);
+    if (!root) {
+        return undefined;
+    }
+
+    try {
+        const settingsFile = path.join(root, "launcher-settings.json");
+        if (!fs.existsSync(settingsFile)) {
+            return undefined;
+        }
+
+        const raw = fs.readFileSync(settingsFile, "utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+
+        // "rawVersion" is the clean field ("3.14.159265" or "v3.14.159265").
+        // "version" is a display string ("Shelley v2.5.0 (735cf9b8976d3960ce220e405e459939)").
+        return extractVersionNumber(String(parsed.rawVersion ?? ""))
+            ?? extractVersionNumber(String(parsed.version ?? ""));
+    } catch {
+        return undefined;
+    }
+}
+
+export function detectGameVersionFromPath(gamePath: string): string | null {
+    return detectGameVersion(gamePath) ?? null;
 }
 
 function normalizeSettings(rawValue: unknown): SettingsSnapshot {
@@ -125,7 +173,8 @@ function normalizeSettings(rawValue: unknown): SettingsSnapshot {
         lastAppUpdateCheckUtc: getString(raw, "lastAppUpdateCheckUtc", "LastAppUpdateCheckUtc"),
         lastOfferedAppVersion: getString(raw, "lastOfferedAppVersion", "LastOfferedAppVersion"),
         skippedAppVersion: getString(raw, "skippedAppVersion", "SkippedAppVersion"),
-        publicProfileUsername: getString(raw, "publicProfileUsername", "PublicProfileUsername")
+        publicProfileUsername: getString(raw, "publicProfileUsername", "PublicProfileUsername"),
+        hideDisabledMods: getBoolean(raw, defaults.hideDisabledMods ?? false, "hideDisabledMods", "HideDisabledMods")
     };
 }
 
@@ -146,7 +195,8 @@ function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown
         LastAppUpdateCheckUtc: coerceString(settings.lastAppUpdateCheckUtc) ?? null,
         LastOfferedAppVersion: coerceString(settings.lastOfferedAppVersion) ?? null,
         SkippedAppVersion: coerceString(settings.skippedAppVersion) ?? null,
-        PublicProfileUsername: coerceString(settings.publicProfileUsername) ?? null
+        PublicProfileUsername: coerceString(settings.publicProfileUsername) ?? null,
+        HideDisabledMods: coerceBoolean(settings.hideDisabledMods, false)
     };
 }
 
@@ -294,10 +344,19 @@ export function loadSettingsSnapshot(): SettingsSnapshot | null {
         return null;
     }
 
-    return {
+    const snapshot = {
         ...defaultSettings(),
         ...normalizeSettings(raw)
     };
+
+    if (!snapshot.lastDetectedGameVersion) {
+        const detected = detectGameVersion(snapshot.gamePath);
+        if (detected) {
+            snapshot.lastDetectedGameVersion = detected;
+        }
+    }
+
+    return snapshot;
 }
 
 export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult {
@@ -307,6 +366,11 @@ export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult
         workshopDownloadRuntime: normalizeRuntime(coerceString(next.workshopDownloadRuntime)),
         themePalette: coerceString(next.themePalette) ?? "Obsidian Ember"
     };
+
+    const detected = detectGameVersion(merged.gamePath);
+    if (detected) {
+        merged.lastDetectedGameVersion = detected;
+    }
 
     const { settingsPath } = getLegacyPaths();
     try {
@@ -363,6 +427,11 @@ export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
 
     if (detectedSteamCmdPath && normalizeRuntime(coerceString(current.workshopDownloadRuntime)) === "Auto") {
         current.workshopDownloadRuntime = "SteamCmd";
+    }
+
+    const detectedVersion = detectGameVersion(current.gamePath);
+    if (detectedVersion) {
+        current.lastDetectedGameVersion = detectedVersion;
     }
 
     return {

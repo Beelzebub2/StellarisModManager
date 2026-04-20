@@ -469,6 +469,12 @@ async function bootstrapSelectedVersionFromSettings() {
         if (detected) {
             state.selectedVersion = detected;
         }
+
+        if (settings) {
+            state.library.showEnabledOnly = settings.hideDisabledMods === true;
+            const toggle = byId("libraryEnabledOnly");
+            if (toggle) toggle.checked = state.library.showEnabledOnly;
+        }
     } catch {
         // keep default selected version
     }
@@ -1229,7 +1235,8 @@ function getDefaultSettingsModel() {
         autoDetectGame: true, developerMode: false, warnBeforeRestartGame: true,
         themePalette: "Obsidian Ember", autoCheckAppUpdates: true,
         compatibilityReporterId: "", lastAppUpdateCheckUtc: "",
-        lastOfferedAppVersion: "", skippedAppVersion: "", publicProfileUsername: ""
+        lastOfferedAppVersion: "", skippedAppVersion: "", publicProfileUsername: "",
+        hideDisabledMods: false
     };
 }
 
@@ -1288,13 +1295,18 @@ function buildSettingsFromForm() {
         lastAppUpdateCheckUtc: state.settingsModel?.lastAppUpdateCheckUtc || "",
         lastOfferedAppVersion: state.settingsModel?.lastOfferedAppVersion || "",
         skippedAppVersion: state.settingsModel?.skippedAppVersion || "",
-        publicProfileUsername: getInputValue("settingsPublicProfileInput")
+        publicProfileUsername: getInputValue("settingsPublicProfileInput"),
+        hideDisabledMods: state.library.showEnabledOnly === true
     };
 }
 
 function applySettingsToForm(settings) {
     const m = { ...getDefaultSettingsModel(), ...(settings || {}) };
     state.settingsModel = m;
+
+    state.library.showEnabledOnly = m.hideDisabledMods === true;
+    const libraryEnabledOnly = byId("libraryEnabledOnly");
+    if (libraryEnabledOnly) libraryEnabledOnly.checked = state.library.showEnabledOnly;
 
     setInputValue("settingsPublicProfileInput", m.publicProfileUsername);
     setInputValue("settingsGamePathInput", m.gamePath);
@@ -1408,6 +1420,35 @@ async function autoDetectSettingsPage() {
     setSettingsStatus(result.message);
 }
 
+async function detectAndApplyGameVersion(gamePath) {
+    if (!gamePath) return;
+    try {
+        const version = await window.spikeApi.detectGameVersion(gamePath);
+        if (!version) return;
+
+        // Update the read-only display text in the settings page.
+        setText("settingsGameVersionText", version);
+
+        // Keep the in-memory model in sync so subsequent saves preserve the detected value.
+        if (state.settingsModel) {
+            state.settingsModel.lastDetectedGameVersion = version;
+        }
+
+        // Normalize to major.minor and update the version browser's selected version.
+        const normalized = normalizeDetectedGameVersion(version);
+        if (normalized && normalized !== state.selectedVersion) {
+            state.selectedVersion = normalized;
+            // Refresh the dropdown so it reflects the new selection.
+            await refreshVersionOptions();
+            setSettingsStatus(`Detected game version ${version} — version browser updated to ${normalized}.`);
+        } else if (version) {
+            setSettingsStatus(`Detected game version ${version}.`);
+        }
+    } catch {
+        // Non-fatal: version stays whatever it was.
+    }
+}
+
 async function detectModsPathSettings() {
     const result = await window.spikeApi.autoDetectSettings();
     const detectedModsPath = String(result?.settings?.modsPath || "").trim();
@@ -1503,6 +1544,26 @@ function getActiveLibraryProfile() {
 function getSelectedLibraryMod() {
     const s = state.library.snapshot;
     return s ? s.mods.find((m) => m.id === state.library.selectedModId) || null : null;
+}
+
+async function persistHideDisabledMods(hide) {
+    if (!state.settingsModel) {
+        state.settingsModel = getDefaultSettingsModel();
+    }
+
+    if (state.settingsModel.hideDisabledMods === hide) {
+        return;
+    }
+
+    state.settingsModel.hideDisabledMods = hide;
+    try {
+        const result = await window.spikeApi.saveSettings({ ...state.settingsModel });
+        if (result?.ok && result.settings) {
+            state.settingsModel = result.settings;
+        }
+    } catch {
+        // non-fatal; the in-memory toggle still works for this session
+    }
 }
 
 function getFilteredLibraryMods() {
@@ -2719,6 +2780,13 @@ function hookSettingsControls() {
         });
     }
 
+    byId("settingsGamePathInput")?.addEventListener("blur", () => {
+        const gamePath = getInputValue("settingsGamePathInput");
+        if (gamePath) {
+            void detectAndApplyGameVersion(gamePath);
+        }
+    });
+
     byId("settingsGamePathBrowse")?.addEventListener("click", async () => {
         const selectedPath = await window.spikeApi.pickDirectory({
             title: "Select Stellaris installation folder",
@@ -2731,6 +2799,7 @@ function hookSettingsControls() {
 
         setInputValue("settingsGamePathInput", selectedPath);
         markSettingsDirty(true);
+        void detectAndApplyGameVersion(selectedPath);
     });
 
     byId("settingsDetectModsPath")?.addEventListener("click", () => void detectModsPathSettings());
@@ -2781,6 +2850,7 @@ function hookLibraryControls() {
     byId("libraryEnabledOnly")?.addEventListener("change", (e) => {
         state.library.showEnabledOnly = e.target.checked === true;
         renderLibraryList();
+        void persistHideDisabledMods(state.library.showEnabledOnly);
     });
 
     byId("libraryDetailTagsToggle")?.addEventListener("click", () => {
@@ -2810,6 +2880,15 @@ function hookLibraryControls() {
                 if (p) {
                     await window.spikeApi.activateLibraryProfile(p.id);
                     await refreshLibrarySnapshot();
+                }
+
+                // Fresh profile has no enabled mods; hide disabled ones so the view isn't cluttered.
+                if (!state.library.showEnabledOnly) {
+                    state.library.showEnabledOnly = true;
+                    const toggle = byId("libraryEnabledOnly");
+                    if (toggle) toggle.checked = true;
+                    renderLibraryList();
+                    void persistHideDisabledMods(true);
                 }
             }
         } catch (e) {
