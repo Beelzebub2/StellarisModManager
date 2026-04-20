@@ -4,37 +4,50 @@
 [![Issues](https://img.shields.io/github/issues/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/issues)
 [![Release](https://img.shields.io/github/v/release/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/releases)
 
-Desktop mod manager for Stellaris built with Avalonia and .NET 8.
+Desktop mod manager for Stellaris built with Electron and TypeScript.
 
 ## What it does
 
-- Manage installed mods and load order
-- Browse workshop mods by game version
-- Check updates and export/import mod lists
-- Report per-version compatibility (worked or not worked)
-- Optional Stellarisync API service for community sync data
+- **Library** — manage installed mods, toggle enabled/disabled, drag-and-drop load order
+- **Profiles** — create, rename, and switch profiles; share profiles via a public ID
+- **Version browser** — browse and install Steam Workshop mods filtered by your game version
+- **Auto-detection** — reads your game path to detect the installed Stellaris version automatically
+- **Compatibility reports** — report per-version compatibility and see community consensus
+- **Updates** — check for mod updates and reinstall in bulk
+- **Optional sync API** — Stellarisync Node.js service for community compatibility data
 
 ## Quick start
 
 ### Requirements
 
-- Windows
-- .NET 8 SDK
-- Node.js 18+ (only if you run the Stellarisync API)
+- Node.js 18+
+- Windows (primary target; macOS and Linux builds are supported by the bundler but untested)
 
 ### Run the desktop app
 
 ```bat
-run.bat Debug
+cd ElectronSpike
+run.bat
 ```
 
-### Build release output
+`run.bat` installs npm dependencies automatically on first run. Pass `--skip-install` to skip that step.
+
+### Build / typecheck
 
 ```bat
-build.bat Release 1.0.0
+cd ElectronSpike
+build.bat build          :: compile TypeScript
+build.bat check          :: typecheck only (no output)
 ```
 
-Build artifacts are written to `Output/StellarisModManager`.
+### Package a distributable
+
+```bat
+cd ElectronSpike
+npm run pack
+```
+
+Output is written to `ElectronSpike/release/`.
 
 ### Run the Stellarisync API (optional)
 
@@ -44,13 +57,13 @@ npm install
 npm start
 ```
 
-## Project layout
+## Settings — game version detection
 
-- `Core/` - domain models and services
-- `UI/` - Avalonia views and viewmodels
-- `Updater/` - updater tooling
-- `Stellarisync/` - lightweight Node.js sync API
-- `.github/workflows/` - CI/release automation
+Set the **Game path** in Settings and the app will read `launcher-settings.json` from the game directory to detect your installed version. The detected version is shown in the Settings page and automatically pre-selects the correct version in the Version Browser tab. Detection runs when you:
+
+- Type a path and move focus out of the field
+- Pick a folder via the **Browse…** button
+- Click **Auto-detect** or save settings
 
 ## Contributing
 
