@@ -181,6 +181,25 @@ function isValidSharedProfileId(value: string): boolean {
     return /^[a-f0-9]{32}$/i.test(value);
 }
 
+function sanitizeSharedProfileId(value: string): string {
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    if (isValidSharedProfileId(raw)) {
+        return raw;
+    }
+
+    const idParamMatch = raw.match(/[?&](?:id|profileId)=([a-f0-9]{32})\b/i);
+    if (idParamMatch) {
+        return idParamMatch[1];
+    }
+
+    const fallbackMatch = raw.match(/\b([a-f0-9]{32})\b/i);
+    return fallbackMatch ? fallbackMatch[1] : raw;
+}
+
 function parseTags(value: string | null | undefined): string[] {
     if (!value) {
         return [];
@@ -1109,8 +1128,13 @@ function normalizeSharedProfileMods(value: unknown): string[] {
     return ordered;
 }
 
-async function fetchSharedProfile(sharedProfileId: string): Promise<RemoteSharedProfilePayload> {
-    const url = `${STELLARISYNC_BASE_URL}/profiles/${encodeURIComponent(sharedProfileId)}`;
+async function fetchSharedProfile(sharedProfileId: string, sinceRaw?: string): Promise<RemoteSharedProfilePayload> {
+    const url = new URL(`${STELLARISYNC_BASE_URL}/profiles/${encodeURIComponent(sharedProfileId)}`);
+    const since = String(sinceRaw ?? "").trim();
+    if (since) {
+        url.searchParams.set("since", since);
+    }
+
     const response = await fetch(url, {
         method: "GET",
         headers: {
@@ -1138,7 +1162,7 @@ async function fetchSharedProfile(sharedProfileId: string): Promise<RemoteShared
 export async function syncLibrarySharedProfile(
     request: LibrarySyncSharedProfileRequest
 ): Promise<LibrarySyncSharedProfileResult> {
-    const sharedProfileId = (request.sharedProfileId ?? "").trim();
+    const sharedProfileId = sanitizeSharedProfileId(request.sharedProfileId ?? "");
     if (!sharedProfileId) {
         return buildSharedProfileSyncFailure("Shared profile ID is required.");
     }
@@ -1166,7 +1190,7 @@ export async function syncLibrarySharedProfile(
             return buildSharedProfileSyncFailure("Could not determine workshop ID column in Mods table.");
         }
 
-        const remoteProfile = await fetchSharedProfile(sharedProfileId);
+        const remoteProfile = await fetchSharedProfile(sharedProfileId, request.sharedProfileSince);
         const remoteMods = normalizeSharedProfileMods(remoteProfile.mods);
         const settings = loadSettingsSnapshot();
         const modsPath = settings?.modsPath?.trim() || getDefaultModsDirectory();

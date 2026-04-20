@@ -167,6 +167,35 @@ function isValidWorkshopId(value) {
     return /^\d{6,}$/.test(value);
 }
 
+function parseSharedProfileSyncInput(value) {
+    const raw = String(value ?? "").trim();
+    if (!raw) {
+        return { sharedProfileId: "", sharedProfileSince: "" };
+    }
+
+    const paramsSource = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : raw;
+    const params = new URLSearchParams(paramsSource);
+    const paramId = (params.get("id") || params.get("profileId") || "").trim();
+    const paramSince = (params.get("since") || "").trim();
+
+    if (paramId) {
+        return {
+            sharedProfileId: paramId,
+            sharedProfileSince: paramSince
+        };
+    }
+
+    const commaSeparated = raw.split(",").map((part) => part.trim()).filter(Boolean);
+    if (commaSeparated.length >= 2) {
+        return {
+            sharedProfileId: commaSeparated[0],
+            sharedProfileSince: commaSeparated.slice(1).join(",")
+        };
+    }
+
+    return { sharedProfileId: raw, sharedProfileSince: "" };
+}
+
 function formatVersionBadgeValue(value) {
     const raw = String(value || "").trim();
     if (!raw) return "-";
@@ -3125,14 +3154,19 @@ function hookLibraryControls() {
         try {
             const sharedId = await showPrompt(
                 "Use Shared Profile ID",
-                "Paste the shared profile ID to use for this profile:",
+                "Paste the shared profile ID (or ID,since) to use for this profile:",
                 active.sharedProfileId || ""
             );
             if (sharedId === null) return;
-            if (!sharedId) { setLibraryStatus("Shared profile ID is required."); return; }
+            const parsedShared = parseSharedProfileSyncInput(sharedId);
+            if (!parsedShared.sharedProfileId) {
+                setLibraryStatus("Shared profile ID is required.");
+                return;
+            }
             const syncResult = await window.spikeApi.syncLibrarySharedProfile({
                 profileId: active.id,
-                sharedProfileId: sharedId
+                sharedProfileId: parsedShared.sharedProfileId,
+                sharedProfileSince: parsedShared.sharedProfileSince
             });
             setLibraryStatus(syncResult.message);
             await refreshLibrarySnapshot();

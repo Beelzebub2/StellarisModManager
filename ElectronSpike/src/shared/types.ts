@@ -354,6 +354,7 @@ export interface LibrarySetSharedProfileIdRequest {
 export interface LibrarySyncSharedProfileRequest {
     profileId: number;
     sharedProfileId: string;
+    sharedProfileSince?: string;
 }
 
 export interface LibrarySyncSharedProfileResult extends LibraryActionResult {
