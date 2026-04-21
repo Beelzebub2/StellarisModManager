@@ -498,6 +498,7 @@ export interface SpikeApi {
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;
     getThemePaletteOptions: () => Promise<string[]>;
     getDownloadRuntimeOptions: () => Promise<string[]>;
+    setWindowChromeTheme: (themePalette?: string) => Promise<boolean>;
     pickDirectory: (request?: DirectoryPickerRequest) => Promise<string | null>;
     getDbSummary: () => Promise<DbSummary | null>;
     getLibrarySnapshot: () => Promise<LibrarySnapshot>;

@@ -70,6 +70,7 @@
     --gradient-accent: linear-gradient(135deg, var(--accent), var(--accent-hover));
     --gradient-success: linear-gradient(135deg, #00e080, #34fba0);
     --gradient-danger: linear-gradient(135deg, #ff3366, #ff708f);
+    --titlebar-surface: #111722;
 
     /* ── Fonts ── */
     --font: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, -apple-system, sans-serif;
@@ -119,6 +120,7 @@ body[data-theme="graphite-moss"] {
     --accent-glow: rgba(74, 222, 128, 0.35);
     --shadow-lift-accent: 0 10px 30px rgba(74, 222, 128, 0.18), 0 2px 6px rgba(0, 0, 0, 0.3);
     --gradient-accent: linear-gradient(135deg, #22c55e, #4ade80);
+    --titlebar-surface: #17201d;
 }
 
 body[data-theme="nocturne-slate"] {
@@ -149,6 +151,7 @@ body[data-theme="nocturne-slate"] {
     --accent-glow: rgba(96, 165, 250, 0.38);
     --shadow-lift-accent: 0 10px 30px rgba(96, 165, 250, 0.20), 0 2px 6px rgba(0, 0, 0, 0.3);
     --gradient-accent: linear-gradient(135deg, #60a5fa, #93c5fd);
+    --titlebar-surface: #141b2c;
 }
 
 body[data-theme="starlight-white"] {
@@ -198,6 +201,7 @@ body[data-theme="starlight-white"] {
     --shadow-lift: 0 6px 18px rgba(15, 23, 42, 0.12), 0 1px 2px rgba(15, 23, 42, 0.08);
     --shadow-lift-accent: 0 10px 30px rgba(3, 105, 161, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08);
     --gradient-accent: linear-gradient(135deg, #0369a1, #0284c7);
+    --titlebar-surface: #eef4fb;
 }
 
 body[data-theme="ivory-white"] {
@@ -247,6 +251,7 @@ body[data-theme="ivory-white"] {
     --shadow-lift: 0 6px 18px rgba(71, 50, 23, 0.14), 0 1px 2px rgba(71, 50, 23, 0.10);
     --shadow-lift-accent: 0 10px 30px rgba(14, 116, 144, 0.18), 0 2px 6px rgba(71, 50, 23, 0.10);
     --gradient-accent: linear-gradient(135deg, #0e7490, #0891b2);
+    --titlebar-surface: #f7efe2;
 }
 
 body[data-theme="frost-white"] {
@@ -296,6 +301,7 @@ body[data-theme="frost-white"] {
     --shadow-lift: 0 6px 18px rgba(30, 58, 138, 0.12), 0 1px 2px rgba(30, 58, 138, 0.08);
     --shadow-lift-accent: 0 10px 30px rgba(29, 78, 216, 0.18), 0 2px 6px rgba(30, 58, 138, 0.08);
     --gradient-accent: linear-gradient(135deg, #1d4ed8, #2563eb);
+    --titlebar-surface: #edf5ff;
 }
 
 /* ============================================================
@@ -376,10 +382,11 @@ body.drawer-open {
     width: var(--app-vw);
     height: var(--app-vh);
     min-height: var(--app-vh);
+    min-width: 0;
     display: grid;
     grid-template-rows: auto 1fr;
     gap: 12px;
-    padding: 12px;
+    padding: 0 12px 12px;
 }
 
 /* Disable heavy transitions while the user drags the window edge. */
@@ -477,24 +484,37 @@ body[data-theme="frost-white"] .aurora {
    HEADER / TOPBAR
    ============================================================ */
 .topbar {
-    padding: 0 16px;
-    padding-right: 144px;
-    height: 54px;
-    border-radius: var(--r-xl);
+    --titlebar-overlay-width: env(titlebar-area-width, calc(var(--app-vw) - 138px));
+    --titlebar-overlay-height: env(titlebar-area-height, 54px);
+    --titlebar-controls-width: max(138px, calc(var(--app-vw) - var(--titlebar-overlay-width)));
+    margin: 0 -12px;
+    padding: 0 20px;
+    padding-right: calc(var(--titlebar-controls-width) + 20px);
+    min-height: var(--titlebar-overlay-height);
+    height: auto;
+    border-radius: 0 0 18px 18px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 16px;
     -webkit-app-region: drag;
-    background: var(--bg-1);
+    background: var(--titlebar-surface);
+    border: none;
+    border-bottom: 1px solid var(--border);
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.18);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     position: relative;
     z-index: 10;
+    min-width: 0;
 }
 
 .topbar-left {
     display: flex;
     align-items: center;
     gap: 10px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .app-badge {
@@ -530,6 +550,7 @@ body[data-theme="frost-white"] .aurora {
 .brand-block {
     display: flex;
     flex-direction: column;
+    min-width: 0;
 }
 
 .brand-title {
@@ -538,6 +559,9 @@ body[data-theme="frost-white"] .aurora {
     font-weight: 700;
     letter-spacing: 0.02em;
     line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .brand-subtitle {
@@ -549,6 +573,7 @@ body[data-theme="frost-white"] .aurora {
     align-items: center;
     gap: 6px;
     -webkit-app-region: no-drag;
+    flex-shrink: 0;
 }
 
 /* ============================================================
@@ -644,6 +669,7 @@ body[data-theme="frost-white"] .aurora {
     grid-template-columns: minmax(240px, 260px) minmax(0, 1fr);
     gap: 12px;
     min-height: 0;
+    min-width: 0;
 }
 
 /* ── Sidebar ── */
@@ -1538,6 +1564,7 @@ body[data-theme="frost-white"] .aurora {
    ============================================================ */
 .content {
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
     padding: 24px;
     display: grid;
@@ -1553,6 +1580,7 @@ body[data-theme="frost-white"] .aurora {
 
 .page-section {
     min-height: 0;
+    min-width: 0;
     display: grid;
     gap: 10px;
     grid-row: 1;
@@ -4275,7 +4303,8 @@ pre {
         flex-direction: column;
         align-items: flex-start;
         height: auto;
-        padding: 10px 16px;
+        padding: 10px 16px 12px;
+        padding-right: calc(var(--titlebar-controls-width) + 16px);
     }
 
     .topbar-actions {

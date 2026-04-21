@@ -277,6 +277,9 @@ function applyThemePalette(paletteName) {
     const normalized = normalizeThemePaletteName(paletteName);
     const themeKey = THEME_PALETTE_TO_KEY[normalized] || THEME_PALETTE_TO_KEY["Obsidian Ember"];
     document.body.setAttribute("data-theme", themeKey);
+    void window.spikeApi.setWindowChromeTheme(normalized).catch(() => {
+        // Native titlebar overlay syncing is cosmetic; ignore failures.
+    });
 }
 
 /* ---- Status management ---- */

@@ -3,6 +3,8 @@ import path from "node:path";
 import { app, BrowserWindow, Menu } from "electron";
 import { registerIpcHandlers } from "./main/ipc";
 import { logError, logInfo } from "./main/services/logger";
+import { loadSettingsSnapshot } from "./main/services/settings";
+import { getTitleBarOverlayOptionsForTheme } from "./main/windowChrome";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -77,6 +79,7 @@ function getRendererEntryPath(): string {
 
 function createMainWindow(): void {
     const iconPath = resolveAppWindowIconPath();
+    const settings = loadSettingsSnapshot();
 
     mainWindow = new BrowserWindow({
         width: 1360,
@@ -86,11 +89,7 @@ function createMainWindow(): void {
         minHeight: 560,
         icon: iconPath,
         titleBarStyle: "hidden",
-        titleBarOverlay: {
-            color: "#0e1117",
-            symbolColor: "#e2e8f0",
-            height: 40
-        },
+        titleBarOverlay: getTitleBarOverlayOptionsForTheme(settings?.themePalette),
         webPreferences: {
             preload: path.join(__dirname, "preload.js"),
             contextIsolation: true,

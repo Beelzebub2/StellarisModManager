@@ -82,6 +82,7 @@ import {
     checkAppUpdate,
     startAppUpdate
 } from "./services/appUpdater";
+import { applyTitleBarOverlayForTheme } from "./windowChrome";
 
 const CHANNELS = {
     ping: "spike:ping",
@@ -92,6 +93,7 @@ const CHANNELS = {
     settingsValidate: "spike:validateSettings",
     settingsPalettes: "spike:getThemePaletteOptions",
     settingsRuntimes: "spike:getDownloadRuntimeOptions",
+    windowChromeTheme: "spike:setWindowChromeTheme",
     settingsPickDirectory: "spike:pickDirectory",
     dbSummary: "spike:getDbSummary",
     librarySnapshot: "spike:getLibrarySnapshot",
@@ -243,6 +245,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.settingsValidate);
     ipcMain.removeHandler(CHANNELS.settingsPalettes);
     ipcMain.removeHandler(CHANNELS.settingsRuntimes);
+    ipcMain.removeHandler(CHANNELS.windowChromeTheme);
     ipcMain.removeHandler(CHANNELS.settingsPickDirectory);
     ipcMain.removeHandler(CHANNELS.dbSummary);
     ipcMain.removeHandler(CHANNELS.librarySnapshot);
@@ -337,6 +340,11 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.settingsRuntimes, async () => {
         return getDownloadRuntimeOptions();
+    });
+
+    ipcMain.handle(CHANNELS.windowChromeTheme, async (event, themePalette?: string) => {
+        const window = BrowserWindow.fromWebContents(event.sender);
+        return applyTitleBarOverlayForTheme(window, themePalette);
     });
 
     ipcMain.handle(CHANNELS.settingsPickDirectory, async (_event, request?: DirectoryPickerRequest) => {
