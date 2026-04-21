@@ -687,6 +687,10 @@ function toWorkshopSortMode(sortMode: VersionSortMode | undefined): WorkshopSort
     }
 }
 
+export function toWorkshopSortModeForTest(sortMode: VersionSortMode | undefined): WorkshopSortMode {
+    return toWorkshopSortMode(sortMode);
+}
+
 function extractMajorMinorVersionTokens(text: string): Set<string> {
     const tokens = new Set<string>();
     const versionTokenRegex = /(^|[^\d])(\d+\.\d+(?:\.\d+)?)(?=$|[^\d])/g;

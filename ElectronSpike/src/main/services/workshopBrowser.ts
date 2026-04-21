@@ -129,7 +129,7 @@ function toSteamBrowseSort(sortMode: WorkshopSortMode): string {
         case "most-subscribed":
             return "totaluniquesubscribers";
         case "most-popular":
-            return "trend";
+            return "playtime_trend";
         case "recent":
             return "mostrecent";
         case "trend":
@@ -138,6 +138,10 @@ function toSteamBrowseSort(sortMode: WorkshopSortMode): string {
         default:
             return "textsearch";
     }
+}
+
+export function toSteamBrowseSortForTest(sortMode: WorkshopSortMode): string {
+    return toSteamBrowseSort(sortMode);
 }
 
 function buildBrowseCacheKey(sortMode: WorkshopSortMode, searchText: string, steamPage: number): string {

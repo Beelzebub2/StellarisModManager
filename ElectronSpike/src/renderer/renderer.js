@@ -293,9 +293,25 @@ function setLibraryStatus(text) {
     if (state.selectedTab === "library") setGlobalStatus(text);
 }
 
+function formatSortLabel(sortMode) {
+    if (sortMode === "most-subscribed") return "Most Subscribed";
+    if (sortMode === "most-popular") return "Most Popular";
+    return "Relevance";
+}
+
+function buildVersionSummaryText(total, page, pages) {
+    const versionText = `version ${state.selectedVersion}`;
+    const rankingText = `ranked by ${formatSortLabel(state.sortMode)}`;
+    const searchText = state.searchText ? ` filtered by "${state.searchText}"` : "";
+    const olderText = state.showOlderVersions ? " including older versions" : "";
+    return `${total} matches for ${versionText}, ${rankingText}${searchText}${olderText}. Page ${page} of ${pages}.`;
+}
+
 function setResultSummary(total, page, pages) {
     setText("resultCountChip", `${total} matches`);
     setText("pageCursorChip", `Page ${page}/${pages}`);
+    setText("versionSortChip", formatSortLabel(state.sortMode));
+    setText("versionSummaryText", buildVersionSummaryText(total, page, pages));
 }
 
 async function applyAppIcon() {
@@ -1002,16 +1018,29 @@ function formatQueueUpdatedAt(value) {
     return `${days}d ago`;
 }
 
-function createQueueEmptyState() {
+function partitionQueueItems(items) {
+    const active = [];
+    const history = [];
+
+    for (const item of items || []) {
+        const status = String(item?.status || "").toLowerCase();
+        if (status === "queued" || status === "running") active.push(item);
+        else history.push(item);
+    }
+
+    return { active, history };
+}
+
+function createQueueEmptyState(message, iconName = "queue") {
     const empty = document.createElement("div");
     empty.className = "queue-empty";
 
     const icon = document.createElement("span");
     icon.className = "queue-empty-icon";
-    setDataIcon(icon, "queue");
+    setDataIcon(icon, iconName);
 
     const label = document.createElement("span");
-    label.textContent = "No active installs";
+    label.textContent = message;
 
     empty.append(icon, label);
     return empty;
@@ -1165,13 +1194,18 @@ function updateQueueRow(view, item) {
 
 function renderQueueList(snapshot) {
     const summary = byId("queueSummary");
-    const queueList = byId("queueList");
+    const queueActiveList = byId("queueActiveList");
+    const queueHistoryList = byId("queueHistoryList");
     const queueChip = byId("statusbarQueue");
     const queueLoadChip = byId("queueLoadChip");
     const queueOverallLabel = byId("queueOverallLabel");
     const queueOverallBar = byId("queueOverallBar");
     const queueCancelAll = byId("queueCancelAll");
     const queueClearFinished = byId("queueClearFinished");
+    const queueActiveSummary = byId("queueActiveSummary");
+    const queueHistorySummary = byId("queueHistorySummary");
+    const queueActiveCountChip = byId("queueActiveCountChip");
+    const queueHistoryCountChip = byId("queueHistoryCountChip");
     const queueMetricRunning = byId("queueMetricRunning");
     const queueMetricQueued = byId("queueMetricQueued");
     const queueMetricFinished = byId("queueMetricFinished");
@@ -1179,7 +1213,9 @@ function renderQueueList(snapshot) {
     const queueLastUpdated = byId("queueLastUpdated");
 
     const items = Array.isArray(snapshot.items) ? snapshot.items : [];
-    const activeItems = items.filter((i) => i.status === "queued" || i.status === "running");
+    const partitioned = partitionQueueItems(items);
+    const activeItems = partitioned.active;
+    const historyItems = partitioned.history;
     const runningCount = Number.isFinite(snapshot.runningCount)
         ? snapshot.runningCount
         : items.filter((i) => i.status === "running").length;
@@ -1215,12 +1251,14 @@ function renderQueueList(snapshot) {
         if (totalTracked === 0) {
             summary.textContent = "No download activity yet.";
         } else if (active > 0) {
-            const slotText = runningCount > 0 ? `${runningCount} of 3 slots active` : "";
-            const queueText = pendingCount > 0 ? `${pendingCount} queued` : "";
+            const slotText = runningCount > 0 ? `${runningCount} running right now` : "";
+            const queueText = pendingCount > 0 ? `${pendingCount} waiting next` : "";
             const parts = [slotText, queueText].filter(Boolean);
-            summary.textContent = parts.join(" \u2022 ") + (finished > 0 ? ` \u2022 ${finished} done` : "");
+            summary.textContent = parts.join(" • ") + (finished > 0 ? ` • ${finished} recent` : "");
         } else {
-            summary.textContent = `${finished} finished${failedCount > 0 ? ` \u2022 ${failedCount} failed` : ""}.`;
+            summary.textContent = failedCount > 0
+                ? `Queue is idle. ${failedCount} recent failure${failedCount === 1 ? "" : "s"} need attention.`
+                : `Queue is idle. ${finished} recent operation${finished === 1 ? "" : "s"} finished cleanly.`;
         }
     }
 
@@ -1228,6 +1266,8 @@ function renderQueueList(snapshot) {
     if (queueMetricQueued) queueMetricQueued.textContent = String(pendingCount);
     if (queueMetricFinished) queueMetricFinished.textContent = String(finished);
     if (queueMetricFailed) queueMetricFailed.textContent = String(failedCount);
+    if (queueActiveCountChip) queueActiveCountChip.textContent = `${activeItems.length} active`;
+    if (queueHistoryCountChip) queueHistoryCountChip.textContent = `${historyItems.length} recent`;
 
     if (queueCancelAll) queueCancelAll.disabled = active === 0;
     if (queueClearFinished) queueClearFinished.disabled = finished === 0;
@@ -1243,8 +1283,8 @@ function renderQueueList(snapshot) {
 
     if (queueOverallLabel) {
         if (totalTracked === 0) queueOverallLabel.textContent = "No queue activity.";
-        else if (active > 0) queueOverallLabel.textContent = `${overallPct}% average progress across visible active tasks.`;
-        else queueOverallLabel.textContent = `${finished} finished operation${finished === 1 ? "" : "s"}.`;
+        else if (active > 0) queueOverallLabel.textContent = `${overallPct}% average progress across active operations.`;
+        else queueOverallLabel.textContent = `${finished} recent operation${finished === 1 ? "" : "s"} tracked here.`;
     }
 
     if (queueLastUpdated) {
@@ -1257,44 +1297,58 @@ function renderQueueList(snapshot) {
         queueLastUpdated.textContent = `Last update: ${formatQueueUpdatedAt(updatedAt)}`;
     }
 
-    if (!queueList) return;
+    if (queueActiveSummary) {
+        queueActiveSummary.textContent = active > 0
+            ? `${runningCount} running and ${pendingCount} queued.`
+            : "No active operations.";
+    }
+
+    if (queueHistorySummary) {
+        queueHistorySummary.textContent = historyItems.length > 0
+            ? `${historyItems.length} recent operation${historyItems.length === 1 ? "" : "s"} kept for review.`
+            : "No recent history yet.";
+    }
+
+    if (!queueActiveList || !queueHistoryList) return;
+
+    const renderSection = (container, sectionItems, emptyLabel, emptyIconName) => {
+        container.replaceChildren();
+        if (sectionItems.length === 0) {
+            container.appendChild(createQueueEmptyState(emptyLabel, emptyIconName));
+            return;
+        }
+
+        for (const item of sectionItems) {
+            let view = state.queueRowsByWorkshopId.get(item.workshopId);
+            if (!view) {
+                view = createQueueRow(item.workshopId);
+                state.queueRowsByWorkshopId.set(item.workshopId, view);
+            }
+
+            updateQueueRow(view, item);
+            container.appendChild(view.root);
+        }
+    };
 
     if (totalTracked === 0) {
-        for (const view of state.queueRowsByWorkshopId.values()) {
-            view.root.remove();
-        }
         state.queueRowsByWorkshopId.clear();
-
-        if (!queueList.querySelector(".queue-empty")) {
-            queueList.replaceChildren(createQueueEmptyState());
-        }
-
+        renderSection(queueActiveList, [], "No active operations.", "queue");
+        renderSection(queueHistoryList, [], "No recent history yet.", "check");
         return;
     }
 
-    const emptyState = queueList.querySelector(".queue-empty");
-    if (emptyState) {
-        emptyState.remove();
-    }
-
     const statusOrder = { running: 0, queued: 1, failed: 2, cancelled: 3, completed: 4 };
-    const sortedItems = [...items].sort((a, b) =>
+    const sortedActiveItems = [...activeItems].sort((a, b) =>
+        (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
+    );
+    const sortedHistoryItems = [...historyItems].sort((a, b) =>
         (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
     );
 
-    const renderedIds = new Set();
-    for (const item of sortedItems) {
-        let view = state.queueRowsByWorkshopId.get(item.workshopId);
-        if (!view) {
-            view = createQueueRow(item.workshopId);
-            state.queueRowsByWorkshopId.set(item.workshopId, view);
-        }
+    renderSection(queueActiveList, sortedActiveItems, "No active operations.", "queue");
+    renderSection(queueHistoryList, sortedHistoryItems, "No recent history yet.", "check");
 
-        updateQueueRow(view, item);
-        queueList.appendChild(view.root);
-        renderedIds.add(item.workshopId);
-    }
-
+    const renderedIds = new Set(items.map((item) => item.workshopId));
     for (const [workshopId, view] of state.queueRowsByWorkshopId.entries()) {
         if (renderedIds.has(workshopId)) continue;
         view.root.remove();
@@ -1519,6 +1573,39 @@ function buildSettingsFromForm() {
     };
 }
 
+function updateSettingsGameVersionChip(version) {
+    const chip = byId("settingsGameVersionChip");
+    if (!chip) return;
+
+    const normalizedVersion = String(version || "").trim();
+    chip.className = "status-chip " + (normalizedVersion ? "status-chip-success" : "status-chip-muted");
+    chip.textContent = normalizedVersion ? `Version ${normalizedVersion}` : "Version not detected";
+}
+
+function getWorkshopRuntimeHint(runtime, steamCmdPath, steamCmdDownloadPath) {
+    const normalizedRuntime = String(runtime || "Auto").trim();
+    const hasSteamCmdPath = String(steamCmdPath || "").trim().length > 0;
+    const hasSteamCmdDownloadPath = String(steamCmdDownloadPath || "").trim().length > 0;
+
+    if (normalizedRuntime === "Steamworks" && !hasSteamCmdPath) {
+        return "Steamworks needs a valid Steam session for Stellaris. Configure SteamCMD as the fallback and recovery path.";
+    }
+
+    if (normalizedRuntime === "Steamworks") {
+        return "Steamworks is preferred when a valid Stellaris Steam session is available. SteamCMD stays ready as the fallback path.";
+    }
+
+    if (normalizedRuntime === "SteamCmd") {
+        return hasSteamCmdPath && hasSteamCmdDownloadPath
+            ? "SteamCMD is configured and ready for standalone downloads."
+            : "SteamCMD is selected. Set both the executable and download path for reliable installs.";
+    }
+
+    return hasSteamCmdPath
+        ? "Auto will use the best configured runtime and can fall back to SteamCMD when needed."
+        : "Auto works best when SteamCMD is configured as the fallback path.";
+}
+
 function applySettingsToForm(settings) {
     const m = { ...getDefaultSettingsModel(), ...(settings || {}) };
     state.settingsModel = m;
@@ -1540,15 +1627,17 @@ function applySettingsToForm(settings) {
     setCheckboxValue("settingsAutoUpdatesInput", m.autoCheckAppUpdates === true);
 
     setText("settingsGameVersionText", toDisplayValue(m.lastDetectedGameVersion));
+    updateSettingsGameVersionChip(m.lastDetectedGameVersion);
     setText("settingsLastCheckUtcText", formatUtc(m.lastAppUpdateCheckUtc));
     setText("settingsLastOfferedVersionText", toDisplayValue(m.lastOfferedAppVersion));
     setText("settingsSkippedVersionText", toDisplayValue(m.skippedAppVersion));
+    setText("settingsCurrentVersionText", byId("appVersionText")?.textContent || "--");
 
     const steamText = byId("settingsSteamCmdConfiguredText");
     if (steamText) {
-        const configured = !!m.steamCmdPath?.trim();
-        steamText.textContent = configured ? "Configured" : "Not configured";
-        steamText.className = "steam-status-text " + (configured ? "steam-status-configured" : "steam-status-not-configured");
+        const configured = !!(m.steamCmdPath?.trim() && m.steamCmdDownloadPath?.trim());
+        steamText.textContent = configured ? "Configured" : "Needs SteamCMD path";
+        steamText.className = "steam-status-text settings-value " + (configured ? "steam-status-configured" : "steam-status-not-configured");
     }
 
     syncSettingsRuntimeVisibility();
@@ -1559,13 +1648,17 @@ function applySettingsToForm(settings) {
 
 function syncSettingsRuntimeVisibility() {
     const runtime = getInputValue("settingsWorkshopRuntimeInput") || "Auto";
-    const hide = runtime.toLowerCase() === "steamworks";
-    for (const id of ["settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput"]) {
-        const el = byId(id);
-        if (el) {
-            const container = el.closest(".field-col");
-            if (container) container.classList.toggle("hidden", hide);
-        }
+    const steamCmdPath = getInputValue("settingsSteamCmdPathInput");
+    const steamCmdDownloadPath = getInputValue("settingsSteamCmdDownloadPathInput");
+    const configured = steamCmdPath.length > 0 && steamCmdDownloadPath.length > 0;
+
+    setText("settingsWorkshopRuntimeChip", `Runtime: ${runtime}`);
+    setText("settingsRuntimeHint", getWorkshopRuntimeHint(runtime, steamCmdPath, steamCmdDownloadPath));
+
+    const steamText = byId("settingsSteamCmdConfiguredText");
+    if (steamText) {
+        steamText.textContent = configured ? "Configured" : "Needs SteamCMD path";
+        steamText.className = "steam-status-text settings-value " + (configured ? "steam-status-configured" : "steam-status-not-configured");
     }
 }
 
@@ -1646,6 +1739,7 @@ async function detectAndApplyGameVersion(gamePath) {
 
         // Update the read-only display text in the settings page.
         setText("settingsGameVersionText", version);
+        updateSettingsGameVersionChip(version);
 
         // Keep the in-memory model in sync so subsequent saves preserve the detected value.
         if (state.settingsModel) {
@@ -1656,9 +1750,11 @@ async function detectAndApplyGameVersion(gamePath) {
         const normalized = normalizeDetectedGameVersion(version);
         if (normalized && normalized !== state.selectedVersion) {
             state.selectedVersion = normalized;
+            state.page = 1;
             // Refresh the dropdown so it reflects the new selection.
             await refreshVersionOptions();
-            setSettingsStatus(`Detected game version ${version} — version browser updated to ${normalized}.`);
+            await refreshVersionResults();
+            setSettingsStatus(`Detected game version ${version}; version browser updated to ${normalized}.`);
         } else if (version) {
             setSettingsStatus(`Detected game version ${version}.`);
         }

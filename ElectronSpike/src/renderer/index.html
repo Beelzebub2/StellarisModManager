@@ -113,45 +113,56 @@
                 <!-- ======== VERSION BROWSER PAGE ======== -->
                 <section id="pageVersion" class="page-section">
                     <header class="version-header">
-                        <p class="eyebrow">Version Browser</p>
+                        <div>
+                            <p class="eyebrow">Version Browser</p>
+                            <h2>Find Compatible Mods Faster</h2>
+                        </div>
                         <div class="version-header-right">
-                            <span id="resultCountChip" class="status-chip">0 matches</span>
-                            <span id="pageCursorChip" class="status-chip status-chip-muted">Page 1</span>
+                            <span id="versionSortChip" class="status-chip status-chip-muted">Relevance</span>
                         </div>
                     </header>
 
-                    <section class="controls-shell">
-                        <div class="controls-row">
-                            <div class="field-col">
-                                <label class="field-label" for="versionSelect">Game Version</label>
-                                <select id="versionSelect" class="field-input"></select>
-                            </div>
-                            <div class="field-col">
-                                <label class="field-label" for="sortSelect">Ranking</label>
-                                <select id="sortSelect" class="field-input">
-                                    <option value="relevance">Relevance</option>
-                                    <option value="most-subscribed">Most Subscribed</option>
-                                    <option value="most-popular">Most Popular</option>
-                                </select>
-                            </div>
-                            <label class="toggle-row" for="showOlderVersions">
-                                <input id="showOlderVersions" type="checkbox" />
-                                <span>Include older versions</span>
-                            </label>
-                            <div class="field-col grow">
-                                <label class="field-label" for="searchInput">Search Mods</label>
-                                <div class="search-wrap">
-                                    <input id="searchInput" class="field-input" type="text"
-                                        placeholder="Search by mod name or workshop ID" />
-                                    <button id="searchClear" type="button" class="button-tertiary">Clear</button>
+                    <section class="version-toolbar-shell">
+                        <div class="controls-shell">
+                            <div class="controls-row">
+                                <div class="field-col">
+                                    <label class="field-label" for="versionSelect">Game Version</label>
+                                    <select id="versionSelect" class="field-input"></select>
                                 </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="sortSelect">Ranking</label>
+                                    <select id="sortSelect" class="field-input">
+                                        <option value="relevance">Relevance</option>
+                                        <option value="most-subscribed">Most Subscribed</option>
+                                        <option value="most-popular">Most Popular</option>
+                                    </select>
+                                </div>
+                                <label class="toggle-row" for="showOlderVersions">
+                                    <input id="showOlderVersions" type="checkbox" />
+                                    <span>Include older versions</span>
+                                </label>
+                                <div class="field-col grow">
+                                    <label class="field-label" for="searchInput">Search Mods</label>
+                                    <div class="search-wrap">
+                                        <input id="searchInput" class="field-input" type="text"
+                                            placeholder="Search by mod name or workshop ID" />
+                                        <button id="searchClear" type="button" class="button-tertiary">Clear</button>
+                                    </div>
+                                </div>
+                                <button id="versionRefresh" type="button" class="button-secondary">Refresh</button>
                             </div>
-                            <button id="versionRefresh" type="button" class="button-secondary">Refresh</button>
                         </div>
-                    </section>
 
-                    <section class="status-row">
-                        <p id="versionStatus">Loading version browser...</p>
+                        <div class="version-summary-bar">
+                            <div class="version-summary-copy">
+                                <p id="versionSummaryText" class="version-summary-text">Loading version results...</p>
+                                <p id="versionStatus" class="muted">Loading version browser...</p>
+                            </div>
+                            <div class="version-summary-chips">
+                                <span id="resultCountChip" class="status-chip">0 matches</span>
+                                <span id="pageCursorChip" class="status-chip status-chip-muted">Page 1</span>
+                            </div>
+                        </div>
                     </section>
 
                     <section id="versionCards" class="card-grid"></section>
@@ -428,8 +439,8 @@
                     <header class="downloads-header">
                         <div>
                             <p class="eyebrow">Downloads</p>
-                            <h2>Install and Uninstall Queue</h2>
-                            <p class="muted">Track queued, active, and finished workshop operations in one place.</p>
+                            <h2>Operations Dashboard</h2>
+                            <p class="muted">See what is active now, what is waiting, and what needs attention.</p>
                         </div>
                         <div class="downloads-header-actions">
                             <button id="queueCancelAll" class="button-secondary queue-tool-btn" type="button">Cancel
@@ -471,8 +482,24 @@
                         <p id="queueLastUpdated" class="muted downloads-last-updated">Last update: never</p>
                     </section>
 
-                    <section class="downloads-list-shell">
-                        <div id="queueList" class="queue-list" aria-live="polite"></div>
+                    <section class="downloads-columns">
+                        <section class="downloads-list-shell">
+                            <div class="queue-head">
+                                <p class="sidebar-title">Active Now</p>
+                                <span id="queueActiveCountChip" class="status-chip status-chip-muted">0 active</span>
+                            </div>
+                            <p id="queueActiveSummary" class="muted downloads-section-copy">No active operations.</p>
+                            <div id="queueActiveList" class="queue-list" aria-live="polite"></div>
+                        </section>
+
+                        <section class="downloads-list-shell downloads-history-shell">
+                            <div class="queue-head">
+                                <p class="sidebar-title">Recent History</p>
+                                <span id="queueHistoryCountChip" class="status-chip status-chip-muted">0 recent</span>
+                            </div>
+                            <p id="queueHistorySummary" class="muted downloads-section-copy">No recent history yet.</p>
+                            <div id="queueHistoryList" class="queue-list" aria-live="polite"></div>
+                        </section>
                     </section>
                 </section>
 
@@ -521,161 +548,171 @@
                         </div>
                     </header>
 
-                    <section class="settings-shell">
-                        <nav class="settings-subtabs">
-                            <button type="button" class="settings-subtab is-active"
-                                data-settings-tab="general">General</button>
-                            <button type="button" class="settings-subtab" data-settings-tab="workshop">Workshop</button>
-                            <button type="button" class="settings-subtab" data-settings-tab="updates">Updates</button>
-                            <button type="button" class="settings-subtab" data-settings-tab="advanced">Advanced</button>
-                        </nav>
-
-                        <div class="settings-panels">
-                            <!-- General Tab -->
-                            <section id="settingsTabGeneral" class="settings-panel">
-                                <article class="settings-card">
-                                    <h3>Profile &amp; Sharing</h3>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsPublicProfileInput">Public
-                                            username</label>
-                                        <input id="settingsPublicProfileInput" class="field-input" type="text"
-                                            maxlength="40" placeholder="Example: StarAdmiral" />
+                    <section class="settings-shell settings-shell-flat">
+                        <div class="settings-task-grid">
+                            <article class="settings-card settings-card-primary">
+                                <div class="settings-card-heading">
+                                    <div>
+                                        <h3>Game Setup</h3>
+                                        <p class="muted settings-card-lead">Point the app at Stellaris and your local mods
+                                            folder.</p>
                                     </div>
-                                </article>
-
-                                <article class="settings-card">
-                                    <h3>Game Installation</h3>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsGamePathInput">Game path</label>
-                                        <div class="path-picker-row">
-                                            <input id="settingsGamePathInput" class="field-input mono" type="text"
-                                                placeholder="Path to Stellaris installation folder" />
-                                            <button id="settingsGamePathBrowse" type="button"
-                                                class="button-secondary">Browse...</button>
-                                        </div>
+                                    <span id="settingsGameVersionChip" class="status-chip status-chip-muted">Version not
+                                        detected</span>
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsGamePathInput">Game path</label>
+                                    <div class="path-picker-row">
+                                        <input id="settingsGamePathInput" class="field-input mono" type="text"
+                                            placeholder="Path to Stellaris installation folder" />
+                                        <button id="settingsGamePathBrowse" type="button"
+                                            class="button-secondary">Browse...</button>
                                     </div>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsModsPathInput">Mods path</label>
-                                        <div class="path-picker-row">
-                                            <input id="settingsModsPathInput" class="field-input mono" type="text"
-                                                placeholder="Path to Paradox mods folder" />
-                                            <button id="settingsDetectModsPath" type="button"
-                                                class="button-secondary">Detect</button>
-                                        </div>
+                                    <p class="muted settings-inline-help">Used to detect the installed game version and launch
+                                        path.</p>
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsModsPathInput">Mods path</label>
+                                    <div class="path-picker-row">
+                                        <input id="settingsModsPathInput" class="field-input mono" type="text"
+                                            placeholder="Path to Paradox mods folder" />
+                                        <button id="settingsDetectModsPath" type="button"
+                                            class="button-secondary">Detect</button>
                                     </div>
-                                    <div class="settings-inline-actions">
-                                        <label class="toggle-row" for="settingsWarnBeforeRestartInput">
-                                            <input id="settingsWarnBeforeRestartInput" type="checkbox" />
-                                            <span>Show restart warning</span>
-                                        </label>
-                                    </div>
-                                    <p class="muted">Detected game version: <span id="settingsGameVersionText"
-                                            class="accent-text">Not set</span></p>
-                                </article>
-
-                                <article class="settings-card">
-                                    <h3>Theme</h3>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsThemeInput">Palette</label>
-                                        <select id="settingsThemeInput" class="field-input"></select>
-                                    </div>
-                                    <p class="muted">Pick your preferred look before saving.</p>
-                                </article>
-                            </section>
-
-                            <!-- Workshop Tab -->
-                            <section id="settingsTabWorkshop" class="settings-panel hidden">
-                                <article class="settings-card">
-                                    <h3>Workshop Download Runtime</h3>
-                                    <div class="settings-inline-actions">
-                                        <button id="settingsDetectWorkshopRuntime" type="button"
-                                            class="button-secondary">Detect runtime</button>
-                                        <button id="settingsAutoConfigureSteamCmd" type="button"
-                                            class="button-secondary">Auto configure SteamCMD</button>
-                                    </div>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsWorkshopRuntimeInput">Runtime</label>
-                                        <select id="settingsWorkshopRuntimeInput" class="field-input"></select>
-                                    </div>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsSteamCmdPathInput">SteamCMD
-                                            path</label>
-                                        <input id="settingsSteamCmdPathInput" class="field-input mono" type="text"
-                                            placeholder="Path to steamcmd.exe" />
-                                    </div>
-                                    <div class="field-col">
-                                        <label class="field-label" for="settingsSteamCmdDownloadPathInput">SteamCMD
-                                            download path</label>
-                                        <input id="settingsSteamCmdDownloadPathInput" class="field-input mono"
-                                            type="text" placeholder="SteamCMD download and workshop cache path" />
-                                    </div>
-                                    <p class="muted">SteamCMD status: <span id="settingsSteamCmdConfiguredText"
-                                            class="steam-status-text">Not configured</span></p>
-                                </article>
-                            </section>
-
-                            <!-- Updates Tab -->
-                            <section id="settingsTabUpdates" class="settings-panel hidden">
-                                <article class="settings-card">
-                                    <h3>App Updates</h3>
-                                    <div class="settings-inline-actions">
-                                        <label class="toggle-row" for="settingsAutoUpdatesInput">
-                                            <input id="settingsAutoUpdatesInput" type="checkbox" />
-                                            <span>Auto-check for updates on startup</span>
-                                        </label>
-                                        <button id="settingsCheckUpdateBtn" type="button" class="button-secondary">
-                                            <span class="nav-icon" data-icon="check"></span> Check now
-                                        </button>
-                                    </div>
-                                    <p id="settingsUpdateStatus" class="muted">Not checked yet.</p>
-
-                                    <!-- Update available card (hidden by default) -->
-                                    <div id="settingsUpdateAvailable" class="update-available-card hidden">
-                                        <div class="update-available-header">
-                                            <span class="badge badge-version" id="settingsUpdateVersionBadge">--</span>
-                                            <span class="update-available-title">New version available</span>
-                                        </div>
-                                        <pre id="settingsUpdateChangelog" class="update-changelog"></pre>
-                                        <div class="update-available-actions">
-                                            <button id="settingsDownloadUpdateBtn" type="button">
-                                                <span class="nav-icon" data-icon="download"></span> Update now
-                                            </button>
-                                            <button id="settingsSkipVersionBtn" type="button"
-                                                class="button-secondary">Skip this version</button>
-                                            <button id="settingsViewReleaseBtn" type="button"
-                                                class="button-secondary">View release</button>
-                                        </div>
-                                    </div>
-
-                                    <div class="settings-kv">
-                                        <p class="settings-key">Current version</p>
-                                        <p id="settingsCurrentVersionText" class="settings-value">--</p>
-                                        <p class="settings-key">Last check</p>
-                                        <p id="settingsLastCheckUtcText" class="settings-value">Never</p>
-                                        <p class="settings-key">Last offered version</p>
-                                        <p id="settingsLastOfferedVersionText" class="settings-value">--</p>
-                                        <p class="settings-key">Skipped version</p>
-                                        <p id="settingsSkippedVersionText" class="settings-value">--</p>
-                                    </div>
-                                </article>
-                            </section>
-
-                            <!-- Advanced Tab -->
-                            <section id="settingsTabAdvanced" class="settings-panel hidden">
-                                <article class="settings-card">
-                                    <h3>Diagnostics</h3>
-                                    <label class="toggle-row" for="settingsDeveloperModeInput">
-                                        <input id="settingsDeveloperModeInput" type="checkbox" />
-                                        <span>Developer mode</span>
+                                    <p class="muted settings-inline-help">This is where downloaded mods are deployed for
+                                        Stellaris to load.</p>
+                                </div>
+                                <div class="settings-inline-actions">
+                                    <label class="toggle-row" for="settingsWarnBeforeRestartInput">
+                                        <input id="settingsWarnBeforeRestartInput" type="checkbox" />
+                                        <span>Show restart warning</span>
                                     </label>
-                                    <p id="settingsDiagnosticsHint" class="muted">Enable Developer mode to view runtime
-                                        diagnostics.</p>
-                                    <div id="settingsDiagnosticsContent" class="hidden">
-                                        <pre id="runtime">Loading...</pre>
-                                        <pre id="db">Loading...</pre>
+                                </div>
+                                <p class="muted">Detected game version: <span id="settingsGameVersionText"
+                                        class="accent-text">Not set</span></p>
+                            </article>
+
+                            <article class="settings-card">
+                                <div class="settings-card-heading">
+                                    <div>
+                                        <h3>Workshop Downloads</h3>
+                                        <p class="muted settings-card-lead">Choose the runtime and keep the fallback path
+                                            ready.</p>
                                     </div>
-                                </article>
-                            </section>
+                                    <span id="settingsWorkshopRuntimeChip"
+                                        class="status-chip status-chip-muted">Runtime: Auto</span>
+                                </div>
+                                <div class="settings-inline-actions">
+                                    <button id="settingsDetectWorkshopRuntime" type="button"
+                                        class="button-secondary">Detect runtime</button>
+                                    <button id="settingsAutoConfigureSteamCmd" type="button"
+                                        class="button-secondary">Auto configure SteamCMD</button>
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsWorkshopRuntimeInput">Runtime</label>
+                                    <select id="settingsWorkshopRuntimeInput" class="field-input"></select>
+                                </div>
+                                <p id="settingsRuntimeHint" class="muted settings-inline-help">Auto will prefer the best
+                                    configured runtime for this machine.</p>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsSteamCmdPathInput">SteamCMD path</label>
+                                    <input id="settingsSteamCmdPathInput" class="field-input mono" type="text"
+                                        placeholder="Path to steamcmd.exe" />
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsSteamCmdDownloadPathInput">SteamCMD download
+                                        path</label>
+                                    <input id="settingsSteamCmdDownloadPathInput" class="field-input mono" type="text"
+                                        placeholder="SteamCMD download and workshop cache path" />
+                                </div>
+                                <div class="settings-status-row">
+                                    <span class="settings-key">SteamCMD status</span>
+                                    <span id="settingsSteamCmdConfiguredText"
+                                        class="steam-status-text settings-value">Not configured</span>
+                                </div>
+                            </article>
+
+                            <article class="settings-card">
+                                <div class="settings-card-heading">
+                                    <div>
+                                        <h3>Profile &amp; Sharing</h3>
+                                        <p class="muted settings-card-lead">Used when publishing shared profiles and community
+                                            compatibility feedback.</p>
+                                    </div>
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsPublicProfileInput">Public username</label>
+                                    <input id="settingsPublicProfileInput" class="field-input" type="text" maxlength="40"
+                                        placeholder="Example: StarAdmiral" />
+                                    <p class="muted settings-inline-help">Keep this stable so shared profiles are easy to
+                                        recognize.</p>
+                                </div>
+                                <div class="field-col">
+                                    <label class="field-label" for="settingsThemeInput">Theme palette</label>
+                                    <select id="settingsThemeInput" class="field-input"></select>
+                                    <p class="muted settings-inline-help">Preview updates immediately. Save to keep the new
+                                        palette.</p>
+                                </div>
+                            </article>
+
+                            <article class="settings-card">
+                                <div class="settings-card-heading">
+                                    <div>
+                                        <h3>Updates &amp; Diagnostics</h3>
+                                        <p class="muted settings-card-lead">Control update checks and reveal diagnostics only
+                                            when needed.</p>
+                                    </div>
+                                </div>
+                                <div class="settings-inline-actions">
+                                    <label class="toggle-row" for="settingsAutoUpdatesInput">
+                                        <input id="settingsAutoUpdatesInput" type="checkbox" />
+                                        <span>Auto-check for updates on startup</span>
+                                    </label>
+                                    <button id="settingsCheckUpdateBtn" type="button" class="button-secondary">
+                                        <span class="nav-icon" data-icon="check"></span> Check now
+                                    </button>
+                                </div>
+                                <p id="settingsUpdateStatus" class="muted">Not checked yet.</p>
+
+                                <div id="settingsUpdateAvailable" class="update-available-card hidden">
+                                    <div class="update-available-header">
+                                        <span class="badge badge-version" id="settingsUpdateVersionBadge">--</span>
+                                        <span class="update-available-title">New version available</span>
+                                    </div>
+                                    <pre id="settingsUpdateChangelog" class="update-changelog"></pre>
+                                    <div class="update-available-actions">
+                                        <button id="settingsDownloadUpdateBtn" type="button">
+                                            <span class="nav-icon" data-icon="download"></span> Update now
+                                        </button>
+                                        <button id="settingsSkipVersionBtn" type="button"
+                                            class="button-secondary">Skip this version</button>
+                                        <button id="settingsViewReleaseBtn" type="button"
+                                            class="button-secondary">View release</button>
+                                    </div>
+                                </div>
+
+                                <div class="settings-kv">
+                                    <p class="settings-key">Current version</p>
+                                    <p id="settingsCurrentVersionText" class="settings-value">--</p>
+                                    <p class="settings-key">Last check</p>
+                                    <p id="settingsLastCheckUtcText" class="settings-value">Never</p>
+                                    <p class="settings-key">Last offered version</p>
+                                    <p id="settingsLastOfferedVersionText" class="settings-value">--</p>
+                                    <p class="settings-key">Skipped version</p>
+                                    <p id="settingsSkippedVersionText" class="settings-value">--</p>
+                                </div>
+
+                                <label class="toggle-row" for="settingsDeveloperModeInput">
+                                    <input id="settingsDeveloperModeInput" type="checkbox" />
+                                    <span>Developer mode</span>
+                                </label>
+                                <p id="settingsDiagnosticsHint" class="muted">Enable Developer mode to view runtime
+                                    diagnostics.</p>
+                                <div id="settingsDiagnosticsContent" class="hidden">
+                                    <pre id="runtime">Loading...</pre>
+                                    <pre id="db">Loading...</pre>
+                                </div>
+                            </article>
                         </div>
                     </section>
 
