@@ -95,6 +95,7 @@ interface SteamPublishedFileDetails {
     publishedfileid?: string;
     title?: string;
     file_description?: string;
+    file_size?: string | number;
     preview_url?: string;
     previews?: SteamPreview[];
     tags?: SteamTag[];
@@ -112,6 +113,7 @@ interface CachedResultCard {
     name: string;
     gameVersionBadge: string;
     previewImageUrl: string | null;
+    fileSizeLabel: string | null;
     totalSubscribers: number;
     communityWorksCount: number;
     communityNotWorksCount: number;
@@ -222,6 +224,49 @@ function sanitizeWorkshopId(value: string): string {
 
     const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
     return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
+}
+
+function normalizePublishedFileSize(value: string | number | undefined | null): number | null {
+    if (typeof value === "number") {
+        return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+    }
+
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatFileSize(bytes: number | null | undefined): string | null {
+    if (!Number.isFinite(bytes) || !bytes || bytes <= 0) {
+        return null;
+    }
+
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let value = bytes;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < (units.length - 1)) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+
+    const decimals = unitIndex === 0 || value >= 100 ? 0 : 1;
+    return `${value.toFixed(decimals).replace(/\.0$/, "")} ${units[unitIndex]}`;
+}
+
+function getPublishedFileSizeLabel(detail: Pick<SteamPublishedFileDetails, "file_size"> | undefined): string | null {
+    return formatFileSize(normalizePublishedFileSize(detail?.file_size));
+}
+
+export function normalizePublishedFileSizeForTest(value: string | number | undefined | null): number | null {
+    return normalizePublishedFileSize(value);
+}
+
+export function formatFileSizeForTest(bytes: number | null | undefined): string | null {
+    return formatFileSize(bytes);
 }
 
 function stripHtml(value: string): string {
@@ -671,6 +716,9 @@ function buildQueryCacheKey(query: VersionBrowserQuery): string {
 function hydrateCardsFromCache(cached: CachedResultCard[]): VersionModCard[] {
     return cached.map((card) => ({
         ...card,
+        fileSizeLabel: typeof card.fileSizeLabel === "string"
+            ? card.fileSizeLabel
+            : getPublishedFileSizeLabel(detailCacheById.get(card.workshopId)?.detail),
         actionState: getActionStateForCard(card.workshopId)
     }));
 }
@@ -815,6 +863,16 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
         cached.cards = Array.isArray(cached.cards) ? cached.cards : [];
         cached.steamPage = Number.isFinite(cached.steamPage) && cached.steamPage > 0 ? Math.trunc(cached.steamPage) : 1;
         cached.exhausted = cached.exhausted === true;
+
+        for (const card of cached.cards) {
+            const nextFileSizeLabel = typeof card.fileSizeLabel === "string"
+                ? card.fileSizeLabel
+                : getPublishedFileSizeLabel(detailCacheById.get(card.workshopId)?.detail);
+            if (card.fileSizeLabel !== nextFileSizeLabel) {
+                card.fileSizeLabel = nextFileSizeLabel;
+                resultEntryChanged = true;
+            }
+        }
     }
 
     const seenIds = new Set<string>(cached.cards.map((card) => card.workshopId));
@@ -859,6 +917,7 @@ async function getCardsWithResultCache(query: VersionBrowserQuery, targetCount: 
                 name: title,
                 gameVersionBadge: normalizeMajorMinor(maps.versions[workshopId] ?? selectedVersion) ?? selectedVersion,
                 previewImageUrl,
+                fileSizeLabel: getPublishedFileSizeLabel(detail),
                 totalSubscribers,
                 communityWorksCount: community.works,
                 communityNotWorksCount: community.notWorks,
@@ -985,6 +1044,7 @@ export async function getVersionModDetail(workshopIdRaw: string, selectedVersion
         previewImageUrl,
         additionalPreviewUrls,
         tags,
+        fileSizeLabel: getPublishedFileSizeLabel(detail),
         totalSubscribers,
         gameVersionBadge,
         communityWorksCount: community.works,

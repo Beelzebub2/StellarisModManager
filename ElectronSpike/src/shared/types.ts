@@ -166,6 +166,7 @@ export interface VersionModCard {
     name: string;
     gameVersionBadge: string;
     previewImageUrl: string | null;
+    fileSizeLabel: string | null;
     totalSubscribers: number;
     communityWorksCount: number;
     communityNotWorksCount: number;
@@ -223,6 +224,7 @@ export interface VersionModDetail {
     previewImageUrl: string | null;
     additionalPreviewUrls: string[];
     tags: string[];
+    fileSizeLabel: string | null;
     totalSubscribers: number;
     gameVersionBadge: string;
     communityWorksCount: number;

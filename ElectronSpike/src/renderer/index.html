@@ -118,7 +118,8 @@
                             <h2>Find Compatible Mods Faster</h2>
                         </div>
                         <div class="version-header-right">
-                            <span id="versionSortChip" class="status-chip status-chip-muted">Relevance</span>
+                            <span id="resultCountChip" class="status-chip">0 matches</span>
+                            <span id="pageCursorChip" class="status-chip status-chip-muted">Page 1/1</span>
                         </div>
                     </header>
 
@@ -151,16 +152,8 @@
                                 </div>
                                 <button id="versionRefresh" type="button" class="button-secondary">Refresh</button>
                             </div>
-                        </div>
-
-                        <div class="version-summary-bar">
-                            <div class="version-summary-copy">
-                                <p id="versionSummaryText" class="version-summary-text">Loading version results...</p>
+                            <div class="version-toolbar-meta">
                                 <p id="versionStatus" class="muted">Loading version browser...</p>
-                            </div>
-                            <div class="version-summary-chips">
-                                <span id="resultCountChip" class="status-chip">0 matches</span>
-                                <span id="pageCursorChip" class="status-chip status-chip-muted">Page 1</span>
                             </div>
                         </div>
                     </section>
@@ -748,6 +741,7 @@
                 <span id="detailVersion" class="badge badge-version">-</span>
                 <span id="detailCommunity" class="badge badge-community">-</span>
                 <span id="detailSubscribers" class="badge">-</span>
+                <span id="detailFileSize" class="badge badge-unverified hidden">-</span>
             </div>
             <div class="detail-actions">
                 <button id="detailActionButton" type="button">Install</button>

@@ -294,25 +294,9 @@ function setLibraryStatus(text) {
     if (state.selectedTab === "library") setGlobalStatus(text);
 }
 
-function formatSortLabel(sortMode) {
-    if (sortMode === "most-subscribed") return "Most Subscribed";
-    if (sortMode === "most-popular") return "Most Popular";
-    return "Relevance";
-}
-
-function buildVersionSummaryText(total, page, pages) {
-    const versionText = `version ${state.selectedVersion}`;
-    const rankingText = `ranked by ${formatSortLabel(state.sortMode)}`;
-    const searchText = state.searchText ? ` filtered by "${state.searchText}"` : "";
-    const olderText = state.showOlderVersions ? " including older versions" : "";
-    return `${total} matches for ${versionText}, ${rankingText}${searchText}${olderText}. Page ${page} of ${pages}.`;
-}
-
 function setResultSummary(total, page, pages) {
     setText("resultCountChip", `${total} matches`);
     setText("pageCursorChip", `Page ${page}/${pages}`);
-    setText("versionSortChip", formatSortLabel(state.sortMode));
-    setText("versionSummaryText", buildVersionSummaryText(total, page, pages));
 }
 
 async function applyAppIcon() {
@@ -657,6 +641,10 @@ function cardTemplate(card) {
         ? `<img src="${escapeHtml(card.previewImageUrl)}" alt="${safeName}" loading="lazy" />`
         : `<div class="mod-fallback">${safeName.slice(0, 1).toUpperCase() || "?"}</div>`;
     const hasCommunity = (card.communityWorksCount + card.communityNotWorksCount) > 0;
+    const reportCount = card.communityWorksCount + card.communityNotWorksCount;
+    const compatibilitySummary = hasCommunity
+        ? `${card.communityWorksPercent}% works from ${reportCount.toLocaleString()} reports`
+        : "No compatibility reports yet";
 
     return `
         <article class="mod-card" data-workshop-id="${card.workshopId}" data-workshop-url="${escapeHtml(card.workshopUrl)}">
@@ -664,12 +652,25 @@ function cardTemplate(card) {
                 ${thumbnail}
             </button>
             <div class="mod-body">
-                <h3 class="mod-title" title="${safeName}">${safeName}</h3>
-                <div class="badges">
-                    <span class="badge badge-version">${escapeHtml(card.gameVersionBadge)}</span>
-                    ${hasCommunity ? `<span class="badge badge-community">${card.communityWorksPercent}% works</span>` : `<span class="badge badge-unverified">Unverified</span>`}
+                <div class="mod-copy">
+                    <h3 class="mod-title" title="${safeName}">${safeName}</h3>
+                    <div class="badges">
+                        <span class="badge badge-version">${escapeHtml(card.gameVersionBadge)}</span>
+                        ${hasCommunity ? `<span class="badge badge-community">${card.communityWorksPercent}% works</span>` : `<span class="badge badge-unverified">Unverified</span>`}
+                    </div>
+                    <div class="mod-stats">
+                        <div class="mod-stat">
+                            <span class="mod-stat-value">${card.totalSubscribers.toLocaleString()}</span>
+                            <span class="mod-stat-label">Subscribers</span>
+                        </div>
+                        ${card.fileSizeLabel ? `
+                            <div class="mod-stat">
+                                <span class="mod-stat-value">${escapeHtml(card.fileSizeLabel)}</span>
+                                <span class="mod-stat-label">File Size</span>
+                            </div>` : ""}
+                    </div>
+                    <p class="mod-meta">${escapeHtml(compatibilitySummary)}</p>
                 </div>
-                <p class="mod-meta">${card.totalSubscribers.toLocaleString()} subscribers</p>
                 <div class="mod-footer">
                     <button type="button" data-action="toggle-mod" data-workshop-id="${card.workshopId}"
                         data-action-state="${card.actionState}"
@@ -762,7 +763,7 @@ function hookVersionCardDelegation() {
 function renderPager(result) {
     state.page = result.currentPage;
     state.totalPages = result.totalPages;
-    setText("pageSummary", `Page ${result.currentPage} of ${result.totalPages} (${result.totalMatches} mods)`);
+    setText("pageSummary", `Page ${result.currentPage} of ${result.totalPages}`);
     setResultSummary(result.totalMatches, result.currentPage, result.totalPages);
     const prev = byId("pagePrev");
     if (prev) prev.disabled = state.isLoading || result.currentPage <= 1;
@@ -1055,6 +1056,93 @@ function partitionQueueItems(items) {
     return { active, history };
 }
 
+function triggerTransientClass(target, className, duration = 420) {
+    if (!(target instanceof HTMLElement)) {
+        return;
+    }
+
+    const timers = target.__smmTransientClassTimers || (target.__smmTransientClassTimers = {});
+    if (timers[className]) {
+        clearTimeout(timers[className]);
+    }
+
+    target.classList.remove(className);
+    void target.offsetWidth;
+    target.classList.add(className);
+
+    timers[className] = window.setTimeout(() => {
+        target.classList.remove(className);
+        delete timers[className];
+    }, duration);
+}
+
+function captureQueueRowLayout() {
+    const layout = new Map();
+
+    for (const [workshopId, view] of state.queueRowsByWorkshopId.entries()) {
+        if (!view?.root?.isConnected) {
+            continue;
+        }
+
+        layout.set(workshopId, view.root.getBoundingClientRect());
+    }
+
+    return layout;
+}
+
+function animateQueueRowLayout(previousLayout) {
+    if (!(previousLayout instanceof Map) || previousLayout.size === 0) {
+        return;
+    }
+
+    for (const [workshopId, view] of state.queueRowsByWorkshopId.entries()) {
+        if (!view?.root?.isConnected) {
+            continue;
+        }
+
+        const before = previousLayout.get(workshopId);
+        if (!before) {
+            continue;
+        }
+
+        const after = view.root.getBoundingClientRect();
+        const deltaX = before.left - after.left;
+        const deltaY = before.top - after.top;
+
+        if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) {
+            continue;
+        }
+
+        if (typeof view.root.animate !== "function") {
+            continue;
+        }
+
+        if (view.layoutAnimation) {
+            try { view.layoutAnimation.cancel(); } catch { /* ignore */ }
+        }
+
+        const animation = view.root.animate([
+            {
+                transform: `translate(${deltaX}px, ${deltaY}px)`,
+                opacity: 0.86
+            },
+            {
+                transform: "translate(0, 0)",
+                opacity: 1
+            }
+        ], {
+            duration: 420,
+            easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+        });
+        view.layoutAnimation = animation;
+        animation.onfinish = animation.oncancel = () => {
+            if (view.layoutAnimation === animation) {
+                view.layoutAnimation = null;
+            }
+        };
+    }
+}
+
 function createQueueEmptyState(message, iconName = "queue") {
     const empty = document.createElement("div");
     empty.className = "queue-empty";
@@ -1167,7 +1255,11 @@ function createQueueRow(workshopId) {
         workshopEl,
         cancelBtn,
         retryBtn,
-        dismissBtn
+        dismissBtn,
+        lastStatus: null,
+        lastProgress: null,
+        lastMessage: "",
+        layoutAnimation: null
     };
 }
 
@@ -1177,6 +1269,10 @@ function updateQueueRow(view, item) {
     const isActive = status === "queued" || status === "running";
     const canRetry = status === "failed" || status === "cancelled";
     const developerModeEnabled = isDeveloperModeEnabled();
+    const previousStatus = view.lastStatus;
+    const previousProgress = view.lastProgress;
+    const previousMessage = view.lastMessage;
+    const nextMessage = buildQueueMessageForDisplay(item, developerModeEnabled);
 
     view.root.setAttribute("data-status", status);
 
@@ -1197,7 +1293,7 @@ function updateQueueRow(view, item) {
         view.bytesEl.hidden = !byteProgress;
     }
 
-    view.messageEl.textContent = buildQueueMessageForDisplay(item, developerModeEnabled);
+    view.messageEl.textContent = nextMessage;
     view.progressBar.style.width = `${progress}%`;
 
     view.workshopEl.textContent = item.workshopId;
@@ -1214,9 +1310,86 @@ function updateQueueRow(view, item) {
 
     view.dismissBtn.hidden = isActive;
     view.dismissBtn.disabled = isActive;
+
+    if (previousStatus && previousStatus !== status) {
+        triggerTransientClass(view.root, "is-status-shifting", 560);
+        if (status === "completed") {
+            triggerTransientClass(view.root, "is-completing", 780);
+        } else if (status === "failed" || status === "cancelled") {
+            triggerTransientClass(view.root, "is-attention", 780);
+        }
+    } else if (
+        status === "running"
+        && previousStatus === status
+        && (previousProgress !== progress || previousMessage !== nextMessage)
+    ) {
+        triggerTransientClass(view.root, "is-progressing", 420);
+        triggerTransientClass(view.progressBar, "is-live", 420);
+    } else if (status === "queued" && previousStatus === status && previousMessage !== nextMessage) {
+        triggerTransientClass(view.stageEl, "is-soft-pulse", 360);
+    }
+
+    view.lastStatus = status;
+    view.lastProgress = progress;
+    view.lastMessage = nextMessage;
+}
+
+function syncQueueSection(container, sectionItems, emptyLabel, emptyIconName) {
+    if (!container) {
+        return;
+    }
+
+    if (sectionItems.length === 0) {
+        for (const child of Array.from(container.children)) {
+            child.remove();
+        }
+        container.appendChild(createQueueEmptyState(emptyLabel, emptyIconName));
+        return;
+    }
+
+    for (const empty of Array.from(container.querySelectorAll(".queue-empty"))) {
+        empty.remove();
+    }
+
+    const desiredIds = new Set();
+
+    for (const item of sectionItems) {
+        desiredIds.add(item.workshopId);
+
+        let view = state.queueRowsByWorkshopId.get(item.workshopId);
+        if (!view) {
+            view = createQueueRow(item.workshopId);
+            state.queueRowsByWorkshopId.set(item.workshopId, view);
+        }
+
+        const previousParent = view.root.parentElement;
+        updateQueueRow(view, item);
+        container.appendChild(view.root);
+
+        if (previousParent && previousParent !== container) {
+            triggerTransientClass(view.root, "is-section-moving", 520);
+        }
+    }
+
+    for (const child of Array.from(container.children)) {
+        if (!(child instanceof HTMLElement)) {
+            continue;
+        }
+
+        if (child.classList.contains("queue-empty")) {
+            child.remove();
+            continue;
+        }
+
+        const workshopId = child.getAttribute("data-workshop-id") || "";
+        if (!desiredIds.has(workshopId)) {
+            child.remove();
+        }
+    }
 }
 
 function renderQueueList(snapshot) {
+    const previousLayout = captureQueueRowLayout();
     const summary = byId("queueSummary");
     const queueActiveList = byId("queueActiveList");
     const queueHistoryList = byId("queueHistoryList");
@@ -1335,29 +1508,13 @@ function renderQueueList(snapshot) {
 
     if (!queueActiveList || !queueHistoryList) return;
 
-    const renderSection = (container, sectionItems, emptyLabel, emptyIconName) => {
-        container.replaceChildren();
-        if (sectionItems.length === 0) {
-            container.appendChild(createQueueEmptyState(emptyLabel, emptyIconName));
-            return;
-        }
-
-        for (const item of sectionItems) {
-            let view = state.queueRowsByWorkshopId.get(item.workshopId);
-            if (!view) {
-                view = createQueueRow(item.workshopId);
-                state.queueRowsByWorkshopId.set(item.workshopId, view);
-            }
-
-            updateQueueRow(view, item);
-            container.appendChild(view.root);
-        }
-    };
-
     if (totalTracked === 0) {
+        for (const [, view] of state.queueRowsByWorkshopId.entries()) {
+            view.root.remove();
+        }
         state.queueRowsByWorkshopId.clear();
-        renderSection(queueActiveList, [], "No active operations.", "queue");
-        renderSection(queueHistoryList, [], "No recent history yet.", "check");
+        syncQueueSection(queueActiveList, [], "No active operations.", "queue");
+        syncQueueSection(queueHistoryList, [], "No recent history yet.", "check");
         return;
     }
 
@@ -1369,8 +1526,8 @@ function renderQueueList(snapshot) {
         (statusOrder[a.status] ?? 5) - (statusOrder[b.status] ?? 5)
     );
 
-    renderSection(queueActiveList, sortedActiveItems, "No active operations.", "queue");
-    renderSection(queueHistoryList, sortedHistoryItems, "No recent history yet.", "check");
+    syncQueueSection(queueActiveList, sortedActiveItems, "No active operations.", "queue");
+    syncQueueSection(queueHistoryList, sortedHistoryItems, "No recent history yet.", "check");
 
     const renderedIds = new Set(items.map((item) => item.workshopId));
     for (const [workshopId, view] of state.queueRowsByWorkshopId.entries()) {
@@ -1378,6 +1535,8 @@ function renderQueueList(snapshot) {
         view.root.remove();
         state.queueRowsByWorkshopId.delete(workshopId);
     }
+
+    animateQueueRowLayout(previousLayout);
 }
 
 async function refreshQueueSnapshot() {
@@ -1478,6 +1637,12 @@ async function refreshDetailDrawer(workshopId) {
         : `Unverified (0 reports)`);
 
     setText("detailSubscribers", `${detail.totalSubscribers.toLocaleString()} subscribers`);
+    const detailFileSize = byId("detailFileSize");
+    if (detailFileSize) {
+        const hasFileSize = typeof detail.fileSizeLabel === "string" && detail.fileSizeLabel.length > 0;
+        detailFileSize.textContent = hasFileSize ? `${detail.fileSizeLabel} download` : "";
+        detailFileSize.classList.toggle("hidden", !hasFileSize);
+    }
     setText("detailDescription", detail.descriptionText || "No description available.");
     setText("detailQueueMessage", buildQueueDetailMessage(detail.queueMessage));
 
@@ -1885,6 +2050,11 @@ function getActiveLibraryProfile() {
 function getSelectedLibraryMod() {
     const s = state.library.snapshot;
     return s ? s.mods.find((m) => m.id === state.library.selectedModId) || null : null;
+}
+
+function getLibraryModById(modId) {
+    const s = state.library.snapshot;
+    return s ? s.mods.find((m) => m.id === modId) || null : null;
 }
 
 async function persistHideDisabledMods(hide) {
@@ -2457,6 +2627,11 @@ function hookLibraryListDelegation() {
             }
 
             if (action === "remove-mod") {
+                const mod = getLibraryModById(modId);
+                if (!mod) {
+                    return;
+                }
+
                 const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
                 if (!confirmed) return;
                 await removeLibraryModWithFeedback(mod);
