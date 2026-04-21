@@ -4427,6 +4427,7 @@ pre {
     .library-detail-grid {
         grid-template-columns: 1fr;
     }
+
     .detail-drawer {
         grid-template-columns: 1fr;
     }
