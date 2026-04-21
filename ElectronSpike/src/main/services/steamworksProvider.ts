@@ -4,6 +4,7 @@ import { logInfo, logError } from "./logger";
 import { discoverSteamLibraries } from "./steamDiscovery";
 
 const STELLARIS_APP_ID = 281990;
+const STANDALONE_SESSION_MESSAGE = "Steamworks for Stellaris is unavailable in this standalone app session. Use SteamCmd for downloads.";
 const POLL_INTERVAL_MS = 500;
 const DOWNLOAD_TIMEOUT_MS = 20 * 60 * 1000;
 const START_TIMEOUT_MS = 10_000;
@@ -24,28 +25,37 @@ export function tryInitSteamworks(): boolean {
     if (initAttempted) return client !== null;
     initAttempted = true;
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sw = require("steamworks.js") as SteamworksModule;
-
-    // Try Stellaris App ID first so workshop files land in the right path.
-    // Fall back to Spacewar (480) which every account has — works for most workshop operations.
-    for (const appId of [STELLARIS_APP_ID, 480]) {
-        try {
-            client = sw.init(appId);
-            steamworks = sw;
-            logInfo(`Steamworks: initialized (App ID ${appId})`);
-            return true;
-        } catch (err) {
-            logError(`Steamworks: init failed with App ID ${appId}: ${err instanceof Error ? err.message : String(err)}`);
-        }
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const sw = require("steamworks.js") as SteamworksModule;
+        client = sw.init(STELLARIS_APP_ID);
+        steamworks = sw;
+        logInfo(`Steamworks: initialized (App ID ${STELLARIS_APP_ID})`);
+        return true;
+    } catch (err) {
+        logError(`Steamworks: init failed with App ID ${STELLARIS_APP_ID}: ${err instanceof Error ? err.message : String(err)}`);
+        client = null;
+        steamworks = null;
+        return false;
     }
-
-    steamworks = null;
-    return false;
 }
 
 export function isSteamworksAvailable(): boolean {
     return tryInitSteamworks();
+}
+
+export function getSteamworksUnavailableMessage(): string {
+    return STANDALONE_SESSION_MESSAGE;
+}
+
+export function isStandaloneSteamworksSessionFailure(message: string | null | undefined): boolean {
+    const normalized = String(message ?? "").trim().toLowerCase();
+    if (!normalized) {
+        return false;
+    }
+
+    return normalized.includes(STANDALONE_SESSION_MESSAGE.toLowerCase())
+        || normalized.includes("connecttoglobaluser failed");
 }
 
 function findInSteamWorkshopCache(workshopId: string): string | null {
@@ -56,7 +66,9 @@ function findInSteamWorkshopCache(workshopId: string): string | null {
             if (fs.existsSync(candidate) && fs.readdirSync(candidate).length > 0) {
                 return candidate;
             }
-        } catch { /* skip */ }
+        } catch {
+            // skip
+        }
     }
     return null;
 }
@@ -67,13 +79,12 @@ export async function runSteamworksDownload(
     reportProgress: (progress: number, message: string) => void
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
     if (!tryInitSteamworks() || !client || !steamworks) {
-        return { ok: false, installPath: "", message: "Steamworks unavailable — is Steam running with Stellaris in library?" };
+        return { ok: false, installPath: "", message: STANDALONE_SESSION_MESSAGE };
     }
 
     const c = client;
     const itemId = BigInt(workshopId);
 
-    // Check if Steam already has this item downloaded
     try {
         const existing = c.workshop.installInfo(itemId);
         if (existing?.folder) {
@@ -83,7 +94,9 @@ export async function runSteamworksDownload(
                 return { ok: true, installPath: folderPath, message: "Already in Steam workshop cache." };
             }
         }
-    } catch { /* fall through to download */ }
+    } catch {
+        // fall through to download
+    }
 
     reportProgress(3, `Requesting download from Steam for ${workshopId}...`);
     logInfo(`Steamworks: requesting download for ${workshopId}`);
@@ -107,8 +120,6 @@ export async function runSteamworksDownload(
     let lastPct = 4;
     let downloadSeen = false;
 
-    // Callbacks are dispatched automatically at 30fps by steamworks.js after init().
-    // We only need to poll the state via downloadInfo() / installInfo().
     return new Promise<{ ok: boolean; installPath: string; message: string }>((resolve) => {
         const poll = (): void => {
             if (job.cancelled) {
@@ -141,19 +152,16 @@ export async function runSteamworksDownload(
                         reportProgress(5, `Steam is downloading ${workshopId}...`);
                     }
                 } else {
-                    // downloadInfo null means either: not yet started, or download complete
                     const state = c.workshop.state(itemId);
                     const isInstalled = (state & ITEM_STATE_INSTALLED) !== 0;
                     const isDownloading = (state & ITEM_STATE_DOWNLOADING) !== 0;
                     const isDownloadPending = (state & ITEM_STATE_DOWNLOAD_PENDING) !== 0;
 
                     if (isDownloading) {
-                        // State flag says downloading but downloadInfo not yet available — treat as started
                         downloadSeen = true;
                     }
 
                     if (isInstalled || downloadSeen) {
-                        // Try installInfo first (most reliable)
                         try {
                             const installInfo = c.workshop.installInfo(itemId);
                             if (installInfo?.folder) {
@@ -164,9 +172,10 @@ export async function runSteamworksDownload(
                                     return;
                                 }
                             }
-                        } catch { /* fall through */ }
+                        } catch {
+                            // fall through
+                        }
 
-                        // Fall back to library discovery
                         const discovered = findInSteamWorkshopCache(workshopId);
                         if (discovered) {
                             logInfo(`Steamworks: ${workshopId} complete (discovered at ${discovered})`);
@@ -180,8 +189,6 @@ export async function runSteamworksDownload(
                         }
                     }
 
-                    // Not started yet — give Steam time to queue it.
-                    // If state shows DownloadPending the request is queued; don't time out yet.
                     if (!downloadSeen && !isDownloadPending && Date.now() - startTime > START_TIMEOUT_MS) {
                         resolve({ ok: false, installPath: "", message: "Steam did not begin download within 10 seconds." });
                         return;

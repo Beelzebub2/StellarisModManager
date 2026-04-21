@@ -1,5 +1,6 @@
 ﻿import crypto from "node:crypto";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -861,19 +862,18 @@ function openLibraryDb(): Database.Database | null {
     }
 }
 
-function deletePathIfExists(targetPath: string): void {
+async function deletePathIfExists(targetPath: string): Promise<void> {
     if (!targetPath) {
         return;
     }
 
     try {
-        const stat = fs.statSync(targetPath);
-        if (stat.isDirectory()) {
-            fs.rmSync(targetPath, { recursive: true, force: true });
-            return;
-        }
-
-        fs.rmSync(targetPath, { force: true });
+        await fsp.rm(targetPath, {
+            recursive: true,
+            force: true,
+            maxRetries: 6,
+            retryDelay: 250
+        });
     } catch {
         // best effort
     }
@@ -1528,7 +1528,7 @@ export function moveLibraryMod(request: LibraryMoveDirectionRequest): LibraryAct
     }
 }
 
-export function uninstallLibraryMod(modId: number): LibraryActionResult {
+export async function uninstallLibraryMod(modId: number): Promise<LibraryActionResult> {
     const db = openLibraryDb();
     if (!db) {
         return { ok: false, message: "mods.db is not available." };
@@ -1554,8 +1554,8 @@ export function uninstallLibraryMod(modId: number): LibraryActionResult {
             return { ok: false, message: "Mod not found." };
         }
 
-        deletePathIfExists(mod.InstalledPath);
-        deletePathIfExists(mod.DescriptorPath);
+        await deletePathIfExists(mod.InstalledPath);
+        await deletePathIfExists(mod.DescriptorPath);
 
         const tx = db.transaction(() => {
             if (hasTable(db, "ProfileEntries")) {

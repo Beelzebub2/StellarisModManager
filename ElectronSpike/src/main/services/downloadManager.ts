@@ -17,7 +17,11 @@ import { getLegacyPaths } from "./paths";
 import { loadSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
 import { logError, logInfo } from "./logger";
-import { isSteamworksAvailable, runSteamworksDownload } from "./steamworksProvider";
+import {
+    getSteamworksUnavailableMessage,
+    isStandaloneSteamworksSessionFailure,
+    runSteamworksDownload
+} from "./steamworksProvider";
 
 const STELLARIS_APP_ID = "281990";
 const MAX_CONCURRENT_DOWNLOADS = 3;
@@ -269,6 +273,50 @@ function resolveEffectiveRuntime(): DownloadRuntime {
     return "SteamKit2";
 }
 
+function hasConfiguredSteamCmd(): boolean {
+    const steamCmdPath = loadSettingsSnapshot()?.steamCmdPath?.trim() ?? "";
+    return steamCmdPath.length > 0 && fs.existsSync(steamCmdPath);
+}
+
+export function getSteamworksFallbackDecision(
+    message: string,
+    steamCmdAvailable: boolean
+): { shouldFallback: boolean; message: string } {
+    if (!steamCmdAvailable) {
+        return {
+            shouldFallback: false,
+            message
+        };
+    }
+
+    if (isStandaloneSteamworksSessionFailure(message)) {
+        return {
+            shouldFallback: true,
+            message: "Steamworks for Stellaris is unavailable in this standalone app session. Retrying with SteamCmd."
+        };
+    }
+
+    return {
+        shouldFallback: false,
+        message
+    };
+}
+
+export function canStartQueuedAction(
+    nextAction: "install" | "uninstall",
+    runningActions: Array<"install" | "uninstall">
+): boolean {
+    if (runningActions.length === 0) {
+        return true;
+    }
+
+    if (runningActions.includes("uninstall")) {
+        return false;
+    }
+
+    return nextAction === "install";
+}
+
 function dedupeResolvedPaths(paths: string[]): string[] {
     const seen = new Set<string>();
     const result: string[] = [];
@@ -316,11 +364,39 @@ async function findDownloadedWorkshopPath(candidates: string[]): Promise<{ found
     return { foundPath: null, hadEmptyPath };
 }
 
-async function removeDirectoryIfExists(targetPath: string): Promise<void> {
+async function removePathIfExists(
+    targetPath: string,
+    options?: { strict?: boolean }
+): Promise<{ ok: boolean; message?: string }> {
+    if (!targetPath) {
+        return { ok: true };
+    }
+
     try {
-        await fsp.rm(targetPath, { recursive: true, force: true });
+        await fsp.rm(targetPath, {
+            recursive: true,
+            force: true,
+            maxRetries: 6,
+            retryDelay: 250
+        });
+    } catch (error) {
+        if (options?.strict !== true) {
+            return { ok: true };
+        }
+
+        const message = error instanceof Error ? error.message : "Unknown remove error";
+        return { ok: false, message: `Failed to remove '${targetPath}': ${message}` };
+    }
+
+    if (options?.strict !== true) {
+        return { ok: true };
+    }
+
+    try {
+        await fsp.access(targetPath, fs.constants.F_OK);
+        return { ok: false, message: `Failed to remove '${targetPath}': path still exists after retrying.` };
     } catch {
-        // best effort
+        return { ok: true };
     }
 }
 
@@ -355,7 +431,7 @@ async function deployDownloadedModToModsPath(
     reportProgress(96, `Deploying ${workshopId} to mods path...`);
 
     try {
-        await removeDirectoryIfExists(finalInstallPath);
+        await removePathIfExists(finalInstallPath);
         await fsp.cp(downloadedInstallPath, finalInstallPath, { recursive: true, force: true });
     } catch (error) {
         const message = error instanceof Error ? error.message : "Copy failed";
@@ -383,7 +459,7 @@ async function deployDownloadedModToModsPath(
     }
 
     if (!keepSource && path.resolve(downloadedInstallPath) !== path.resolve(finalInstallPath)) {
-        await removeDirectoryIfExists(downloadedInstallPath);
+        await removePathIfExists(downloadedInstallPath);
     }
 
     return { ok: true, installPath: finalInstallPath, message: `Installed to mods path: ${finalInstallPath}` };
@@ -452,7 +528,7 @@ async function runSteamCmdDownload(
 
     const outputCandidates = getWorkshopDownloadPathCandidates(forceInstallDir, workshopId);
     for (const candidate of outputCandidates) {
-        await removeDirectoryIfExists(candidate);
+        await removePathIfExists(candidate);
     }
 
     const args = [
@@ -529,19 +605,19 @@ async function runSteamCmdDownload(
 
     if (!result.ok) {
         // Clean up the temp dir on failure
-        await removeDirectoryIfExists(forceInstallDir);
+        await removePathIfExists(forceInstallDir);
         return { ok: false, installPath: outputCandidates[0] ?? "", message: result.message };
     }
 
     if (explicitFailureMessage) {
-        await removeDirectoryIfExists(forceInstallDir);
+        await removePathIfExists(forceInstallDir);
         return { ok: false, installPath: outputCandidates[0] ?? "", message: `SteamCMD reported download failure: ${explicitFailureMessage}` };
     }
 
     const located = await findDownloadedWorkshopPath(outputCandidates);
     if (!located.foundPath) {
         const hint = statusHints.length > 0 ? ` Last SteamCMD output: ${statusHints.join(" | ")}` : "";
-        await removeDirectoryIfExists(forceInstallDir);
+        await removePathIfExists(forceInstallDir);
         return {
             ok: false,
             installPath: outputCandidates[0] ?? "",
@@ -554,7 +630,7 @@ async function runSteamCmdDownload(
     const deployed = await deployDownloadedModToModsPath(workshopId, located.foundPath, reportProgress);
 
     // Clean up the temp download dir (the whole dl-{workshopId} folder)
-    await removeDirectoryIfExists(forceInstallDir);
+    await removePathIfExists(forceInstallDir);
 
     if (!deployed.ok) return deployed;
 
@@ -616,7 +692,7 @@ async function runSteamCmdDownloadBatch(
             const candidates = getWorkshopDownloadPathCandidates(forceInstallDir, entry.workshopId);
             outputCandidatesById.set(entry.workshopId, candidates);
             for (const candidate of candidates) {
-                await removeDirectoryIfExists(candidate);
+                await removePathIfExists(candidate);
             }
 
             reportProgress(entry.workshopId, 6, `Launching SteamCMD batch for ${entries.length} mods...`);
@@ -841,26 +917,41 @@ async function runSteamCmdDownloadBatch(
 
         return results;
     } finally {
-        await removeDirectoryIfExists(forceInstallDir);
+        await removePathIfExists(forceInstallDir);
     }
 }
 
 async function runUninstall(workshopId: string): Promise<{ ok: boolean; message: string }> {
+    const failures: string[] = [];
+    const removeStrict = async (targetPath: string): Promise<void> => {
+        const result = await removePathIfExists(targetPath, { strict: true });
+        if (!result.ok && result.message) {
+            failures.push(result.message);
+        }
+    };
+
     const knownPath = installPathById.get(workshopId);
     if (knownPath) {
-        await removeDirectoryIfExists(knownPath);
+        await removeStrict(knownPath);
         const descriptorPath = path.join(path.dirname(knownPath), `${workshopId}.mod`);
-        await removeDirectoryIfExists(descriptorPath);
+        await removeStrict(descriptorPath);
     } else {
         const modsRoot = resolveModsInstallRoot();
-        await removeDirectoryIfExists(path.join(modsRoot, workshopId));
-        await removeDirectoryIfExists(path.join(modsRoot, `${workshopId}.mod`));
+        await removeStrict(path.join(modsRoot, workshopId));
+        await removeStrict(path.join(modsRoot, `${workshopId}.mod`));
 
         const discovery = discoverSteamLibraries();
         for (const library of discovery.libraries) {
             const candidate = path.join(library.workshopContentPath, workshopId);
-            await removeDirectoryIfExists(candidate);
+            await removeStrict(candidate);
         }
+    }
+
+    if (failures.length > 0) {
+        return {
+            ok: false,
+            message: failures[0]
+        };
     }
 
     installPathById.delete(workshopId);
@@ -887,7 +978,7 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
         actionStates.set(entry.workshopId, "installing");
         upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 3, "Preparing download...");
 
-        const installResult = runtime === "SteamCmd"
+        let installResult = runtime === "SteamCmd"
             ? await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
                 upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
             })
@@ -900,6 +991,27 @@ async function runJob(entry: { workshopId: string; modName: string; action: "ins
                     installPath: "",
                     message: "SteamKit2/Steamworks downloads are not available in this build. Select SteamCmd runtime in Settings."
                 };
+
+        if (!installResult.ok && runtime === "SteamKit2") {
+            const fallback = getSteamworksFallbackDecision(installResult.message, hasConfiguredSteamCmd());
+            if (fallback.shouldFallback) {
+                logInfo(`Download queue: Steamworks install for ${entry.workshopId} is unavailable in this session. Falling back to SteamCmd.`);
+                upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 4, fallback.message);
+                installResult = await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
+                    upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+                });
+            } else if (
+                !hasConfiguredSteamCmd()
+                && isStandaloneSteamworksSessionFailure(installResult.message)
+                && installResult.message === getSteamworksUnavailableMessage()
+            ) {
+                installResult = {
+                    ok: false,
+                    installPath: "",
+                    message: "Steamworks for Stellaris is unavailable in this standalone app session, and SteamCmd is not configured."
+                };
+            }
+        }
 
         if (job.cancelled) {
             actionStates.set(entry.workshopId, "not-installed");
@@ -1028,8 +1140,15 @@ async function processQueue(): Promise<void> {
         while (queuePending.length > 0) {
             // Launch jobs up to MAX_CONCURRENT_DOWNLOADS
             while (runningJobs.size < MAX_CONCURRENT_DOWNLOADS && queuePending.length > 0) {
-                const next = queuePending.shift();
+                const next = queuePending[0];
                 if (!next) break;
+
+                const runningActions = Array.from(runningJobs.values(), (job) => job.action);
+                if (!canStartQueuedAction(next.action, runningActions)) {
+                    break;
+                }
+
+                queuePending.shift();
 
                 logInfo(`Download queue: starting ${next.action} for ${next.workshopId} (${runningJobs.size + 1}/${MAX_CONCURRENT_DOWNLOADS} slots)`);
                 // Don't await — fire-and-forget to enable queue throughput.

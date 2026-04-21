@@ -1509,7 +1509,8 @@ function buildSettingsFromForm() {
         warnBeforeRestartGame: getCheckboxValue("settingsWarnBeforeRestartInput"),
         themePalette: getInputValue("settingsThemeInput") || "Obsidian Ember",
         autoCheckAppUpdates: getCheckboxValue("settingsAutoUpdatesInput"),
-        compatibilityReporterId: getInputValue("settingsReporterIdInput"),
+        // Kept internal; this field is no longer editable in Settings UI.
+        compatibilityReporterId: state.settingsModel?.compatibilityReporterId || "",
         lastAppUpdateCheckUtc: state.settingsModel?.lastAppUpdateCheckUtc || "",
         lastOfferedAppVersion: state.settingsModel?.lastOfferedAppVersion || "",
         skippedAppVersion: state.settingsModel?.skippedAppVersion || "",
@@ -1533,7 +1534,6 @@ function applySettingsToForm(settings) {
     setInputValue("settingsSteamCmdDownloadPathInput", m.steamCmdDownloadPath);
     setInputValue("settingsThemeInput", m.themePalette || "Obsidian Ember");
     setInputValue("settingsWorkshopRuntimeInput", m.workshopDownloadRuntime || "Auto");
-    setInputValue("settingsReporterIdInput", m.compatibilityReporterId);
 
     setCheckboxValue("settingsWarnBeforeRestartInput", m.warnBeforeRestartGame === true);
     setCheckboxValue("settingsDeveloperModeInput", m.developerMode === true);
@@ -3015,7 +3015,7 @@ function hookSettingsControls() {
     const dirtyInputs = [
         "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput",
         "settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput",
-        "settingsWorkshopRuntimeInput", "settingsThemeInput", "settingsReporterIdInput"
+        "settingsWorkshopRuntimeInput", "settingsThemeInput"
     ];
     for (const id of dirtyInputs) {
         byId(id)?.addEventListener("input", () => {
