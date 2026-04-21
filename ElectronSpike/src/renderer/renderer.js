@@ -148,6 +148,32 @@ function formatUtc(value) {
 
 function formatInteger(value) { return Number(value || 0).toLocaleString(); }
 
+function applyViewportMetrics() {
+    const root = document.documentElement;
+    if (!root) return;
+    root.style.setProperty("--app-vw", `${window.innerWidth}px`);
+    root.style.setProperty("--app-vh", `${window.innerHeight}px`);
+}
+
+function hookWindowResizeResponsiveness() {
+    let resizeResetTimer = null;
+
+    const onResize = () => {
+        applyViewportMetrics();
+        document.body.classList.add("window-resizing");
+        if (resizeResetTimer) {
+            clearTimeout(resizeResetTimer);
+        }
+        resizeResetTimer = setTimeout(() => {
+            document.body.classList.remove("window-resizing");
+            resizeResetTimer = null;
+        }, 140);
+    };
+
+    applyViewportMetrics();
+    window.addEventListener("resize", onResize, { passive: true });
+}
+
 function normalizeWorkshopId(value) {
     const raw = String(value ?? "").trim();
     if (!raw) return "";
@@ -1689,15 +1715,15 @@ async function autoConfigureSteamCmdSettings() {
     setSettingsStatus("SteamCMD auto-configuration applied. Review and save settings.");
 }
 
-async function ensurePublicUsernameConfigured() {
-    if (state.usernamePromptShown) {
-        return;
-    }
-
+async function ensurePublicUsernameConfigured(forcePrompt = false) {
     const configuredUsername = String(state.settingsModel?.publicProfileUsername || "").trim();
     if (configuredUsername) {
         state.usernamePromptShown = true;
-        return;
+        return true;
+    }
+
+    if (state.usernamePromptShown && !forcePrompt) {
+        return false;
     }
 
     state.usernamePromptShown = true;
@@ -1710,19 +1736,22 @@ async function ensurePublicUsernameConfigured() {
 
     if (enteredUsername === null) {
         setSettingsStatus("Public username is not configured yet.");
-        return;
+        return false;
     }
 
     const normalizedUsername = enteredUsername.trim();
     if (!normalizedUsername) {
         setSettingsStatus("Public username is required. You can set it in Settings > General.");
-        return;
+        return false;
     }
 
     setInputValue("settingsPublicProfileInput", normalizedUsername);
     markSettingsDirty(true);
-    await saveSettingsPage();
+    if (!await saveSettingsPage()) {
+        return false;
+    }
     setSettingsStatus("Public username configured.");
+    return true;
 }
 
 /* ============================================================
@@ -3231,13 +3260,24 @@ function hookLibraryControls() {
     byId("libraryShareProfile")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
-        let sharedId = (active.sharedProfileId || "").trim();
-        if (!sharedId) {
-            sharedId = `sp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-            await window.spikeApi.setLibraryProfileSharedId({ profileId: active.id, sharedProfileId: sharedId });
+
+        if (!await ensurePublicUsernameConfigured(true)) {
+            setLibraryStatus("Public username is required for profile sharing.");
+            return;
         }
-        const copied = await window.spikeApi.copyText(sharedId);
-        setLibraryStatus(copied ? `Shared profile ID copied: ${sharedId}` : `Shared profile ID: ${sharedId}`);
+
+        const publishResult = await window.spikeApi.publishLibrarySharedProfile({ profileId: active.id });
+        if (!publishResult.ok || !publishResult.sharedProfileId) {
+            setLibraryStatus(publishResult.message);
+            return;
+        }
+
+        const copied = await window.spikeApi.copyText(publishResult.sharedProfileId);
+        setLibraryStatus(
+            copied
+                ? `${publishResult.message} ID copied: ${publishResult.sharedProfileId}`
+                : `${publishResult.message} ID: ${publishResult.sharedProfileId}`
+        );
         await refreshLibrarySnapshot();
     });
 
@@ -3532,6 +3572,7 @@ function hookGlobalControls() {
    INITIALIZATION
    ============================================================ */
 async function init() {
+    hookWindowResizeResponsiveness();
     applyDataIcons(document);
     hookVersionControls();
     hookSettingsControls();

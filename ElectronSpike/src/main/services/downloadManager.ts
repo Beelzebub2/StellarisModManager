@@ -249,7 +249,7 @@ function resolveDownloadBasePath(): string {
 
 function normalizeDownloadRuntime(value: string | undefined): DownloadRuntime {
     const normalized = value?.trim().toLowerCase() ?? "";
-    if (normalized === "steamkit2") return "SteamKit2";
+    if (normalized === "steamkit2" || normalized === "steamworks") return "SteamKit2";
     if (normalized === "steamcmd") return "SteamCmd";
     return "Auto";
 }

@@ -10,6 +10,8 @@ const START_TIMEOUT_MS = 10_000;
 
 // ISteamUGC::EItemState bitmask flags
 const ITEM_STATE_INSTALLED = 4;
+const ITEM_STATE_DOWNLOADING = 16;
+const ITEM_STATE_DOWNLOAD_PENDING = 32;
 
 type SteamworksModule = typeof import("steamworks.js");
 type SteamworksClient = ReturnType<SteamworksModule["init"]>;
@@ -142,6 +144,13 @@ export async function runSteamworksDownload(
                     // downloadInfo null means either: not yet started, or download complete
                     const state = c.workshop.state(itemId);
                     const isInstalled = (state & ITEM_STATE_INSTALLED) !== 0;
+                    const isDownloading = (state & ITEM_STATE_DOWNLOADING) !== 0;
+                    const isDownloadPending = (state & ITEM_STATE_DOWNLOAD_PENDING) !== 0;
+
+                    if (isDownloading) {
+                        // State flag says downloading but downloadInfo not yet available — treat as started
+                        downloadSeen = true;
+                    }
 
                     if (isInstalled || downloadSeen) {
                         // Try installInfo first (most reliable)
@@ -171,8 +180,9 @@ export async function runSteamworksDownload(
                         }
                     }
 
-                    // Not started yet — give Steam time to queue it
-                    if (!downloadSeen && Date.now() - startTime > START_TIMEOUT_MS) {
+                    // Not started yet — give Steam time to queue it.
+                    // If state shows DownloadPending the request is queued; don't time out yet.
+                    if (!downloadSeen && !isDownloadPending && Date.now() - startTime > START_TIMEOUT_MS) {
                         resolve({ ok: false, installPath: "", message: "Steam did not begin download within 10 seconds." });
                         return;
                     }

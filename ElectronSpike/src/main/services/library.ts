@@ -15,6 +15,8 @@ import type {
     LibraryCompatibilitySummary,
     LibraryModItem,
     LibraryMoveDirectionRequest,
+    LibraryPublishSharedProfileRequest,
+    LibraryPublishSharedProfileResult,
     LibraryReorderRequest,
     LibraryProfile,
     LibraryRenameProfileRequest,
@@ -100,6 +102,17 @@ interface RemoteSharedProfilePayload {
     name?: string;
     creator?: string;
     mods?: unknown;
+}
+
+interface SharedProfilePublishPayload {
+    name: string;
+    creator: string;
+    mods: string[];
+}
+
+interface SharedProfilePublishTarget {
+    shouldCreate: boolean;
+    sharedProfileId: string | null;
 }
 
 interface SyncModRow {
@@ -198,6 +211,15 @@ function sanitizeSharedProfileId(value: string): string {
 
     const fallbackMatch = raw.match(/\b([a-f0-9]{32})\b/i);
     return fallbackMatch ? fallbackMatch[1] : raw;
+}
+
+export function getSharedProfilePublishTarget(value: string | null | undefined): SharedProfilePublishTarget {
+    const sharedProfileId = sanitizeSharedProfileId(value ?? "");
+    if (!sharedProfileId || !isValidSharedProfileId(sharedProfileId)) {
+        return { shouldCreate: true, sharedProfileId: null };
+    }
+
+    return { shouldCreate: false, sharedProfileId };
 }
 
 function parseTags(value: string | null | undefined): string[] {
@@ -1091,6 +1113,154 @@ export function setLibraryProfileSharedId(request: LibrarySetSharedProfileIdRequ
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown shared-id error";
         return { ok: false, message: `Failed to update shared profile ID: ${message}` };
+    } finally {
+        db.close();
+    }
+}
+
+export async function publishLibrarySharedProfile(
+    request: LibraryPublishSharedProfileRequest
+): Promise<LibraryPublishSharedProfileResult> {
+    const db = openLibraryDb();
+    if (!db) {
+        return {
+            ok: false,
+            message: "mods.db is not available.",
+            sharedProfileId: null,
+            created: false
+        };
+    }
+
+    try {
+        const profile = db
+            .prepare("SELECT Id, Name, SharedProfileId FROM Profiles WHERE Id = ?")
+            .get(request.profileId) as { Id: number; Name: string; SharedProfileId?: string | null } | undefined;
+        if (!profile) {
+            return {
+                ok: false,
+                message: "Profile not found.",
+                sharedProfileId: null,
+                created: false
+            };
+        }
+
+        const creator = loadSettingsSnapshot()?.publicProfileUsername?.trim() || "";
+        if (!creator) {
+            return {
+                ok: false,
+                message: "Public username is required for sharing. Set it in Settings > General.",
+                sharedProfileId: null,
+                created: false
+            };
+        }
+
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            return {
+                ok: false,
+                message: "Could not determine workshop ID column in Mods table.",
+                sharedProfileId: null,
+                created: false
+            };
+        }
+
+        if (getActiveProfileId(db) === request.profileId) {
+            saveActiveProfileSnapshot(db);
+        }
+
+        const publishTarget = getSharedProfilePublishTarget(profile.SharedProfileId ?? "");
+        const profileMods = db
+            .prepare(
+                `SELECT m.${workshopColumn} AS WorkshopId
+                 FROM ProfileEntries pe
+                 INNER JOIN Mods m ON m.Id = pe.ModId
+                 WHERE pe.ProfileId = ? AND pe.IsEnabled = 1
+                 ORDER BY pe.LoadOrder ASC, pe.Id ASC`
+            )
+            .all(request.profileId) as Array<{ WorkshopId: string }>;
+        const mods = normalizeSharedProfileMods(profileMods.map((row) => row.WorkshopId));
+        if (mods.length <= 0) {
+            return {
+                ok: false,
+                message: "Profile has no enabled mods to share.",
+                sharedProfileId: publishTarget.sharedProfileId,
+                created: false
+            };
+        }
+
+        const payload: SharedProfilePublishPayload = {
+            name: profile.Name?.trim() || "Shared Profile",
+            creator,
+            mods
+        };
+        const endpoint = publishTarget.shouldCreate || !publishTarget.sharedProfileId
+            ? `${STELLARISYNC_BASE_URL}/profiles`
+            : `${STELLARISYNC_BASE_URL}/profiles/${encodeURIComponent(publishTarget.sharedProfileId)}/update`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12_000);
+
+        let remoteProfile: RemoteSharedProfilePayload;
+        try {
+            const response = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload),
+                signal: controller.signal
+            });
+
+            if (!response.ok) {
+                let reason = `Request failed with HTTP ${response.status}.`;
+                try {
+                    const errorPayload = await response.json() as { error?: string };
+                    if (typeof errorPayload.error === "string" && errorPayload.error.trim()) {
+                        reason = errorPayload.error.trim();
+                    }
+                } catch {
+                    // keep fallback HTTP message
+                }
+
+                throw new Error(reason);
+            }
+
+            remoteProfile = (await response.json()) as RemoteSharedProfilePayload;
+        } finally {
+            clearTimeout(timeout);
+        }
+
+        const sharedProfileId = sanitizeSharedProfileId(remoteProfile.id ?? publishTarget.sharedProfileId ?? "");
+        if (!sharedProfileId || !isValidSharedProfileId(sharedProfileId)) {
+            return {
+                ok: false,
+                message: "Stellarisync did not return a valid shared profile ID.",
+                sharedProfileId: null,
+                created: false
+            };
+        }
+
+        db.prepare("UPDATE Profiles SET SharedProfileId = ? WHERE Id = ?").run(sharedProfileId, request.profileId);
+
+        const created = publishTarget.shouldCreate || publishTarget.sharedProfileId !== sharedProfileId;
+        const remoteName = String(remoteProfile.name ?? payload.name).trim() || payload.name;
+        return {
+            ok: true,
+            message: created
+                ? `Shared profile '${remoteName}' published to Stellarisync.`
+                : `Shared profile '${remoteName}' updated on Stellarisync.`,
+            sharedProfileId,
+            created
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown shared profile publish error";
+        return {
+            ok: false,
+            message: `Failed to publish shared profile: ${message}`,
+            sharedProfileId: null,
+            created: false
+        };
     } finally {
         db.close();
     }

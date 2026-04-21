@@ -16,6 +16,8 @@ import type {
     LibraryReorderRequest,
     ScanLocalModsResult,
     LibraryRenameProfileRequest,
+    LibraryPublishSharedProfileRequest,
+    LibraryPublishSharedProfileResult,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
     LibrarySyncSharedProfileRequest,
@@ -73,6 +75,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:activateLibraryProfile", profileId) as Promise<LibraryActionResult>,
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) =>
         ipcRenderer.invoke("spike:setLibraryProfileSharedId", request) as Promise<LibraryActionResult>,
+    publishLibrarySharedProfile: (request: LibraryPublishSharedProfileRequest) =>
+        ipcRenderer.invoke("spike:publishLibrarySharedProfile", request) as Promise<LibraryPublishSharedProfileResult>,
     syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) =>
         ipcRenderer.invoke("spike:syncLibrarySharedProfile", request) as Promise<LibrarySyncSharedProfileResult>,
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) =>

@@ -81,8 +81,9 @@ function createMainWindow(): void {
     mainWindow = new BrowserWindow({
         width: 1360,
         height: 880,
-        minWidth: 1080,
-        minHeight: 700,
+        // Keep a practical floor, but allow responsive renderer breakpoints to engage.
+        minWidth: 820,
+        minHeight: 560,
         icon: iconPath,
         titleBarStyle: "hidden",
         titleBarOverlay: {

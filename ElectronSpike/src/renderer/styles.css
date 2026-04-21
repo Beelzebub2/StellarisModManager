@@ -85,6 +85,10 @@
     --dur-base: 200ms;
     --dur-slow: 320ms;
     --dur-xslow: 480ms;
+
+    /* Live-updated by renderer.js on window resize */
+    --app-vw: 100vw;
+    --app-vh: 100vh;
 }
 
 body[data-theme="graphite-moss"] {
@@ -369,11 +373,20 @@ body.drawer-open {
 .window-shell {
     position: relative;
     z-index: 1;
-    width: 100vw;
-    height: 100vh;
+    width: var(--app-vw);
+    height: var(--app-vh);
+    min-height: var(--app-vh);
     display: grid;
     grid-template-rows: auto 1fr auto;
     gap: 0;
+}
+
+/* Disable heavy transitions while the user drags the window edge. */
+body.window-resizing *,
+body.window-resizing *::before,
+body.window-resizing *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
 }
 
 .panel {

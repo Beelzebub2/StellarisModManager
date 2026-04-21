@@ -7,6 +7,7 @@ import type {
     DownloadQueueSnapshot,
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
+    LibraryPublishSharedProfileRequest,
     LibraryReorderRequest,
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
@@ -31,6 +32,7 @@ import {
     importLibraryMods,
     getCompatibilityTags,
     moveLibraryMod,
+    publishLibrarySharedProfile,
     reorderLibraryMod,
     renameLibraryProfile,
     reportLibraryCompatibility,
@@ -98,6 +100,7 @@ const CHANNELS = {
     libraryDeleteProfile: "spike:deleteLibraryProfile",
     libraryActivateProfile: "spike:activateLibraryProfile",
     librarySetSharedProfileId: "spike:setLibraryProfileSharedId",
+    libraryPublishSharedProfile: "spike:publishLibrarySharedProfile",
     librarySyncSharedProfile: "spike:syncLibrarySharedProfile",
     librarySetModEnabled: "spike:setLibraryModEnabled",
     libraryMoveMod: "spike:moveLibraryMod",
@@ -248,6 +251,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.libraryDeleteProfile);
     ipcMain.removeHandler(CHANNELS.libraryActivateProfile);
     ipcMain.removeHandler(CHANNELS.librarySetSharedProfileId);
+    ipcMain.removeHandler(CHANNELS.libraryPublishSharedProfile);
     ipcMain.removeHandler(CHANNELS.librarySyncSharedProfile);
     ipcMain.removeHandler(CHANNELS.librarySetModEnabled);
     ipcMain.removeHandler(CHANNELS.libraryMoveMod);
@@ -384,6 +388,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.librarySetSharedProfileId, async (_event, request: LibrarySetSharedProfileIdRequest) => {
         return setLibraryProfileSharedId(request);
+    });
+
+    ipcMain.handle(CHANNELS.libraryPublishSharedProfile, async (_event, request: LibraryPublishSharedProfileRequest) => {
+        return publishLibrarySharedProfile(request);
     });
 
     ipcMain.handle(CHANNELS.librarySyncSharedProfile, async (_event, request: LibrarySyncSharedProfileRequest) => {

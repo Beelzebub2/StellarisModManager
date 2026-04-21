@@ -351,6 +351,15 @@ export interface LibrarySetSharedProfileIdRequest {
     sharedProfileId: string;
 }
 
+export interface LibraryPublishSharedProfileRequest {
+    profileId: number;
+}
+
+export interface LibraryPublishSharedProfileResult extends LibraryActionResult {
+    sharedProfileId: string | null;
+    created: boolean;
+}
+
 export interface LibrarySyncSharedProfileRequest {
     profileId: number;
     sharedProfileId: string;
@@ -495,6 +504,7 @@ export interface SpikeApi {
     deleteLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
     activateLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) => Promise<LibraryActionResult>;
+    publishLibrarySharedProfile: (request: LibraryPublishSharedProfileRequest) => Promise<LibraryPublishSharedProfileResult>;
     syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) => Promise<LibrarySyncSharedProfileResult>;
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) => Promise<LibraryActionResult>;
     moveLibraryMod: (request: LibraryMoveDirectionRequest) => Promise<LibraryActionResult>;
