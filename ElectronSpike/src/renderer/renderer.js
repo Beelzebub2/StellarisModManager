@@ -47,6 +47,8 @@ const state = {
     }
 };
 
+const libraryVisibility = globalThis.libraryVisibility || {};
+
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
     "Graphite Moss": "graphite-moss",
@@ -1561,9 +1563,11 @@ function applyQueueSnapshot(snapshot) {
         state.queueLibrarySyncKey = completedOpsKey;
         state.queueLibrarySyncInFlight = true;
         void (async () => {
+            const previousLibrarySnapshot = state.library.snapshot;
             try {
                 await window.spikeApi.scanLocalMods();
                 await refreshLibrarySnapshot();
+                await revealNewlyAddedDisabledMods(previousLibrarySnapshot);
             } finally {
                 state.queueLibrarySyncInFlight = false;
             }
@@ -1573,21 +1577,94 @@ function applyQueueSnapshot(snapshot) {
     state.queueHadActiveWork = snapshot.hasActiveWork === true;
 }
 
+function setQueueActionStatus(source, message) {
+    if (source === "library") {
+        setLibraryStatus(message);
+        return;
+    }
+
+    if (source === "downloads") {
+        setGlobalStatus(message);
+        return;
+    }
+
+    setVersionStatus(message);
+}
+
+function getInstallPrerequisiteStateForRenderer(settings) {
+    const helper = window.installPrerequisites?.getInstallPrerequisiteState;
+    if (typeof helper === "function") {
+        return helper(settings);
+    }
+
+    return {
+        canInstall: true,
+        missingModsPath: false,
+        missingSteamCmd: false,
+        message: ""
+    };
+}
+
+async function ensureInstallPrerequisitesConfigured(action) {
+    if (action !== "install") {
+        return { ok: true, message: "" };
+    }
+
+    const prerequisiteState = getInstallPrerequisiteStateForRenderer(
+        state.settingsModel || getDefaultSettingsModel()
+    );
+    if (prerequisiteState.canInstall) {
+        return { ok: true, message: "" };
+    }
+
+    const shouldOpenSettings = await showModal(
+        "Settings required",
+        prerequisiteState.message,
+        "Go to Settings",
+        "Cancel"
+    );
+    if (shouldOpenSettings) {
+        activateTab("settings");
+        setSettingsStatus(prerequisiteState.message);
+    }
+
+    return {
+        ok: false,
+        blockedBySettings: true,
+        message: prerequisiteState.message
+    };
+}
+
+async function queueDownloadAction(request) {
+    const prerequisiteResult = await ensureInstallPrerequisitesConfigured(request.action);
+    if (!prerequisiteResult.ok) {
+        return {
+            ok: false,
+            workshopId: request.workshopId,
+            actionState: "not-installed",
+            message: prerequisiteResult.message,
+            blockedBySettings: true
+        };
+    }
+
+    return window.spikeApi.queueDownload(request);
+}
+
 async function queueAction(workshopId, action, source = "version") {
     const normalizedWorkshopId = normalizeWorkshopId(workshopId);
     if (!isValidWorkshopId(normalizedWorkshopId)) {
         const message = "Invalid workshop ID. Paste the numeric ID or a Steam Workshop URL.";
-        if (source === "library") setLibraryStatus(message);
-        else if (source === "downloads") setGlobalStatus(message);
-        else setVersionStatus(message);
+        setQueueActionStatus(source, message);
         return;
     }
 
     const modName = getModNameByWorkshopId(normalizedWorkshopId);
-    const result = await window.spikeApi.queueDownload({ workshopId: normalizedWorkshopId, modName, action });
-    if (source === "library") setLibraryStatus(result.message);
-    else if (source === "downloads") setGlobalStatus(result.message);
-    else setVersionStatus(result.message);
+    const result = await queueDownloadAction({ workshopId: normalizedWorkshopId, modName, action });
+    setQueueActionStatus(source, result.message);
+    if (result.blockedBySettings) {
+        return;
+    }
+
     await refreshQueueSnapshot();
     if (state.activeDetailWorkshopId === normalizedWorkshopId) await refreshDetailDrawer(normalizedWorkshopId);
     if (source === "library") await refreshLibrarySnapshot();
@@ -2535,6 +2612,39 @@ function clearLibraryDragDecorations(list) {
     }
 }
 
+function syncLibraryEnabledOnlyToggle() {
+    const toggle = byId("libraryEnabledOnly");
+    if (toggle) {
+        toggle.checked = state.library.showEnabledOnly === true;
+    }
+}
+
+async function revealNewlyAddedDisabledMods(previousSnapshot) {
+    const previousMods = previousSnapshot?.mods || [];
+    const nextMods = state.library.snapshot?.mods || [];
+    const helper = libraryVisibility.getNewlyAddedDisabledMods;
+    if (typeof helper !== "function") {
+        return false;
+    }
+
+    const hiddenMods = helper(previousMods, nextMods, state.library.showEnabledOnly);
+    if (hiddenMods.length <= 0) {
+        return false;
+    }
+
+    state.library.showEnabledOnly = false;
+    syncLibraryEnabledOnlyToggle();
+    renderLibraryList();
+    await persistHideDisabledMods(false);
+
+    const formatMessage = libraryVisibility.getRevealDisabledModsMessage;
+    const message = typeof formatMessage === "function"
+        ? formatMessage(hiddenMods.length)
+        : "Newly added mods were hidden by Enabled only. Showing all mods.";
+    setLibraryStatus(message);
+    return true;
+}
+
 async function removeLibraryModWithFeedback(mod) {
     if (!mod || state.library.removingModIds.has(mod.id)) {
         return;
@@ -2857,7 +2967,11 @@ async function reinstallAllLibraryMods() {
     if (!snapshot || snapshot.mods.length === 0) { setLibraryStatus("No installed mods to reinstall."); return; }
     let queued = 0;
     for (const mod of snapshot.mods) {
-        const result = await window.spikeApi.queueDownload({ workshopId: mod.workshopId, modName: mod.name, action: "install" });
+        const result = await queueDownloadAction({ workshopId: mod.workshopId, modName: mod.name, action: "install" });
+        if (result.blockedBySettings) {
+            setLibraryStatus(result.message);
+            return;
+        }
         if (result.ok) queued += 1;
     }
     setLibraryStatus(`Queued ${queued} mod(s) for reinstall.`);
@@ -3117,8 +3231,13 @@ function initWorkshop() {
                 : "install";
 
             const modName = getModNameByWorkshopId(workshopId);
-            const result = await window.spikeApi.queueDownload({ workshopId, modName, action });
+            const result = await queueDownloadAction({ workshopId, modName, action });
             setLibraryStatus(result.message);
+            if (result.blockedBySettings) {
+                const actionState = await getWorkshopOverlayActionState(workshopId);
+                webview.send("smm-mod-state", { workshopId, actionState });
+                return;
+            }
 
             await Promise.all([
                 refreshQueueSnapshot(),
@@ -3463,8 +3582,7 @@ function hookLibraryControls() {
                 // Fresh profile has no enabled mods; hide disabled ones so the view isn't cluttered.
                 if (!state.library.showEnabledOnly) {
                     state.library.showEnabledOnly = true;
-                    const toggle = byId("libraryEnabledOnly");
-                    if (toggle) toggle.checked = true;
+                    syncLibraryEnabledOnlyToggle();
                     renderLibraryList();
                     void persistHideDisabledMods(true);
                 }
@@ -3541,11 +3659,15 @@ function hookLibraryControls() {
             let queuedCount = 0;
             let skippedCount = 0;
             for (const workshopId of missingWorkshopIds) {
-                const queueResult = await window.spikeApi.queueDownload({
+                const queueResult = await queueDownloadAction({
                     workshopId,
                     modName: workshopId,
                     action: "install"
                 });
+                if (queueResult.blockedBySettings) {
+                    setLibraryStatus(queueResult.message);
+                    return;
+                }
                 if (queueResult.ok) {
                     queuedCount += 1;
                 } else {
@@ -3620,9 +3742,13 @@ function hookLibraryControls() {
     });
     byId("libraryScanLocal")?.addEventListener("click", async () => {
         setLibraryStatus("Scanning local mods...");
+        const previousLibrarySnapshot = state.library.snapshot;
         const result = await window.spikeApi.scanLocalMods();
         setLibraryStatus(result.message);
-        if (result.added > 0) await refreshLibrarySnapshot();
+        if (result.added > 0) {
+            await refreshLibrarySnapshot();
+            await revealNewlyAddedDisabledMods(previousLibrarySnapshot);
+        }
     });
 
     byId("librarySubmitTagsOnly")?.addEventListener("click", () => void runLibraryTagOnlySubmission());
@@ -3924,11 +4050,18 @@ async function init() {
 
     // Auto-scan local mods on startup
     setLibraryStatus("Auto-scanning local mods...");
+    const previousLibrarySnapshot = state.library.snapshot;
     const scanResult = await window.spikeApi.scanLocalMods();
+    let revealedHiddenAddedMods = false;
     if (scanResult.added > 0 || scanResult.alreadyKnown > 0) {
         await refreshLibrarySnapshot();
+        if (scanResult.added > 0) {
+            revealedHiddenAddedMods = await revealNewlyAddedDisabledMods(previousLibrarySnapshot);
+        }
     }
-    setLibraryStatus(scanResult.message);
+    if (!revealedHiddenAddedMods) {
+        setLibraryStatus(scanResult.message);
+    }
 
     // Fetch subscriber counts and thumbnails from Steam in the background.
     // This is fire-and-forget; the library re-renders once it completes.
