@@ -48,6 +48,7 @@ const state = {
 };
 
 const libraryVisibility = globalThis.libraryVisibility || {};
+const promptInputBehavior = globalThis.promptInputBehavior || {};
 
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
@@ -431,6 +432,11 @@ function showPrompt(title, message, defaultValue = "") {
 
         setTimeout(() => {
             const input = byId("modalInput");
+            if (input && typeof promptInputBehavior.focusAndSelectPromptInput === "function") {
+                promptInputBehavior.focusAndSelectPromptInput(input);
+                return;
+            }
+
             if (input) input.focus();
         }, 50);
 
