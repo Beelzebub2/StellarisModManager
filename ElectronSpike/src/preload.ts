@@ -52,8 +52,8 @@ const api: SpikeApi = {
     getSettings: () => ipcRenderer.invoke("spike:getSettings") as Promise<SettingsSnapshot | null>,
     saveSettings: (settings: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:saveSettings", settings) as Promise<SettingsSaveResult>,
-    autoDetectSettings: () =>
-        ipcRenderer.invoke("spike:autoDetectSettings") as Promise<SettingsAutoDetectResult>,
+    autoDetectSettings: (settings?: SettingsSnapshot) =>
+        ipcRenderer.invoke("spike:autoDetectSettings", settings) as Promise<SettingsAutoDetectResult>,
     validateSettings: (settings: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:validateSettings", settings) as Promise<SettingsValidationResult>,
     getThemePaletteOptions: () =>

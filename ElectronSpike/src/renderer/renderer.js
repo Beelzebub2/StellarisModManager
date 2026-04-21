@@ -1997,7 +1997,7 @@ async function saveSettingsPage() {
 }
 
 async function autoDetectSettingsPage() {
-    const result = await window.spikeApi.autoDetectSettings();
+    const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
     applySettingsToForm(result.settings);
     markSettingsDirty(true);
     setSettingsStatus(result.message);
@@ -2036,7 +2036,7 @@ async function detectAndApplyGameVersion(gamePath) {
 }
 
 async function detectModsPathSettings() {
-    const result = await window.spikeApi.autoDetectSettings();
+    const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
     const detectedModsPath = String(result?.settings?.modsPath || "").trim();
     if (!detectedModsPath) {
         setSettingsStatus("Could not detect a Stellaris mods path.");
@@ -2049,7 +2049,7 @@ async function detectModsPathSettings() {
 }
 
 async function detectWorkshopRuntimeSettings() {
-    const result = await window.spikeApi.autoDetectSettings();
+    const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
     const detectedRuntime = String(result?.settings?.workshopDownloadRuntime || "").trim();
     if (!detectedRuntime) {
         setSettingsStatus("Could not detect a workshop download runtime.");
@@ -2063,12 +2063,12 @@ async function detectWorkshopRuntimeSettings() {
 }
 
 async function autoConfigureSteamCmdSettings() {
-    const result = await window.spikeApi.autoDetectSettings();
+    const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
     const detectedSteamCmdPath = String(result?.settings?.steamCmdPath || "").trim();
     const detectedSteamCmdDownloadPath = String(result?.settings?.steamCmdDownloadPath || "").trim();
 
-    if (!detectedSteamCmdPath && !detectedSteamCmdDownloadPath) {
-        setSettingsStatus("Could not auto-configure SteamCMD from detected locations.");
+    if (!detectedSteamCmdPath || !detectedSteamCmdDownloadPath) {
+        setSettingsStatus("Could not auto-configure SteamCMD because no valid steamcmd executable was detected.");
         return;
     }
 

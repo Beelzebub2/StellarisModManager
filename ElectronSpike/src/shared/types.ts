@@ -494,7 +494,7 @@ export interface SpikeApi {
     getSystemSummary: () => Promise<SystemSummary>;
     getSettings: () => Promise<SettingsSnapshot | null>;
     saveSettings: (settings: SettingsSnapshot) => Promise<SettingsSaveResult>;
-    autoDetectSettings: () => Promise<SettingsAutoDetectResult>;
+    autoDetectSettings: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;
     getThemePaletteOptions: () => Promise<string[]>;
     getDownloadRuntimeOptions: () => Promise<string[]>;

@@ -323,8 +323,8 @@ export function registerIpcHandlers(): void {
         return saveSettingsSnapshot(settings);
     });
 
-    ipcMain.handle(CHANNELS.settingsAutoDetect, async () => {
-        return autoDetectSettingsSnapshot();
+    ipcMain.handle(CHANNELS.settingsAutoDetect, async (_event, settings?: SettingsSnapshot) => {
+        return autoDetectSettingsSnapshot(settings);
     });
 
     ipcMain.handle(CHANNELS.settingsValidate, async (_event, settings: SettingsSnapshot) => {

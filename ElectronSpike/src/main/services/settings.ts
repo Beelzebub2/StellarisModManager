@@ -388,11 +388,10 @@ function findSteamCmdExecutable(discovery: ReturnType<typeof discoverSteamLibrar
 
 function resolveSteamCmdDownloadPath(
     currentPath: string | undefined,
-    steamCmdPath: string | undefined,
-    discovery: ReturnType<typeof discoverSteamLibraries>
+    steamCmdPath: string | undefined
 ): string | undefined {
     const existing = coerceString(currentPath);
-    if (existing) {
+    if (existing && fs.existsSync(existing)) {
         return existing;
     }
 
@@ -401,12 +400,54 @@ function resolveSteamCmdDownloadPath(
         return executableDir;
     }
 
-    const firstSteamRoot = discovery.existingSteamRoots[0];
-    if (firstSteamRoot) {
-        return firstSteamRoot;
-    }
-
     return undefined;
+}
+
+function resolveSteamCmdAutoConfig(
+    current: SettingsSnapshot,
+    discovery: ReturnType<typeof discoverSteamLibraries>,
+    options?: {
+        allowExecutableDiscovery?: boolean;
+    }
+): Pick<SettingsSnapshot, "steamCmdPath" | "steamCmdDownloadPath" | "workshopDownloadRuntime"> {
+    const currentSteamCmdPath = coerceString(current.steamCmdPath);
+    const allowExecutableDiscovery = options?.allowExecutableDiscovery !== false;
+    const detectedSteamCmdPath = (currentSteamCmdPath && fs.existsSync(currentSteamCmdPath))
+        ? currentSteamCmdPath
+        : (allowExecutableDiscovery ? findSteamCmdExecutable(discovery) : undefined);
+
+    const detectedSteamCmdDownloadPath = resolveSteamCmdDownloadPath(
+        current.steamCmdDownloadPath,
+        detectedSteamCmdPath
+    );
+
+    const currentRuntime = normalizeRuntime(coerceString(current.workshopDownloadRuntime));
+    const detectedRuntime = currentRuntime === "Auto"
+        ? (detectedSteamCmdPath && detectedSteamCmdDownloadPath ? "SteamCmd" : "Steamworks")
+        : currentRuntime;
+
+    return {
+        steamCmdPath: detectedSteamCmdPath,
+        steamCmdDownloadPath: detectedSteamCmdDownloadPath,
+        workshopDownloadRuntime: detectedRuntime
+    };
+}
+
+export function resolveSteamCmdAutoConfigForTest(input: {
+    currentSettings?: SettingsSnapshot;
+    discovery: ReturnType<typeof discoverSteamLibraries>;
+    skipExecutableDiscovery?: boolean;
+}): Pick<SettingsSnapshot, "steamCmdPath" | "steamCmdDownloadPath" | "workshopDownloadRuntime"> {
+    return resolveSteamCmdAutoConfig(
+        {
+            ...defaultSettings(),
+            ...(input.currentSettings ?? {})
+        },
+        input.discovery,
+        {
+            allowExecutableDiscovery: input.skipExecutableDiscovery !== true
+        }
+    );
 }
 
 function readSettingsRaw(): unknown | null {
@@ -496,8 +537,11 @@ export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult
     }
 }
 
-export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
-    const current = loadSettingsOrDefault();
+export function autoDetectSettingsSnapshot(baseSettings?: SettingsSnapshot): SettingsAutoDetectResult {
+    const current: SettingsSnapshot = {
+        ...loadSettingsOrDefault(),
+        ...(baseSettings ?? {})
+    };
     const discovery = discoverSteamLibraries();
 
     const hasGamePath = coerceString(current.gamePath);
@@ -512,27 +556,10 @@ export function autoDetectSettingsSnapshot(): SettingsAutoDetectResult {
         current.modsPath = getDefaultModsPath();
     }
 
-    const currentSteamCmdPath = coerceString(current.steamCmdPath);
-    const detectedSteamCmdPath = (currentSteamCmdPath && fs.existsSync(currentSteamCmdPath))
-        ? currentSteamCmdPath
-        : findSteamCmdExecutable(discovery);
-
-    if (detectedSteamCmdPath) {
-        current.steamCmdPath = detectedSteamCmdPath;
-    }
-
-    const detectedSteamCmdDownloadPath = resolveSteamCmdDownloadPath(
-        current.steamCmdDownloadPath,
-        detectedSteamCmdPath,
-        discovery
-    );
-    if (detectedSteamCmdDownloadPath) {
-        current.steamCmdDownloadPath = detectedSteamCmdDownloadPath;
-    }
-
-    if (normalizeRuntime(coerceString(current.workshopDownloadRuntime)) === "Auto") {
-        current.workshopDownloadRuntime = detectedSteamCmdPath ? "SteamCmd" : "Steamworks";
-    }
+    const steamCmdAutoConfig = resolveSteamCmdAutoConfig(current, discovery);
+    current.steamCmdPath = steamCmdAutoConfig.steamCmdPath;
+    current.steamCmdDownloadPath = steamCmdAutoConfig.steamCmdDownloadPath;
+    current.workshopDownloadRuntime = steamCmdAutoConfig.workshopDownloadRuntime;
 
     const detectedVersion = detectGameVersion(current.gamePath);
     if (detectedVersion) {
