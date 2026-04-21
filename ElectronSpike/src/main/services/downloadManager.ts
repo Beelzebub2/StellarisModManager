@@ -24,9 +24,11 @@ import {
 } from "./steamworksProvider";
 
 const STELLARIS_APP_ID = "281990";
+const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
 const MAX_CONCURRENT_DOWNLOADS = 3;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
 const STEAMCMD_STALL_MS = 2 * 60 * 1000;
+const WORKSHOP_TITLE_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 type DownloadRuntime = "Auto" | "SteamKit2" | "SteamCmd";
 
 type EventEmitter = (event: DownloadQueueEvent) => void;
@@ -63,11 +65,28 @@ interface MachineMetrics {
     totalMemoryGb: number;
 }
 
+interface SteamFileDetailsResponse {
+    response?: {
+        publishedfiledetails?: SteamPublishedFileDetail[];
+    };
+}
+
+interface SteamPublishedFileDetail {
+    publishedfileid?: string;
+    title?: string;
+}
+
+interface CachedWorkshopTitle {
+    fetchedAtUtc: string;
+    title: string;
+}
+
 const installPathById = new Map<string, string>();
 const actionStates = new Map<string, ModActionState>();
 const queueItems = new Map<string, DownloadQueueItem>();
 const queueOrder: string[] = [];
 const queuePending: QueueEntry[] = [];
+const workshopTitleCache = new Map<string, CachedWorkshopTitle>();
 
 const runningJobs = new Map<string, RunningJob>();
 let queueWorkerActive = false;
@@ -82,6 +101,15 @@ function nowIso(): string {
 
 function sleep(ms: number): Promise<void> {
     return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function isCacheFresh(isoUtc: string, ttlMs: number): boolean {
+    const timestamp = Date.parse(isoUtc);
+    if (!Number.isFinite(timestamp)) {
+        return false;
+    }
+
+    return Date.now() - timestamp < ttlMs;
 }
 
 function isValidWorkshopId(value: string): boolean {
@@ -149,6 +177,72 @@ async function saveInstallState(): Promise<void> {
     await writeJsonFile(installStatePath, {
         byWorkshopId: Object.fromEntries(installPathById.entries())
     } satisfies InstallStateStore);
+}
+
+function isPlaceholderModName(workshopId: string, modName: string | undefined): boolean {
+    const trimmed = modName?.trim() ?? "";
+    if (!trimmed) {
+        return true;
+    }
+
+    if (trimmed === workshopId) {
+        return true;
+    }
+
+    return trimmed.toLowerCase() === `workshop mod ${workshopId}`.toLowerCase();
+}
+
+async function fetchWorkshopTitle(workshopId: string): Promise<string | null> {
+    const cached = workshopTitleCache.get(workshopId);
+    if (cached && isCacheFresh(cached.fetchedAtUtc, WORKSHOP_TITLE_CACHE_TTL_MS)) {
+        return cached.title;
+    }
+
+    const formData = new URLSearchParams();
+    formData.append("itemcount", "1");
+    formData.append("publishedfileids[0]", workshopId);
+
+    try {
+        const response = await fetch(STEAM_PUBLISHED_DETAILS_URL, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: formData.toString()
+        });
+
+        if (!response.ok) {
+            return cached?.title ?? null;
+        }
+
+        const payload = (await response.json()) as SteamFileDetailsResponse;
+        const detail = (payload.response?.publishedfiledetails ?? [])
+            .find((entry) => String(entry.publishedfileid ?? "").trim() === workshopId);
+        const title = (detail?.title ?? "").trim();
+
+        if (!title) {
+            return cached?.title ?? null;
+        }
+
+        workshopTitleCache.set(workshopId, {
+            fetchedAtUtc: nowIso(),
+            title
+        });
+
+        return title;
+    } catch {
+        return cached?.title ?? null;
+    }
+}
+
+async function resolveQueueModName(workshopId: string, modName: string | undefined): Promise<string> {
+    const trimmed = modName?.trim() ?? "";
+    if (!isPlaceholderModName(workshopId, trimmed)) {
+        return trimmed;
+    }
+
+    const fetchedTitle = await fetchWorkshopTitle(workshopId);
+    return fetchedTitle || trimmed || workshopId;
 }
 
 function upsertQueueItem(
@@ -943,6 +1037,10 @@ export function getActionStateForCard(workshopId: string): ModActionState {
     return installedIds.has(workshopId) ? "installed" : "not-installed";
 }
 
+export async function resolveQueueModNameForTest(workshopId: string, modName?: string): Promise<string> {
+    return resolveQueueModName(workshopId, modName);
+}
+
 export async function queueDownload(request: DownloadActionRequest): Promise<DownloadActionResult> {
     await ensureInitialized();
 
@@ -956,7 +1054,7 @@ export async function queueDownload(request: DownloadActionRequest): Promise<Dow
         return { ok: false, workshopId, actionState: getActionStateForCard(workshopId), message: `Mod ${workshopId} is already in queue.` };
     }
 
-    const modName = request.modName?.trim() || workshopId;
+    const modName = await resolveQueueModName(workshopId, request.modName);
     queuePending.push({
         workshopId,
         modName,
