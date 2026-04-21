@@ -1188,6 +1188,20 @@ body[data-theme="frost-white"] .aurora {
     }
 }
 
+@keyframes libraryRemovePulse {
+
+    0%,
+    100% {
+        transform: translateX(0);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger-border) 55%, transparent);
+    }
+
+    50% {
+        transform: translateX(2px);
+        box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 75%, transparent), 0 0 0 1px color-mix(in srgb, var(--danger-border) 45%, transparent);
+    }
+}
+
 .queue-stage[data-status="queued"],
 .queue-stage[data-status="running"] {
     color: var(--accent);
@@ -2457,6 +2471,28 @@ button:disabled {
 
 .library-row.is-selected::before {
     transform: scaleY(1);
+}
+
+.library-row.is-removing {
+    background: color-mix(in srgb, var(--danger-soft) 76%, var(--bg-2));
+    border-color: color-mix(in srgb, var(--danger-border) 72%, var(--border));
+    animation: libraryRemovePulse 1.1s ease-in-out infinite;
+    opacity: 0.82;
+}
+
+.library-row.is-removing::before {
+    transform: scaleY(1);
+    background: var(--danger);
+}
+
+.library-row.is-removing .library-row-title,
+.library-row.is-removing .library-cell,
+.library-row.is-removing .badge {
+    color: color-mix(in srgb, var(--text) 88%, var(--danger));
+}
+
+.library-row.is-removing .library-actions {
+    opacity: 0.78;
 }
 
 .library-cell {

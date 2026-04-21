@@ -38,6 +38,7 @@ const state = {
         searchText: "",
         showEnabledOnly: false,
         selectedModId: null,
+        removingModIds: new Set(),
         dragSourceModId: null,
         descriptorTagsExpanded: false,
         availableTags: [],
@@ -910,15 +911,24 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
     }
 
     if (status === "queued") {
+        if (/retrying .*individually|individual steamcmd retry/i.test(rawMessage)) {
+            return "Retrying this mod in its own SteamCMD run...";
+        }
+        if (/waiting for batch start/i.test(rawMessage)) {
+            return "Waiting for the current SteamCMD batch to begin...";
+        }
         return action === "uninstall" ? "Queued for uninstall." : "Waiting for a download slot...";
     }
 
     if (status === "running") {
         if (/steamworks unavailable|steam not running/i.test(rawMessage) || /steamcmd|SteamCMD/i.test(rawMessage)) {
             if (/preparing|preparing batch/i.test(rawMessage)) return "Starting download via SteamCMD...";
+            if (/verifying downloaded files/i.test(rawMessage)) return "Verifying downloaded files...";
             if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
+            if (/batch/i.test(rawMessage)) return "Downloading via SteamCMD batch...";
             return "Downloading via SteamCMD...";
         }
+        if (/verifying downloaded files/i.test(rawMessage)) return "Verifying downloaded files...";
         if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
         if (/already in steam workshop cache|already downloaded/i.test(rawMessage)) return "Deploying cached mod files...";
         return action === "uninstall" ? "Removing installed files..." : "Downloading via Steam...";
@@ -939,11 +949,17 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
         if (/download item\s+\d+\s+failed|failed\s*\(failure\)|steamcmd reported download failure/i.test(rawMessage)) {
             return "Download failed. Retry later or check SteamCMD in Settings.";
         }
-        if (/steamcmd path is not configured|executable is missing|configured SteamCMD executable/i.test(rawMessage)) {
+        if (/steamcmd path is not configured|executable is missing|configured steamcmd executable/i.test(rawMessage)) {
             return "SteamCMD not configured — update it in Settings or switch runtime to Steamworks.";
         }
         if (/timed out/i.test(rawMessage)) {
             return "Download timed out. Retry or check your connection.";
+        }
+        if (/stalled/i.test(rawMessage)) {
+            return "SteamCMD stalled. The queue will retry this mod individually when possible.";
+        }
+        if (/retrying .*individually|individual steamcmd retry/i.test(rawMessage)) {
+            return "Batch recovery queued an individual SteamCMD retry for this mod.";
         }
         if (/steam could not start download|check you are logged in/i.test(rawMessage)) {
             return "Steam could not start download. Make sure you are logged in to Steam.";
@@ -980,8 +996,16 @@ function buildQueueDetailMessage(rawMessage) {
         return "Queued for processing.";
     }
 
+    if (/retrying .*individually|individual steamcmd retry/i.test(raw)) {
+        return "Retrying this mod individually.";
+    }
+
     if (/cancel/i.test(raw)) {
         return "Queue operation cancelled.";
+    }
+
+    if (/stalled/i.test(raw)) {
+        return "SteamCMD stalled before completion.";
     }
 
     if (/launching steamcmd|downloading|deploying/i.test(raw)) {
@@ -1597,7 +1621,7 @@ function getWorkshopRuntimeHint(runtime, steamCmdPath, steamCmdDownloadPath) {
 
     if (normalizedRuntime === "SteamCmd") {
         return hasSteamCmdPath && hasSteamCmdDownloadPath
-            ? "SteamCMD is configured and ready for standalone downloads."
+            ? "SteamCMD is configured and ready for standalone downloads, including larger profile imports."
             : "SteamCMD is selected. Set both the executable and download path for reliable installs.";
     }
 
@@ -2304,28 +2328,30 @@ function renderLibraryList() {
 
     list.innerHTML = mods.map((mod) => {
         const sel = mod.id === state.library.selectedModId ? " is-selected" : "";
+        const isRemoving = state.library.removingModIds.has(mod.id);
         const updateBadge = mod.hasUpdate ? "<span class='badge badge-version'>Update</span>" : "";
         const mpBadge = mod.isMultiplayerSafe ? "<span class='badge badge-community'>MP safe</span>" : "";
+        const removingBadge = isRemoving ? "<span class='badge badge-danger'>Removing...</span>" : "";
         const versionLabel = formatVersionBadgeValue(mod.version);
         return `
-            <article class="library-row${sel}" data-mod-id="${mod.id}" draggable="${mod.isEnabled ? "true" : "false"}">
+            <article class="library-row${sel}${isRemoving ? " is-removing" : ""}" data-mod-id="${mod.id}" draggable="${mod.isEnabled && !isRemoving ? "true" : "false"}">
                 <div class="library-cell library-enabled">
-                    <input type="checkbox" data-action="toggle-enabled" data-mod-id="${mod.id}" ${mod.isEnabled ? "checked" : ""} />
+                    <input type="checkbox" data-action="toggle-enabled" data-mod-id="${mod.id}" ${mod.isEnabled ? "checked" : ""} ${isRemoving ? "disabled" : ""} />
                 </div>
                 <div class="library-cell library-name">
                     <p class="library-row-title">${escapeHtml(mod.name)}</p>
                     <div class="library-row-badges">
                         <span class="badge">${escapeHtml(versionLabel)}</span>
-                        ${mpBadge}${updateBadge}
+                        ${mpBadge}${updateBadge}${removingBadge}
                     </div>
                 </div>
                 <div class="library-cell library-order">
                     <span class="badge">${mod.loadOrder}</span>
                 </div>
                 <div class="library-cell library-actions">
-                    <button type="button" class="button-icon" data-action="move-up" data-mod-id="${mod.id}" ${!mod.isEnabled ? "disabled" : ""} title="Move up">${iconSvg("chevronUp")}</button>
-                    <button type="button" class="button-icon" data-action="move-down" data-mod-id="${mod.id}" ${!mod.isEnabled ? "disabled" : ""} title="Move down">${iconSvg("chevronDown")}</button>
-                    <button type="button" class="button-icon button-danger" data-action="remove-mod" data-mod-id="${mod.id}" title="Remove">${iconSvg("trash")}</button>
+                    <button type="button" class="button-icon" data-action="move-up" data-mod-id="${mod.id}" ${!mod.isEnabled || isRemoving ? "disabled" : ""} title="Move up">${iconSvg("chevronUp")}</button>
+                    <button type="button" class="button-icon" data-action="move-down" data-mod-id="${mod.id}" ${!mod.isEnabled || isRemoving ? "disabled" : ""} title="Move down">${iconSvg("chevronDown")}</button>
+                    <button type="button" class="button-icon button-danger${isRemoving ? " is-spinning" : ""}" data-action="remove-mod" data-mod-id="${mod.id}" ${isRemoving ? "disabled" : ""} title="${isRemoving ? "Removing" : "Remove"}">${iconSvg(isRemoving ? "refresh" : "trash")}</button>
                 </div>
             </article>`;
     }).join("\n");
@@ -2336,6 +2362,28 @@ function renderLibraryList() {
 function clearLibraryDragDecorations(list) {
     for (const row of list.querySelectorAll(".library-row")) {
         row.classList.remove("drag-over-top", "drag-over-bottom", "is-dragging");
+    }
+}
+
+async function removeLibraryModWithFeedback(mod) {
+    if (!mod || state.library.removingModIds.has(mod.id)) {
+        return;
+    }
+
+    state.library.removingModIds.add(mod.id);
+    renderLibraryList();
+    setLibraryStatus(`Removing ${mod.name}...`);
+
+    try {
+        const result = await window.spikeApi.uninstallLibraryMod(mod.id);
+        setLibraryStatus(result.message);
+        await refreshLibrarySnapshot();
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setLibraryStatus(`Failed to remove ${mod.name}: ${message}`);
+    } finally {
+        state.library.removingModIds.delete(mod.id);
+        renderLibraryList();
     }
 }
 
@@ -2411,9 +2459,7 @@ function hookLibraryListDelegation() {
             if (action === "remove-mod") {
                 const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
                 if (!confirmed) return;
-                const result = await window.spikeApi.uninstallLibraryMod(modId);
-                setLibraryStatus(result.message);
-                await refreshLibrarySnapshot();
+                await removeLibraryModWithFeedback(mod);
             }
 
             return;
@@ -3453,9 +3499,7 @@ function hookLibraryControls() {
         if (!mod) return;
         const confirmed = await showModal("Remove Mod", `Remove '${mod.name}'?`, "Remove", "Cancel");
         if (!confirmed) return;
-        const result = await window.spikeApi.uninstallLibraryMod(mod.id);
-        setLibraryStatus(result.message);
-        await refreshLibrarySnapshot();
+        await removeLibraryModWithFeedback(mod);
     });
 }
 
