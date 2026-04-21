@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -19,6 +20,21 @@ const THEME_PALETTE_OPTIONS = [
     "Frost White"
 ];
 const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "Steamworks", "SteamCmd"];
+const WINDOWS_USER_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders";
+const WINDOWS_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders";
+const WINDOWS_DOCUMENTS_VALUE = "Personal";
+
+interface WindowsDocumentsResolverInput {
+    homeDir?: string;
+    env?: NodeJS.ProcessEnv;
+    shellFoldersPersonal?: string;
+    userShellFoldersPersonal?: string;
+    skipRegistryLookup?: boolean;
+}
+
+interface DefaultModsPathResolverInput extends WindowsDocumentsResolverInput {
+    platform?: NodeJS.Platform;
+}
 
 function coerceString(value: unknown): string | undefined {
     if (typeof value !== "string") {
@@ -81,6 +97,77 @@ function normalizeRuntime(value: string | undefined): string {
     }
 
     return "Auto";
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function expandWindowsEnvVariables(value: string, env: NodeJS.ProcessEnv): string {
+    return value.replace(/%([^%]+)%/g, (_match, rawName: string) => {
+        const name = String(rawName || "").trim();
+        if (!name) {
+            return "";
+        }
+
+        const resolved = env[name]
+            ?? env[name.toUpperCase()]
+            ?? env[name.toLowerCase()];
+        return resolved ? resolved.trim() : `%${name}%`;
+    });
+}
+
+function parseRegistryQueryValue(output: string, valueName: string): string | undefined {
+    const match = output.match(new RegExp(`^\\s*${escapeRegExp(valueName)}\\s+REG_\\w+\\s+(.+)$`, "mi"));
+    return coerceString(match?.[1]);
+}
+
+function queryWindowsRegistryValue(key: string, valueName: string): string | undefined {
+    try {
+        const output = execFileSync("reg", ["query", key, "/v", valueName], {
+            encoding: "utf8",
+            windowsHide: true
+        });
+        return parseRegistryQueryValue(output, valueName);
+    } catch {
+        return undefined;
+    }
+}
+
+function resolveWindowsDocumentsDirectory(input?: WindowsDocumentsResolverInput): string {
+    const homeDir = input?.homeDir?.trim() || os.homedir();
+    const env = input?.env ?? process.env;
+    const allowRegistryLookup = input?.skipRegistryLookup !== true;
+    const shellFoldersPersonal = coerceString(input?.shellFoldersPersonal)
+        ?? (allowRegistryLookup
+            ? queryWindowsRegistryValue(WINDOWS_SHELL_FOLDERS_KEY, WINDOWS_DOCUMENTS_VALUE)
+            : undefined);
+    if (shellFoldersPersonal) {
+        return path.normalize(shellFoldersPersonal);
+    }
+
+    const userShellFoldersPersonal = coerceString(input?.userShellFoldersPersonal)
+        ?? (allowRegistryLookup
+            ? queryWindowsRegistryValue(WINDOWS_USER_SHELL_FOLDERS_KEY, WINDOWS_DOCUMENTS_VALUE)
+            : undefined);
+    if (userShellFoldersPersonal) {
+        return path.normalize(expandWindowsEnvVariables(userShellFoldersPersonal, env));
+    }
+
+    const oneDriveRoots = [
+        coerceString(env.OneDrive),
+        coerceString(env.OneDriveConsumer),
+        coerceString(env.OneDriveCommercial)
+    ].filter((value): value is string => Boolean(value));
+
+    for (const root of oneDriveRoots) {
+        const candidate = path.join(root, "Documents");
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return path.join(homeDir, "Documents");
 }
 
 function defaultSettings(): SettingsSnapshot {
@@ -200,17 +287,35 @@ function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown
     };
 }
 
-function getDefaultModsPath(): string {
-    const home = os.homedir();
-    if (process.platform === "win32") {
-        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
+function resolveDefaultModsPath(input?: DefaultModsPathResolverInput): string {
+    const platform = input?.platform ?? process.platform;
+    const homeDir = input?.homeDir?.trim() || os.homedir();
+    if (platform === "win32") {
+        return path.join(
+            resolveWindowsDocumentsDirectory(input),
+            "Paradox Interactive",
+            "Stellaris",
+            "mod"
+        );
     }
 
-    if (process.platform === "darwin") {
-        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
+    if (platform === "darwin") {
+        return path.join(homeDir, "Documents", "Paradox Interactive", "Stellaris", "mod");
     }
 
-    return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+    return path.join(homeDir, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+}
+
+export function resolveWindowsDocumentsDirectoryForTest(input: WindowsDocumentsResolverInput): string {
+    return resolveWindowsDocumentsDirectory(input);
+}
+
+export function getDefaultModsPath(): string {
+    return resolveDefaultModsPath();
+}
+
+export function getDefaultModsPathForTest(input: DefaultModsPathResolverInput): string {
+    return resolveDefaultModsPath(input);
 }
 
 function dedupePaths(paths: Array<string | undefined>): string[] {

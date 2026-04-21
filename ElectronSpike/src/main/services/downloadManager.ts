@@ -14,7 +14,7 @@ import type {
     ModActionState
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
-import { loadSettingsSnapshot } from "./settings";
+import { getDefaultModsPath as getSettingsDefaultModsPath, loadSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
 import { logError, logInfo } from "./logger";
 import {
@@ -248,11 +248,7 @@ function getInstalledWorkshopIdsFromDb(): Set<string> {
 // --- Path resolution ---
 
 function getDefaultModsPath(): string {
-    const home = os.homedir();
-    if (process.platform === "win32" || process.platform === "darwin") {
-        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
-    }
-    return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+    return getSettingsDefaultModsPath();
 }
 
 function resolveModsInstallRoot(): string {

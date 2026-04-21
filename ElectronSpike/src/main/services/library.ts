@@ -1,7 +1,6 @@
 ﻿import crypto from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
@@ -29,7 +28,7 @@ import type {
     ScanLocalModsResult
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
-import { loadSettingsSnapshot, saveSettingsSnapshot } from "./settings";
+import { getDefaultModsPath as getSettingsDefaultModsPath, loadSettingsSnapshot, saveSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
 import { queueDownload } from "./downloadManager";
 
@@ -2083,11 +2082,7 @@ function ensureProfilesTables(db: Database.Database): void {
 }
 
 function getDefaultModsDirectory(): string {
-    const home = os.homedir();
-    if (process.platform === "win32" || process.platform === "darwin") {
-        return path.join(home, "Documents", "Paradox Interactive", "Stellaris", "mod");
-    }
-    return path.join(home, ".local", "share", "Paradox Interactive", "Stellaris", "mod");
+    return getSettingsDefaultModsPath();
 }
 
 function listLocalDescriptorFiles(modsPath: string): string[] {
