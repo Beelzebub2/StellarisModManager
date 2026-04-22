@@ -603,7 +603,7 @@ async function removePathIfExists(
 
 // --- Descriptor handling ---
 
-function upsertQuotedDescriptorField(content: string, key: string, value: string): string {
+export function upsertQuotedDescriptorField(content: string, key: string, value: string): string {
     const escapedValue = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     const line = `${key}="${escapedValue}"`;
     const re = new RegExp(`^\\s*${key}\\s*=\\s*"[^"]*"\\s*$`, "m");
@@ -611,6 +611,73 @@ function upsertQuotedDescriptorField(content: string, key: string, value: string
     if (re.test(content)) return content.replace(re, line);
     const trimmed = content.trimEnd();
     return trimmed.length > 0 ? `${trimmed}\n${line}\n` : `${line}\n`;
+}
+
+function normalizeManagedDescriptorValue(value: string): string {
+    return path.normalize(value).replace(/\\/g, "/");
+}
+
+function canUseRelativeManagedPath(basePath: string, targetPath: string): boolean {
+    const relative = path.relative(basePath, targetPath);
+    return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function findManagedStellarisRoot(modsRoot: string): string | null {
+    let current = path.resolve(modsRoot);
+    while (true) {
+        if (path.basename(current).trim().toLowerCase() === "stellaris") {
+            return current;
+        }
+
+        const parent = path.dirname(current);
+        if (parent === current) {
+            return null;
+        }
+
+        current = parent;
+    }
+}
+
+export function buildManagedDescriptorPath(input: {
+    modsRoot: string;
+    installedPath: string;
+}): string {
+    const modsRoot = path.resolve(input.modsRoot);
+    const installedPath = path.resolve(input.installedPath);
+    const stellarisDir = findManagedStellarisRoot(modsRoot);
+    if (stellarisDir && canUseRelativeManagedPath(stellarisDir, installedPath)) {
+        return normalizeManagedDescriptorValue(path.relative(stellarisDir, installedPath));
+    }
+
+    return normalizeManagedDescriptorValue(installedPath);
+}
+
+export function buildManagedDescriptorReference(input: {
+    modsRoot: string;
+    descriptorPath: string;
+}): string {
+    const modsRoot = path.resolve(input.modsRoot);
+    const descriptorPath = path.resolve(input.descriptorPath);
+    const stellarisDir = findManagedStellarisRoot(modsRoot);
+    if (stellarisDir && canUseRelativeManagedPath(stellarisDir, descriptorPath)) {
+        return normalizeManagedDescriptorValue(path.relative(stellarisDir, descriptorPath));
+    }
+
+    return normalizeManagedDescriptorValue(descriptorPath);
+}
+
+export function buildManagedDescriptorPathForTest(input: {
+    modsRoot: string;
+    installedPath: string;
+}): string {
+    return buildManagedDescriptorPath(input);
+}
+
+export function buildManagedDescriptorReferenceForTest(input: {
+    modsRoot: string;
+    descriptorPath: string;
+}): string {
+    return buildManagedDescriptorReference(input);
 }
 
 async function deployDownloadedModToModsPath(
@@ -650,7 +717,14 @@ async function deployDownloadedModToModsPath(
     }
 
     descriptorContent = upsertQuotedDescriptorField(descriptorContent, "remote_file_id", workshopId);
-    descriptorContent = upsertQuotedDescriptorField(descriptorContent, "path", `mod/${workshopId}`);
+    descriptorContent = upsertQuotedDescriptorField(
+        descriptorContent,
+        "path",
+        buildManagedDescriptorPath({
+            modsRoot,
+            installedPath: finalInstallPath
+        })
+    );
 
     try {
         await fsp.writeFile(finalDescriptorPath, descriptorContent, "utf8");

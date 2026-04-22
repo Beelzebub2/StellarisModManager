@@ -15,6 +15,8 @@ import type {
     LibraryCompatibilitySummary,
     LibraryModItem,
     LibraryMoveDirectionRequest,
+    ModsPathMigrationRequest,
+    ModsPathMigrationResult,
     LibraryPublishSharedProfileRequest,
     LibraryPublishSharedProfileResult,
     LibraryReorderRequest,
@@ -25,12 +27,18 @@ import type {
     LibrarySyncSharedProfileRequest,
     LibrarySyncSharedProfileResult,
     LibrarySnapshot,
+    SettingsSnapshot,
     ScanLocalModsResult
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
 import { getDefaultModsPath as getSettingsDefaultModsPath, loadSettingsSnapshot, saveSettingsSnapshot } from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
-import { queueDownload } from "./downloadManager";
+import {
+    buildManagedDescriptorPath,
+    buildManagedDescriptorReference,
+    queueDownload,
+    upsertQuotedDescriptorField
+} from "./downloadManager";
 
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
 const STELLARISYNC_BASE_URL = process.env.STELLARISYNC_BASE_URL?.trim() || "https://stellarisync.rrmtools.uk";
@@ -122,6 +130,20 @@ interface SyncModRow {
     LoadOrder: number;
     InstalledPath?: string;
     DescriptorPath?: string;
+}
+
+interface ManagedModPathRecord {
+    id: number;
+    workshopId: string;
+    name?: string;
+    installedPath: string;
+    descriptorPath: string;
+}
+
+interface ManagedModsMigrationSummary {
+    mods: ManagedModPathRecord[];
+    movedModCount: number;
+    rewrittenDescriptorCount: number;
 }
 
 const updateFlagsByWorkshopId = new Map<string, boolean>();
@@ -562,7 +584,43 @@ function saveActiveProfileSnapshot(db: Database.Database): void {
     tx();
 }
 
-function syncDlcLoadFromDb(db: Database.Database): void {
+function normalizeDescriptorReferenceKey(value: string): string {
+    return value.replace(/\\/g, "/").trim().toLowerCase();
+}
+
+function resolveDescriptorLoadReference(modsPath: string, descriptorPath: string, workshopId: string): string {
+    const explicitDescriptorPath = String(descriptorPath ?? "").trim();
+    if (explicitDescriptorPath) {
+        return buildManagedDescriptorReference({
+            modsRoot: modsPath,
+            descriptorPath: explicitDescriptorPath
+        });
+    }
+
+    const normalizedWorkshopId = sanitizeWorkshopId(workshopId ?? "");
+    if (!isValidWorkshopId(normalizedWorkshopId)) {
+        return "";
+    }
+
+    return buildManagedDescriptorReference({
+        modsRoot: modsPath,
+        descriptorPath: path.join(modsPath, `${normalizedWorkshopId}.mod`)
+    });
+}
+
+function resolveEnabledDescriptorPath(stellarisDir: string, descriptorReference: string): string {
+    const trimmed = String(descriptorReference ?? "").trim();
+    if (!trimmed) {
+        return "";
+    }
+
+    const normalized = path.normalize(trimmed);
+    return path.isAbsolute(normalized)
+        ? normalized
+        : path.join(stellarisDir, normalized);
+}
+
+function syncDlcLoadFromDb(db: Database.Database, settingsOverride?: SettingsSnapshot): void {
     if (!hasTable(db, "Mods")) {
         return;
     }
@@ -573,7 +631,7 @@ function syncDlcLoadFromDb(db: Database.Database): void {
         return;
     }
 
-    const settings = loadSettingsSnapshot();
+    const settings = settingsOverride ?? loadSettingsSnapshot();
     const modsPath = settings?.modsPath?.trim() || getDefaultModsDirectory();
     const stellarisDir = path.dirname(modsPath);
     const dlcPath = path.join(stellarisDir, "dlc_load.json");
@@ -590,26 +648,18 @@ function syncDlcLoadFromDb(db: Database.Database): void {
     const enabledMods: string[] = [];
     const seen = new Set<string>();
     for (const row of enabledRows) {
-        const descriptorName = path.basename(row.DescriptorPath || "").trim();
-        const workshopId = sanitizeWorkshopId(row.WorkshopId || "");
-
-        let relativeDescriptor = "";
-        if (descriptorName.toLowerCase().endsWith(".mod")) {
-            relativeDescriptor = `mod/${descriptorName}`;
-        } else if (isValidWorkshopId(workshopId)) {
-            relativeDescriptor = `mod/${workshopId}.mod`;
-        }
-
-        if (!relativeDescriptor) {
+        const descriptorReference = resolveDescriptorLoadReference(modsPath, row.DescriptorPath, row.WorkshopId);
+        if (!descriptorReference) {
             continue;
         }
 
-        const normalized = relativeDescriptor.replace(/\\/g, "/");
-        if (seen.has(normalized.toLowerCase())) {
+        const normalized = descriptorReference.replace(/\\/g, "/");
+        const normalizedKey = normalizeDescriptorReferenceKey(normalized);
+        if (seen.has(normalizedKey)) {
             continue;
         }
 
-        seen.add(normalized.toLowerCase());
+        seen.add(normalizedKey);
         enabledMods.push(normalized);
     }
 
@@ -861,6 +911,12 @@ function openLibraryDb(): Database.Database | null {
     }
 }
 
+async function copyPathReplacingTarget(sourcePath: string, targetPath: string): Promise<void> {
+    await fsp.mkdir(path.dirname(targetPath), { recursive: true });
+    await deletePathIfExists(targetPath);
+    await fsp.cp(sourcePath, targetPath, { recursive: true, force: true });
+}
+
 async function deletePathIfExists(targetPath: string): Promise<void> {
     if (!targetPath) {
         return;
@@ -876,6 +932,132 @@ async function deletePathIfExists(targetPath: string): Promise<void> {
     } catch {
         // best effort
     }
+}
+
+function getManagedModFolderName(mod: ManagedModPathRecord): string {
+    const installedBase = path.basename(mod.installedPath || "").trim();
+    if (installedBase) {
+        return installedBase;
+    }
+
+    const descriptorBase = path.parse(mod.descriptorPath || "").name.trim();
+    if (descriptorBase) {
+        return descriptorBase;
+    }
+
+    const workshopId = sanitizeWorkshopId(mod.workshopId || "");
+    if (workshopId) {
+        return workshopId;
+    }
+
+    return `mod-${mod.id}`;
+}
+
+function getManagedDescriptorFileName(mod: ManagedModPathRecord, folderName: string): string {
+    const descriptorBase = path.basename(mod.descriptorPath || "").trim();
+    if (descriptorBase.toLowerCase().endsWith(".mod")) {
+        return descriptorBase;
+    }
+
+    return `${folderName}.mod`;
+}
+
+async function loadDescriptorTemplate(mod: ManagedModPathRecord, folderName: string): Promise<string> {
+    const descriptorPath = String(mod.descriptorPath ?? "").trim();
+    if (descriptorPath && fs.existsSync(descriptorPath)) {
+        return fsp.readFile(descriptorPath, "utf8");
+    }
+
+    let descriptorContent = "";
+    descriptorContent = upsertQuotedDescriptorField(
+        descriptorContent,
+        "name",
+        String(mod.name ?? "").trim() || folderName
+    );
+
+    const workshopId = sanitizeWorkshopId(mod.workshopId ?? "");
+    if (isValidWorkshopId(workshopId)) {
+        descriptorContent = upsertQuotedDescriptorField(descriptorContent, "remote_file_id", workshopId);
+    }
+
+    return descriptorContent;
+}
+
+async function migrateManagedMods(input: {
+    currentModsPath: string;
+    nextModsPath: string;
+    moveExistingMods: boolean;
+    mods: ManagedModPathRecord[];
+}): Promise<ManagedModsMigrationSummary> {
+    const nextModsPath = path.resolve(input.nextModsPath);
+    await fsp.mkdir(nextModsPath, { recursive: true });
+
+    let movedModCount = 0;
+    let rewrittenDescriptorCount = 0;
+    const migratedMods: ManagedModPathRecord[] = [];
+
+    for (const mod of input.mods) {
+        const folderName = getManagedModFolderName(mod);
+        const descriptorFileName = getManagedDescriptorFileName(mod, folderName);
+        const nextInstalledPath = path.join(nextModsPath, folderName);
+        const nextDescriptorPath = path.join(nextModsPath, descriptorFileName);
+        const currentInstalledPath = String(mod.installedPath ?? "").trim();
+        const currentDescriptorPath = String(mod.descriptorPath ?? "").trim();
+
+        if (
+            input.moveExistingMods
+            && currentInstalledPath
+            && fs.existsSync(currentInstalledPath)
+            && path.resolve(currentInstalledPath) !== path.resolve(nextInstalledPath)
+        ) {
+            await copyPathReplacingTarget(currentInstalledPath, nextInstalledPath);
+            await deletePathIfExists(currentInstalledPath);
+            movedModCount += 1;
+        }
+
+        let descriptorContent = await loadDescriptorTemplate(mod, folderName);
+        const workshopId = sanitizeWorkshopId(mod.workshopId ?? "");
+        if (isValidWorkshopId(workshopId)) {
+            descriptorContent = upsertQuotedDescriptorField(descriptorContent, "remote_file_id", workshopId);
+        }
+        descriptorContent = upsertQuotedDescriptorField(
+            descriptorContent,
+            "path",
+            buildManagedDescriptorPath({
+                modsRoot: nextModsPath,
+                installedPath: nextInstalledPath
+            })
+        );
+
+        await fsp.mkdir(path.dirname(nextDescriptorPath), { recursive: true });
+        await fsp.writeFile(nextDescriptorPath, descriptorContent, "utf8");
+        rewrittenDescriptorCount += 1;
+
+        if (currentDescriptorPath && path.resolve(currentDescriptorPath) !== path.resolve(nextDescriptorPath)) {
+            await deletePathIfExists(currentDescriptorPath);
+        }
+
+        migratedMods.push({
+            ...mod,
+            installedPath: nextInstalledPath,
+            descriptorPath: nextDescriptorPath
+        });
+    }
+
+    return {
+        mods: migratedMods,
+        movedModCount,
+        rewrittenDescriptorCount
+    };
+}
+
+export async function migrateManagedModsForTest(input: {
+    currentModsPath: string;
+    nextModsPath: string;
+    moveExistingMods: boolean;
+    mods: ManagedModPathRecord[];
+}): Promise<ManagedModsMigrationSummary> {
+    return migrateManagedMods(input);
 }
 
 function fetchDetailsInChunks(ids: string[]): Promise<Map<string, SteamPublishedFileDetails>> {
@@ -926,6 +1108,131 @@ export async function getLibrarySnapshot(): Promise<LibrarySnapshot> {
 
     try {
         return readLibrarySnapshot(db);
+    } finally {
+        db.close();
+    }
+}
+
+export async function migrateModsPath(request: ModsPathMigrationRequest): Promise<ModsPathMigrationResult> {
+    const currentSettings = loadSettingsSnapshot() ?? {};
+    const nextSettings: SettingsSnapshot = {
+        ...currentSettings,
+        ...(request.settings ?? {})
+    };
+    const nextModsPath = String(nextSettings.modsPath ?? "").trim();
+    if (!nextModsPath) {
+        return {
+            ok: false,
+            message: "Mods path is required.",
+            settings: nextSettings,
+            movedModCount: 0,
+            rewrittenDescriptorCount: 0
+        };
+    }
+
+    const db = openLibraryDb();
+    if (!db) {
+        const saveResult = saveSettingsSnapshot(nextSettings);
+        return {
+            ...saveResult,
+            movedModCount: 0,
+            rewrittenDescriptorCount: 0
+        };
+    }
+
+    try {
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            const saveResult = saveSettingsSnapshot(nextSettings);
+            return {
+                ...saveResult,
+                movedModCount: 0,
+                rewrittenDescriptorCount: 0
+            };
+        }
+
+        const trackedMods = db
+            .prepare(
+                `SELECT Id,
+                        ${workshopColumn} AS WorkshopId,
+                        Name,
+                        InstalledPath,
+                        DescriptorPath
+                 FROM Mods
+                 ORDER BY Id ASC`
+            )
+            .all() as Array<{ Id: number; WorkshopId: string; Name: string; InstalledPath: string; DescriptorPath: string }>;
+
+        if (trackedMods.length <= 0) {
+            const saveResult = saveSettingsSnapshot(nextSettings);
+            return {
+                ...saveResult,
+                message: saveResult.ok
+                    ? `Mods path saved to ${nextModsPath}. No tracked mods needed migration.`
+                    : saveResult.message,
+                movedModCount: 0,
+                rewrittenDescriptorCount: 0
+            };
+        }
+
+        const migration = await migrateManagedMods({
+            currentModsPath: String(currentSettings.modsPath ?? "").trim() || getDefaultModsDirectory(),
+            nextModsPath,
+            moveExistingMods: request.moveExistingMods === true,
+            mods: trackedMods.map((mod) => ({
+                id: mod.Id,
+                workshopId: mod.WorkshopId,
+                name: mod.Name,
+                installedPath: mod.InstalledPath,
+                descriptorPath: mod.DescriptorPath
+            }))
+        });
+
+        const updatedAt = nowIso();
+        const updateStmt = db.prepare(
+            `UPDATE Mods
+             SET InstalledPath = ?,
+                 DescriptorPath = ?,
+                 LastUpdatedAt = ?
+             WHERE Id = ?`
+        );
+        const tx = db.transaction((mods: ManagedModPathRecord[]) => {
+            for (const mod of mods) {
+                updateStmt.run(mod.installedPath, mod.descriptorPath, updatedAt, mod.id);
+            }
+        });
+        tx(migration.mods);
+
+        const saveResult = saveSettingsSnapshot(nextSettings);
+        if (!saveResult.ok) {
+            return {
+                ...saveResult,
+                movedModCount: migration.movedModCount,
+                rewrittenDescriptorCount: migration.rewrittenDescriptorCount
+            };
+        }
+
+        syncDlcLoadFromDb(db, saveResult.settings);
+
+        return {
+            ok: true,
+            message: request.moveExistingMods === true
+                ? `Updated ${migration.rewrittenDescriptorCount} descriptor file(s) and moved ${migration.movedModCount} mod folder(s) to ${nextModsPath}.`
+                : `Updated ${migration.rewrittenDescriptorCount} descriptor file(s) for ${nextModsPath}. Mod folders were not moved.`,
+            settings: saveResult.settings,
+            movedModCount: migration.movedModCount,
+            rewrittenDescriptorCount: migration.rewrittenDescriptorCount
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown mods-path migration error";
+        return {
+            ok: false,
+            message: `Failed to change mods path: ${message}`,
+            settings: nextSettings,
+            movedModCount: 0,
+            rewrittenDescriptorCount: 0
+        };
     } finally {
         db.close();
     }
@@ -2011,7 +2318,7 @@ function readDlcEnabledMods(stellarisDir: string): Set<string> {
         if (!Array.isArray(enabled)) return new Set();
         return new Set(
             enabled
-                .map((entry) => String(entry).replace(/\\/g, "/").trim().toLowerCase())
+                .map((entry) => normalizeDescriptorReferenceKey(String(entry)))
                 .filter((entry) => entry.length > 0)
         );
     } catch {
@@ -2270,7 +2577,7 @@ export function scanLocalMods(): ScanLocalModsResult {
 
     // Also explicitly add any descriptors found in dlc_load.json
     for (const enabledModPath of enabledMods) {
-        const fullPath = path.join(stellarisDir, enabledModPath);
+        const fullPath = resolveEnabledDescriptorPath(stellarisDir, enabledModPath);
         const normPath = normalizePathKey(fullPath);
         if (!candidatesByPath.has(normPath) && fs.existsSync(fullPath)) {
             candidatesByPath.set(normPath, {
@@ -2347,8 +2654,10 @@ export function scanLocalMods(): ScanLocalModsResult {
                     : (isValidWorkshopId(hintedWorkshopId) ? hintedWorkshopId : "");
 
                 const installedPath = resolveInstalledPath(descriptor, stellarisDir, candidate.workshopRootDir);
-                const relativeDescriptorPath = `mod/${path.basename(candidate.descriptorPath)}`.toLowerCase();
-                const isEnabled = enabledMods.has(relativeDescriptorPath)
+                const descriptorLoadReference = normalizeDescriptorReferenceKey(
+                    resolveDescriptorLoadReference(modsPath, candidate.descriptorPath, workshopId)
+                );
+                const isEnabled = enabledMods.has(descriptorLoadReference)
                     || (workshopId.length > 0 && enabledWorkshopIds.has(workshopId));
                 const tagsJson = descriptor.tags.length > 0 ? JSON.stringify(descriptor.tags) : null;
 

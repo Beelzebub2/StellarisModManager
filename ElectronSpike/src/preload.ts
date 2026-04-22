@@ -13,6 +13,8 @@ import type {
     LibraryCompatibilityReportRequest,
     LibraryImportResult,
     LibraryMoveDirectionRequest,
+    ModsPathMigrationRequest,
+    ModsPathMigrationResult,
     LibraryReorderRequest,
     ScanLocalModsResult,
     LibraryRenameProfileRequest,
@@ -52,6 +54,8 @@ const api: SpikeApi = {
     getSettings: () => ipcRenderer.invoke("spike:getSettings") as Promise<SettingsSnapshot | null>,
     saveSettings: (settings: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:saveSettings", settings) as Promise<SettingsSaveResult>,
+    migrateModsPath: (request: ModsPathMigrationRequest) =>
+        ipcRenderer.invoke("spike:migrateModsPath", request) as Promise<ModsPathMigrationResult>,
     autoDetectSettings: (settings?: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:autoDetectSettings", settings) as Promise<SettingsAutoDetectResult>,
     autoConfigureSteamCmd: (settings?: SettingsSnapshot) =>

@@ -7,6 +7,7 @@ import type {
     DownloadQueueSnapshot,
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
+    ModsPathMigrationRequest,
     LibraryPublishSharedProfileRequest,
     LibraryReorderRequest,
     LibraryRenameProfileRequest,
@@ -30,6 +31,7 @@ import {
     exportLibraryMods,
     getLibrarySnapshot,
     importLibraryMods,
+    migrateModsPath,
     getCompatibilityTags,
     moveLibraryMod,
     publishLibrarySharedProfile,
@@ -90,6 +92,7 @@ const CHANNELS = {
     systemSummary: "spike:getSystemSummary",
     settings: "spike:getSettings",
     settingsSave: "spike:saveSettings",
+    settingsMigrateModsPath: "spike:migrateModsPath",
     settingsAutoDetect: "spike:autoDetectSettings",
     settingsAutoConfigureSteamCmd: "spike:autoConfigureSteamCmd",
     settingsValidate: "spike:validateSettings",
@@ -243,6 +246,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.systemSummary);
     ipcMain.removeHandler(CHANNELS.settings);
     ipcMain.removeHandler(CHANNELS.settingsSave);
+    ipcMain.removeHandler(CHANNELS.settingsMigrateModsPath);
     ipcMain.removeHandler(CHANNELS.settingsAutoDetect);
     ipcMain.removeHandler(CHANNELS.settingsAutoConfigureSteamCmd);
     ipcMain.removeHandler(CHANNELS.settingsValidate);
@@ -327,6 +331,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.settingsSave, async (_event, settings: SettingsSnapshot) => {
         return saveSettingsSnapshot(settings);
+    });
+
+    ipcMain.handle(CHANNELS.settingsMigrateModsPath, async (_event, request: ModsPathMigrationRequest) => {
+        return migrateModsPath(request);
     });
 
     ipcMain.handle(CHANNELS.settingsAutoDetect, async (_event, settings?: SettingsSnapshot) => {

@@ -45,6 +45,16 @@ export interface SettingsAutoDetectResult {
     settings: SettingsSnapshot;
 }
 
+export interface ModsPathMigrationRequest {
+    settings: SettingsSnapshot;
+    moveExistingMods: boolean;
+}
+
+export interface ModsPathMigrationResult extends SettingsSaveResult {
+    movedModCount: number;
+    rewrittenDescriptorCount: number;
+}
+
 export interface DirectoryPickerRequest {
     title?: string;
     defaultPath?: string;
@@ -495,6 +505,7 @@ export interface SpikeApi {
     getSystemSummary: () => Promise<SystemSummary>;
     getSettings: () => Promise<SettingsSnapshot | null>;
     saveSettings: (settings: SettingsSnapshot) => Promise<SettingsSaveResult>;
+    migrateModsPath: (request: ModsPathMigrationRequest) => Promise<ModsPathMigrationResult>;
     autoDetectSettings: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     autoConfigureSteamCmd: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;

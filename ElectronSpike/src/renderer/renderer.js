@@ -366,21 +366,35 @@ function showModal(title, message, confirmLabel = "Confirm", cancelLabel = "Canc
         const overlay = byId("modalOverlay");
         const titleEl = byId("modalTitle");
         const msgEl = byId("modalMessage");
+        const extra = byId("modalExtra");
         const confirmBtn = byId("modalConfirm");
         const cancelBtn = byId("modalCancel");
+        const altBtn = byId("modalAlt");
         const backdrop = byId("modalBackdrop");
 
         if (titleEl) titleEl.textContent = title;
         if (msgEl) msgEl.textContent = message;
         if (confirmBtn) confirmBtn.textContent = confirmLabel;
         if (cancelBtn) cancelBtn.textContent = cancelLabel;
+        if (extra) extra.innerHTML = "";
+        if (altBtn) {
+            altBtn.classList.add("hidden");
+            altBtn.onclick = null;
+            altBtn.textContent = "Alternate";
+        }
 
         if (overlay) overlay.classList.remove("hidden");
 
         function cleanup(result) {
             if (overlay) overlay.classList.add("hidden");
+            if (extra) extra.innerHTML = "";
             if (confirmBtn) confirmBtn.onclick = null;
             if (cancelBtn) cancelBtn.onclick = null;
+            if (altBtn) {
+                altBtn.onclick = null;
+                altBtn.classList.add("hidden");
+                altBtn.textContent = "Alternate";
+            }
             if (backdrop) backdrop.onclick = null;
             resolve(result);
         }
@@ -388,6 +402,67 @@ function showModal(title, message, confirmLabel = "Confirm", cancelLabel = "Canc
         if (confirmBtn) confirmBtn.onclick = () => cleanup(true);
         if (cancelBtn) cancelBtn.onclick = () => cleanup(false);
         if (backdrop) backdrop.onclick = () => cleanup(false);
+    });
+}
+
+function showChoiceModal(title, message, options = {}) {
+    return new Promise((resolve) => {
+        const overlay = byId("modalOverlay");
+        const titleEl = byId("modalTitle");
+        const msgEl = byId("modalMessage");
+        const extra = byId("modalExtra");
+        const confirmBtn = byId("modalConfirm");
+        const cancelBtn = byId("modalCancel");
+        const altBtn = byId("modalAlt");
+        const backdrop = byId("modalBackdrop");
+
+        if (titleEl) titleEl.textContent = title;
+        if (msgEl) msgEl.textContent = message;
+        if (confirmBtn) confirmBtn.textContent = options.confirmLabel || "Confirm";
+        if (cancelBtn) cancelBtn.textContent = options.cancelLabel || "Cancel";
+        if (altBtn) {
+            altBtn.textContent = options.alternateLabel || "Alternate";
+            altBtn.classList.remove("hidden");
+        }
+        if (extra) {
+            extra.innerHTML = options.detailHtml || "";
+        }
+
+        if (overlay) overlay.classList.remove("hidden");
+
+        const handleKeyDown = (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                cleanup("confirm");
+                return;
+            }
+
+            if (event.key === "Escape") {
+                event.preventDefault();
+                cleanup("cancel");
+            }
+        };
+
+        function cleanup(result) {
+            if (overlay) overlay.classList.add("hidden");
+            if (extra) extra.innerHTML = "";
+            if (confirmBtn) confirmBtn.onclick = null;
+            if (cancelBtn) cancelBtn.onclick = null;
+            if (altBtn) {
+                altBtn.onclick = null;
+                altBtn.classList.add("hidden");
+                altBtn.textContent = "Alternate";
+            }
+            if (backdrop) backdrop.onclick = null;
+            document.removeEventListener("keydown", handleKeyDown, true);
+            resolve(result);
+        }
+
+        if (confirmBtn) confirmBtn.onclick = () => cleanup("confirm");
+        if (cancelBtn) cancelBtn.onclick = () => cleanup("cancel");
+        if (altBtn) altBtn.onclick = () => cleanup("alternate");
+        if (backdrop) backdrop.onclick = () => cleanup("cancel");
+        document.addEventListener("keydown", handleKeyDown, true);
     });
 }
 
@@ -399,12 +474,18 @@ function showPrompt(title, message, defaultValue = "") {
         const extra = byId("modalExtra");
         const confirmBtn = byId("modalConfirm");
         const cancelBtn = byId("modalCancel");
+        const altBtn = byId("modalAlt");
         const backdrop = byId("modalBackdrop");
 
         if (titleEl) titleEl.textContent = title;
         if (msgEl) msgEl.textContent = message;
         if (confirmBtn) confirmBtn.textContent = "OK";
         if (cancelBtn) cancelBtn.textContent = "Cancel";
+        if (altBtn) {
+            altBtn.classList.add("hidden");
+            altBtn.onclick = null;
+            altBtn.textContent = "Alternate";
+        }
 
         if (extra) {
             extra.innerHTML = `<input id="modalInput" class="field-input" type="text" value="${escapeHtml(defaultValue)}" style="margin-top:8px" />`;
@@ -464,6 +545,11 @@ function showPrompt(title, message, defaultValue = "") {
             if (extra) extra.innerHTML = "";
             if (confirmBtn) confirmBtn.onclick = null;
             if (cancelBtn) cancelBtn.onclick = null;
+            if (altBtn) {
+                altBtn.onclick = null;
+                altBtn.classList.add("hidden");
+                altBtn.textContent = "Alternate";
+            }
             if (backdrop) backdrop.onclick = null;
             document.removeEventListener("keydown", handleKeyDown, true);
             resolve(result);
@@ -1818,6 +1904,47 @@ function getDefaultSettingsModel() {
     };
 }
 
+function normalizeSettingsPathKey(value) {
+    const normalized = String(value || "")
+        .trim()
+        .replace(/[\\/]+/g, "/")
+        .replace(/\/+$/, "");
+    if (!normalized) {
+        return "";
+    }
+
+    return navigator.platform.toLowerCase().includes("win")
+        ? normalized.toLowerCase()
+        : normalized;
+}
+
+function didModsPathChange(nextSettings) {
+    return normalizeSettingsPathKey(state.settingsModel?.modsPath)
+        !== normalizeSettingsPathKey(nextSettings?.modsPath);
+}
+
+async function promptForModsPathMigration(nextSettings) {
+    const currentModsPath = String(state.settingsModel?.modsPath || "").trim();
+    const nextModsPath = String(nextSettings?.modsPath || "").trim();
+
+    return showChoiceModal(
+        "Change mod folder",
+        "You changed the Mods path. Do you want to move the existing managed mods into the new folder too?",
+        {
+            confirmLabel: "Yes, move mods",
+            alternateLabel: "No, only update paths",
+            cancelLabel: "Cancel",
+            detailHtml: [
+                "<p>This folder stores managed mod folders and their <code>.mod</code> descriptor files.</p>",
+                "<p><strong>Yes, move mods</strong> copies the existing managed mods into the new folder and rewrites each descriptor path for you.</p>",
+                "<p><strong>No, only update paths</strong> rewrites the descriptor files only. Use that if you plan to move the folders yourself.</p>",
+                currentModsPath ? `<p><strong>Current folder:</strong> <code>${escapeHtml(currentModsPath)}</code></p>` : "",
+                nextModsPath ? `<p><strong>New folder:</strong> <code>${escapeHtml(nextModsPath)}</code></p>` : ""
+            ].filter(Boolean).join("")
+        }
+    );
+}
+
 async function resolveUnsavedSettingsBeforeLeave() {
     if (!(state.selectedTab === "settings" && state.settingsDirty)) {
         return true;
@@ -2023,11 +2150,50 @@ async function validateSettingsPage() {
 
 async function saveSettingsPage() {
     const current = buildSettingsFromForm();
-    const result = await window.spikeApi.saveSettings(current);
-    if (!result.ok) { setSettingsStatus(result.message); return false; }
-    applySettingsToForm(result.settings);
-    setSettingsStatus(result.message);
-    return true;
+
+    try {
+        if (didModsPathChange(current)) {
+            const choice = await promptForModsPathMigration(current);
+            if (choice === "cancel") {
+                setSettingsStatus("Mods path change cancelled.");
+                return false;
+            }
+
+            setSettingsStatus(
+                choice === "confirm"
+                    ? "Changing mods path and moving managed mods..."
+                    : "Changing mods path and rewriting managed descriptor paths..."
+            );
+
+            const result = await window.spikeApi.migrateModsPath({
+                settings: current,
+                moveExistingMods: choice === "confirm"
+            });
+            if (!result.ok) {
+                setSettingsStatus(result.message);
+                return false;
+            }
+
+            applySettingsToForm(result.settings);
+            setSettingsStatus(result.message);
+            await refreshLibrarySnapshot();
+            return true;
+        }
+
+        const result = await window.spikeApi.saveSettings(current);
+        if (!result.ok) {
+            setSettingsStatus(result.message);
+            return false;
+        }
+
+        applySettingsToForm(result.settings);
+        setSettingsStatus(result.message);
+        return true;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown settings save error";
+        setSettingsStatus(`Failed to save settings: ${message}`);
+        return false;
+    }
 }
 
 async function autoDetectSettingsPage() {
@@ -3549,6 +3715,20 @@ function hookSettingsControls() {
         setInputValue("settingsGamePathInput", selectedPath);
         markSettingsDirty(true);
         void detectAndApplyGameVersion(selectedPath);
+    });
+
+    byId("settingsModsPathBrowse")?.addEventListener("click", async () => {
+        const selectedPath = await window.spikeApi.pickDirectory({
+            title: "Select Stellaris mods folder",
+            defaultPath: getInputValue("settingsModsPathInput")
+        });
+
+        if (!selectedPath) {
+            return;
+        }
+
+        setInputValue("settingsModsPathInput", selectedPath);
+        markSettingsDirty(true);
     });
 
     byId("settingsDetectModsPath")?.addEventListener("click", () => void detectModsPathSettings());

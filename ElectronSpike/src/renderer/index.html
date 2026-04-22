@@ -572,11 +572,14 @@
                                         <div class="path-picker-row">
                                             <input id="settingsModsPathInput" class="field-input mono" type="text"
                                                 placeholder="Path to Paradox mods folder" />
+                                            <button id="settingsModsPathBrowse" type="button"
+                                                class="button-secondary">Browse...</button>
                                             <button id="settingsDetectModsPath" type="button"
                                                 class="button-secondary">Detect</button>
                                         </div>
-                                        <p class="muted settings-inline-help">This is where downloaded mods are deployed for
-                                            Stellaris to load.</p>
+                                        <p class="muted settings-inline-help">This folder stores the managed `.mod` files and
+                                            local mod installs. Saving a new location rewrites descriptor paths and can also move
+                                            the existing mod folders for you.</p>
                                     </div>
                                     <div class="settings-inline-actions">
                                         <label class="toggle-row" for="settingsWarnBeforeRestartInput">
@@ -793,6 +796,7 @@
             <div id="modalExtra"></div>
             <div class="modal-actions">
                 <button id="modalCancel" type="button" class="button-secondary">Cancel</button>
+                <button id="modalAlt" type="button" class="button-secondary hidden">Alternate</button>
                 <button id="modalConfirm" type="button">Confirm</button>
             </div>
         </div>
