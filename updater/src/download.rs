@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -57,7 +57,7 @@ pub fn run(
         if let Ok(meta) = std::fs::metadata(&final_path) {
             if meta.len() == total_bytes {
                 log::info("destination file already present with expected size; skipping download");
-                let _ = tx.send(UpdateEvent::Progress {
+                let _ = tx.send(UpdateEvent::DownloadProgress {
                     downloaded: total_bytes,
                     total: total_bytes,
                     bytes_per_sec: 0.0,
@@ -111,7 +111,7 @@ pub fn run(
             let bps = ((dl.saturating_sub(last_dl)) as f64) / dt;
             let remaining = total_bytes.saturating_sub(dl);
             let eta = if bps > 1.0 { (remaining as f64 / bps) as u64 } else { 0 };
-            let _ = tx_rp.send(UpdateEvent::Progress {
+            let _ = tx_rp.send(UpdateEvent::DownloadProgress {
                 downloaded: dl,
                 total: total_bytes,
                 bytes_per_sec: bps,
@@ -126,7 +126,7 @@ pub fn run(
         }
         if !sent_eof {
             let dl = downloaded_rp.load(Ordering::Relaxed);
-            let _ = tx_rp.send(UpdateEvent::Progress {
+            let _ = tx_rp.send(UpdateEvent::DownloadProgress {
                 downloaded: dl,
                 total: total_bytes,
                 bytes_per_sec: 0.0,
@@ -373,9 +373,4 @@ fn maybe_retry(
     ));
     thread::sleep(backoff);
     Ok(())
-}
-
-pub fn cleanup_partial(dest_dir: &Path, version: &str) {
-    let part = dest_dir.join(format!("StellarisModManager-Setup-{version}.exe.part"));
-    let _ = std::fs::remove_file(&part);
 }

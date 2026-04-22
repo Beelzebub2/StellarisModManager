@@ -36,15 +36,16 @@ pub fn sha256_file(
         let now = std::time::Instant::now();
         if now.duration_since(last_tick).as_millis() > 100 {
             last_tick = now;
-            let pct = if total_bytes > 0 {
-                (done as f32) / (total_bytes as f32)
-            } else {
-                0.0
-            };
-            let _ = tx.send(UpdateEvent::VerifyProgress(pct));
+            let _ = tx.send(UpdateEvent::VerifyProgress {
+                checked: done,
+                total: total_bytes,
+            });
         }
     }
-    let _ = tx.send(UpdateEvent::VerifyProgress(1.0));
+    let _ = tx.send(UpdateEvent::VerifyProgress {
+        checked: total_bytes,
+        total: total_bytes,
+    });
     Ok(hex::encode(hasher.finalize()))
 }
 

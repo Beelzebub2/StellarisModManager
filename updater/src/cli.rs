@@ -4,7 +4,8 @@ use clap::{Parser, ValueEnum};
 #[command(
     name = "smm-updater",
     about = "Stellaris Mod Manager native update companion",
-    version
+    version,
+    disable_version_flag = true
 )]
 pub struct Cli {
     /// Download URL of the installer (required unless --demo).
@@ -55,8 +56,11 @@ pub enum DemoPhase {
     Connecting,
     Downloading,
     Verifying,
+    WaitingForApp,
     Launching,
     Installing,
+    Relaunching,
+    CleaningUp,
     Done,
     Failed,
 }
@@ -73,5 +77,16 @@ impl Cli {
             return Err("--version is required (or use --demo)".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_has_no_duplicate_arguments() {
+        Cli::command().debug_assert();
     }
 }

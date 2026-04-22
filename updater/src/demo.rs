@@ -50,7 +50,7 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
         } else {
             ((8.0 * (steps - i) as f64) / steps as f64) as u64
         };
-        let _ = tx.send(UpdateEvent::Progress {
+        let _ = tx.send(UpdateEvent::DownloadProgress {
             downloaded: done,
             total: FAKE_TOTAL,
             bytes_per_sec: bps,
@@ -66,28 +66,53 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let _ = tx.send(UpdateEvent::VerifyProgress((i as f32) / (vsteps as f32)));
+        let checked = (FAKE_TOTAL * i) / vsteps;
+        let _ = tx.send(UpdateEvent::VerifyProgress {
+            checked,
+            total: FAKE_TOTAL,
+        });
         sleep_cancellable(scale(50), &cancel);
+    }
+
+    // Waiting for the app to exit (1s)
+    let _ = tx.send(UpdateEvent::Phase(Phase::WaitingForApp));
+    let wait_steps = 10u64;
+    for i in 0..=wait_steps {
+        if cancel.load(Ordering::Relaxed) {
+            return;
+        }
+        let _ = tx.send(UpdateEvent::ActivityTick {
+            phase: Phase::WaitingForApp,
+            elapsed_secs: i / 10,
+        });
+        sleep_cancellable(scale(100), &cancel);
     }
 
     // Launching (1s)
     let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
     sleep_cancellable(scale(1000), &cancel);
 
-    // Installing (~5s, synthetic process tracking)
+    // Installing (~5s, activity-only tracking)
     let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
     let isteps = 50u64;
     for i in 0..=isteps {
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let p = (i as f32) / (isteps as f32);
-        let _ = tx.send(UpdateEvent::InstallProgress {
-            progress: p,
+        let _ = tx.send(UpdateEvent::ActivityTick {
+            phase: Phase::Installing,
             elapsed_secs: i / 10,
         });
         sleep_cancellable(scale(100), &cancel);
     }
+
+    // Relaunching (0.8s)
+    let _ = tx.send(UpdateEvent::Phase(Phase::Relaunching));
+    sleep_cancellable(scale(800), &cancel);
+
+    // Cleanup (0.8s)
+    let _ = tx.send(UpdateEvent::Phase(Phase::CleaningUp));
+    sleep_cancellable(scale(800), &cancel);
 
     let _ = tx.send(UpdateEvent::Done);
 }
@@ -99,7 +124,7 @@ fn pin_phase(phase: DemoPhase, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>)
         }
         DemoPhase::Downloading => {
             let _ = tx.send(UpdateEvent::Phase(Phase::Downloading));
-            let _ = tx.send(UpdateEvent::Progress {
+            let _ = tx.send(UpdateEvent::DownloadProgress {
                 downloaded: FAKE_TOTAL / 3,
                 total: FAKE_TOTAL,
                 bytes_per_sec: 8.0 * 1_048_576.0,
@@ -108,17 +133,33 @@ fn pin_phase(phase: DemoPhase, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>)
         }
         DemoPhase::Verifying => {
             let _ = tx.send(UpdateEvent::Phase(Phase::Verifying));
-            let _ = tx.send(UpdateEvent::VerifyProgress(0.6));
+            let _ = tx.send(UpdateEvent::VerifyProgress {
+                checked: (FAKE_TOTAL as f32 * 0.6) as u64,
+                total: FAKE_TOTAL,
+            });
+        }
+        DemoPhase::WaitingForApp => {
+            let _ = tx.send(UpdateEvent::Phase(Phase::WaitingForApp));
+            let _ = tx.send(UpdateEvent::ActivityTick {
+                phase: Phase::WaitingForApp,
+                elapsed_secs: 1,
+            });
         }
         DemoPhase::Launching => {
             let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
         }
         DemoPhase::Installing => {
             let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
-            let _ = tx.send(UpdateEvent::InstallProgress {
-                progress: 0.52,
+            let _ = tx.send(UpdateEvent::ActivityTick {
+                phase: Phase::Installing,
                 elapsed_secs: 18,
             });
+        }
+        DemoPhase::Relaunching => {
+            let _ = tx.send(UpdateEvent::Phase(Phase::Relaunching));
+        }
+        DemoPhase::CleaningUp => {
+            let _ = tx.send(UpdateEvent::Phase(Phase::CleaningUp));
         }
         DemoPhase::Done => {
             let _ = tx.send(UpdateEvent::Done);

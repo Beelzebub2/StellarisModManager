@@ -5,22 +5,28 @@ pub enum Phase {
     Connecting,
     Downloading,
     Verifying,
+    WaitingForApp,
     Launching,
     Installing,
+    Relaunching,
+    CleaningUp,
 }
 
 #[derive(Debug, Clone)]
 pub enum UpdateEvent {
     Phase(Phase),
-    Progress {
+    DownloadProgress {
         downloaded: u64,
         total: u64,
         bytes_per_sec: f64,
         eta_secs: u64,
     },
-    VerifyProgress(f32),
-    InstallProgress {
-        progress: f32,
+    VerifyProgress {
+        checked: u64,
+        total: u64,
+    },
+    ActivityTick {
+        phase: Phase,
         elapsed_secs: u64,
     },
     Done,

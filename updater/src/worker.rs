@@ -4,6 +4,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread;
 
+use crate::artifacts::{CleanupOutcome, UpdateArtifacts};
 use crate::cli::Cli;
 use crate::download::{self, DownloadRequest};
 use crate::events::{Phase, UpdateEvent};
@@ -34,8 +35,8 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
         }
     };
     let version = cli.version.clone().unwrap_or_else(|| "unknown".into());
-
-    let dest_dir: PathBuf = std::env::temp_dir().join("StellarisModManager-Updates");
+    let artifacts = UpdateArtifacts::for_version(&version);
+    let dest_dir = artifacts.download_dir().to_path_buf();
 
     let req = DownloadRequest {
         url,
@@ -48,7 +49,9 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
         Ok(d) => d,
         Err(e) => {
             log::error(&format!("download failed: {e}"));
-            download::cleanup_partial(&dest_dir, &version);
+            artifacts.cleanup(CleanupOutcome::Failure {
+                keep_installer: false,
+            });
             let _ = tx.send(UpdateEvent::Failed(e));
             return;
         }
@@ -62,7 +65,9 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
                     log::error(&format!(
                         "sha256 mismatch: expected {expected}, got {actual}"
                     ));
-                    let _ = std::fs::remove_file(&dl.file_path);
+                    artifacts.cleanup(CleanupOutcome::Failure {
+                        keep_installer: false,
+                    });
                     let _ = tx.send(UpdateEvent::Failed(
                         "Downloaded installer failed integrity check.".into(),
                     ));
@@ -72,6 +77,9 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
             }
             Err(e) => {
                 log::error(&format!("hash computation failed: {e}"));
+                artifacts.cleanup(CleanupOutcome::Failure {
+                    keep_installer: false,
+                });
                 let _ = tx.send(UpdateEvent::Failed(format!(
                     "Could not verify installer: {e}"
                 )));
@@ -82,8 +90,6 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
         log::warn("no sha256 supplied; skipping integrity check");
     }
 
-    let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
-
     // Wait for the main app process to exit before invoking the installer.
     // If the exe is still locked when Inno Setup tries to replace it, Windows
     // file-locking will cause the installation to silently fail and the user
@@ -91,6 +97,7 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     // the PID disappears, then give the OS a brief moment to fully release
     // all file handles before touching the directory.
     if let Some(pid) = cli.app_pid {
+        let _ = tx.send(UpdateEvent::Phase(Phase::WaitingForApp));
         log::info(&format!(
             "waiting for app PID {pid} to exit before running installer…"
         ));
@@ -101,20 +108,26 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     // Small buffer after PID exit to let the OS flush any pending file handles.
     std::thread::sleep(std::time::Duration::from_millis(400));
 
+    let _ = tx.send(UpdateEvent::Phase(Phase::Launching));
     let mut installer = match install::launch_background(&dl.file_path) {
         Ok(p) => p,
         Err(e) => {
             log::error(&format!("installer launch failed: {e}"));
-            let _ = tx.send(UpdateEvent::Failed(e));
+            artifacts.cleanup(CleanupOutcome::Failure {
+                keep_installer: true,
+            });
+            let _ = tx.send(UpdateEvent::Failed(format!(
+                "{e} The installer was kept at {}.",
+                artifacts.installer_path().display()
+            )));
             return;
         }
     };
 
     let _ = tx.send(UpdateEvent::Phase(Phase::Installing));
     let wait_result = installer.wait_with_progress(&cancel, |elapsed_secs| {
-        let progress = synthetic_install_progress(elapsed_secs);
-        let _ = tx.send(UpdateEvent::InstallProgress {
-            progress,
+        let _ = tx.send(UpdateEvent::ActivityTick {
+            phase: Phase::Installing,
             elapsed_secs,
         });
     });
@@ -122,9 +135,11 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
     match wait_result {
         Ok(0) => {
             if let Some(app_exe) = cli.app_exe.as_deref() {
+                let _ = tx.send(UpdateEvent::Phase(Phase::Relaunching));
                 let app_path = PathBuf::from(app_exe);
                 if let Err(e) = install::try_start_app(&app_path) {
                     log::error(&format!("app relaunch failed: {e}"));
+                    artifacts.cleanup(CleanupOutcome::Success);
                     let _ = tx.send(UpdateEvent::Failed(
                         "Update installed, but relaunch failed. Start the app manually.".into(),
                     ));
@@ -132,29 +147,30 @@ fn run(cli: Cli, tx: Sender<UpdateEvent>, cancel: Arc<AtomicBool>) {
                 }
             }
 
-            install::try_delete_file(&dl.file_path);
-            let _ = tx.send(UpdateEvent::InstallProgress {
-                progress: 1.0,
-                elapsed_secs: 0,
-            });
+            let _ = tx.send(UpdateEvent::Phase(Phase::CleaningUp));
+            artifacts.cleanup(CleanupOutcome::Success);
             let _ = tx.send(UpdateEvent::Done);
         }
         Ok(code) => {
-            let msg = format!("Installer exited with code {code}.");
+            artifacts.cleanup(CleanupOutcome::Failure {
+                keep_installer: true,
+            });
+            let msg = format!(
+                "Installer exited with code {code}. The installer was kept at {}.",
+                artifacts.installer_path().display()
+            );
             log::error(&msg);
             let _ = tx.send(UpdateEvent::Failed(msg));
         }
         Err(e) => {
             log::error(&format!("installer execution failed: {e}"));
-            let _ = tx.send(UpdateEvent::Failed(e));
+            artifacts.cleanup(CleanupOutcome::Failure {
+                keep_installer: true,
+            });
+            let _ = tx.send(UpdateEvent::Failed(format!(
+                "{e} The installer was kept at {}.",
+                artifacts.installer_path().display()
+            )));
         }
     }
-}
-
-fn synthetic_install_progress(elapsed_secs: u64) -> f32 {
-    // We cannot query Inno's internal step percent, so we show a smooth asymptotic ramp
-    // that keeps moving until process completion, then jumps to 100% on success.
-    let t = elapsed_secs as f32;
-    let eased = 1.0 - f32::exp(-t / 16.0);
-    (0.06 + eased * 0.88).clamp(0.06, 0.94)
 }

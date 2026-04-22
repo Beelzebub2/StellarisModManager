@@ -162,18 +162,6 @@ pub fn try_start_app(app_exe_path: &Path) -> Result<(), String> {
     }
 }
 
-pub fn try_delete_file(path: &Path) {
-    match std::fs::remove_file(path) {
-        Ok(()) => {
-            log::info(&format!("deleted file: {}", path.display()));
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            log::warn(&format!("failed to delete {}: {e}", path.display()));
-        }
-    }
-}
-
 pub fn schedule_self_delete(cleanup_root: &Path) {
     let Ok(self_path) = std::env::current_exe() else {
         return;

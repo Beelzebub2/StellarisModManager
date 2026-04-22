@@ -11,18 +11,19 @@ use crate::worker::WorkerHandle;
 
 #[derive(Debug, Clone)]
 enum UiState {
-    Connecting,
+    Activity {
+        phase: Phase,
+        elapsed_secs: Option<u64>,
+    },
     Downloading {
         downloaded: u64,
         total: u64,
         bytes_per_sec: f64,
         eta_secs: u64,
     },
-    Verifying(f32),
-    Launching,
-    Installing {
-        progress: f32,
-        elapsed_secs: u64,
+    Verifying {
+        checked: u64,
+        total: u64,
     },
     Done { auto_close_at: Instant },
     Failed(String),
@@ -49,8 +50,11 @@ impl UpdaterApp {
             cli,
             rx,
             worker: Some(worker),
-            state: UiState::Connecting,
-            current_step: 0,
+            state: UiState::Activity {
+                phase: Phase::Connecting,
+                elapsed_secs: None,
+            },
+            current_step: step_index_for_phase(Phase::Connecting),
             started: Instant::now(),
         }
     }
@@ -67,39 +71,26 @@ impl UpdaterApp {
 
     fn apply_event(&mut self, ev: UpdateEvent) {
         match ev {
-            UpdateEvent::Phase(Phase::Connecting) => {
-                self.state = UiState::Connecting;
-                self.current_step = 0;
-            }
-            UpdateEvent::Phase(Phase::Downloading) => {
-                if !matches!(self.state, UiState::Downloading { .. }) {
-                    self.state = UiState::Downloading {
+            UpdateEvent::Phase(phase) => {
+                self.current_step = step_index_for_phase(phase);
+                self.state = match phase {
+                    Phase::Downloading => UiState::Downloading {
                         downloaded: 0,
                         total: 0,
                         bytes_per_sec: 0.0,
                         eta_secs: 0,
-                    };
-                }
-                self.current_step = 1;
+                    },
+                    Phase::Verifying => UiState::Verifying {
+                        checked: 0,
+                        total: 0,
+                    },
+                    _ => UiState::Activity {
+                        phase,
+                        elapsed_secs: None,
+                    },
+                };
             }
-            UpdateEvent::Phase(Phase::Verifying) => {
-                self.state = UiState::Verifying(0.0);
-                self.current_step = 2;
-            }
-            UpdateEvent::Phase(Phase::Launching) => {
-                self.state = UiState::Launching;
-                self.current_step = 3;
-            }
-            UpdateEvent::Phase(Phase::Installing) => {
-                if !matches!(self.state, UiState::Installing { .. }) {
-                    self.state = UiState::Installing {
-                        progress: 0.06,
-                        elapsed_secs: 0,
-                    };
-                }
-                self.current_step = 4;
-            }
-            UpdateEvent::Progress {
+            UpdateEvent::DownloadProgress {
                 downloaded,
                 total,
                 bytes_per_sec,
@@ -111,33 +102,88 @@ impl UpdaterApp {
                     bytes_per_sec,
                     eta_secs,
                 };
-                self.current_step = 1;
+                self.current_step = step_index_for_phase(Phase::Downloading);
             }
-            UpdateEvent::VerifyProgress(p) => {
-                self.state = UiState::Verifying(p);
-                self.current_step = 2;
+            UpdateEvent::VerifyProgress { checked, total } => {
+                self.state = UiState::Verifying { checked, total };
+                self.current_step = step_index_for_phase(Phase::Verifying);
             }
-            UpdateEvent::InstallProgress {
-                progress,
-                elapsed_secs,
-            } => {
-                self.state = UiState::Installing {
-                    progress: progress.clamp(0.0, 1.0),
-                    elapsed_secs,
+            UpdateEvent::ActivityTick { phase, elapsed_secs } => {
+                self.state = UiState::Activity {
+                    phase,
+                    elapsed_secs: Some(elapsed_secs),
                 };
-                self.current_step = 4;
+                self.current_step = step_index_for_phase(phase);
             }
             UpdateEvent::Done => {
                 self.state = UiState::Done {
                     auto_close_at: Instant::now() + Duration::from_secs(3),
                 };
-                self.current_step = 5;
+                self.current_step = UPDATE_STEPS.len().saturating_sub(1);
             }
             UpdateEvent::Failed(msg) => {
                 self.state = UiState::Failed(msg);
             }
         }
     }
+}
+
+fn step_index_for_phase(phase: Phase) -> usize {
+    match phase {
+        Phase::Connecting => 0,
+        Phase::Downloading => 1,
+        Phase::Verifying => 2,
+        Phase::WaitingForApp => 3,
+        Phase::Launching | Phase::Installing => 4,
+        Phase::Relaunching => 5,
+        Phase::CleaningUp => 6,
+    }
+}
+
+fn progress_mode_label(state: &UiState) -> &'static str {
+    match state {
+        UiState::Downloading { .. } | UiState::Verifying { .. } => "Measured progress",
+        UiState::Activity { .. } => "Activity only",
+        UiState::Done { .. } => "Completed",
+        UiState::Failed(_) => "Action required",
+    }
+}
+
+fn phase_heading(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Connecting => "Connecting",
+        Phase::Downloading => "Downloading",
+        Phase::Verifying => "Verifying",
+        Phase::WaitingForApp => "Closing app",
+        Phase::Launching | Phase::Installing => "Installing update",
+        Phase::Relaunching => "Relaunching app",
+        Phase::CleaningUp => "Cleaning up",
+    }
+}
+
+fn phase_detail(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Connecting => "Contacting the download server.",
+        Phase::Downloading => "Transferring the installer with real byte-level progress.",
+        Phase::Verifying => "Checking the installer hash before it is allowed to run.",
+        Phase::WaitingForApp => {
+            "Waiting for Stellaris Mod Manager to exit so Windows releases the executable lock."
+        }
+        Phase::Launching => "Starting the installer. Windows may show a UAC prompt.",
+        Phase::Installing => {
+            "The installer is running in the background. Windows does not expose a reliable percentage here, so this stage stays activity-based until it finishes."
+        }
+        Phase::Relaunching => "Starting the updated app.",
+        Phase::CleaningUp => "Removing staged updater files and temporary logs.",
+    }
+}
+
+fn phase_elapsed_label(phase: Phase, elapsed_secs: Option<u64>) -> Option<String> {
+    elapsed_secs.map(|secs| match phase {
+        Phase::Installing => format!("running {}", format_eta(secs)),
+        Phase::WaitingForApp => format!("waiting {}", format_eta(secs)),
+        _ => format!("elapsed {}", format_eta(secs)),
+    })
 }
 
 impl eframe::App for UpdaterApp {
@@ -214,13 +260,15 @@ enum StepStatus {
     Failed,
 }
 
-const UPDATE_STEPS: [&str; 6] = [
+const UPDATE_STEPS: [&str; 8] = [
     "Connecting",
     "Downloading",
     "Verifying",
-    "Launching installer",
-    "Installing",
-    "Completed",
+    "Closing app",
+    "Installing update",
+    "Relaunching app",
+    "Cleaning up",
+    "Finished",
 ];
 
 fn step_status_for(app: &UpdaterApp, idx: usize) -> StepStatus {
@@ -318,6 +366,42 @@ fn render_header(ui: &mut egui::Ui, app: &UpdaterApp) {
                     .font(FontId::proportional(12.0)),
             );
         });
+
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let badge_text = progress_mode_label(&app.state);
+            let (fill, border, text) = match &app.state {
+                UiState::Failed(_) => (theme::DANGER, theme::DANGER, theme::BG_BASE),
+                UiState::Done { .. } => (theme::SUCCESS, theme::SUCCESS, theme::BG_BASE),
+                UiState::Downloading { .. } | UiState::Verifying { .. } => {
+                    (theme::ACCENT_SOFT, theme::ACCENT_BORDER, theme::ACCENT_HOVER)
+                }
+                UiState::Activity { .. } => (theme::BG_3, theme::BORDER, theme::TEXT_MUTED),
+            };
+
+            egui::Frame::none()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, border))
+                .rounding(Rounding::same(999.0))
+                .inner_margin(Margin::symmetric(10.0, 6.0))
+                .show(ui, |ui| {
+                    ui.label(
+                        RichText::new(badge_text)
+                            .color(text)
+                            .font(FontId::proportional(11.0))
+                            .strong(),
+                    );
+                });
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(format!(
+                    "Step {} of {}",
+                    app.current_step.saturating_add(1).min(UPDATE_STEPS.len()),
+                    UPDATE_STEPS.len()
+                ))
+                .color(theme::TEXT_DIM)
+                .font(FontId::proportional(11.5)),
+            );
+        });
     });
 }
 
@@ -332,37 +416,20 @@ fn render_body(ui: &mut egui::Ui, app: &UpdaterApp) {
             ui.set_min_height(ui.available_height());
             ui.set_width(ui.available_width());
             match &app.state {
-                UiState::Connecting => render_connecting(ui),
                 UiState::Downloading {
                     downloaded,
                     total,
                     bytes_per_sec,
                     eta_secs,
                 } => render_downloading(ui, *downloaded, *total, *bytes_per_sec, *eta_secs),
-                UiState::Verifying(p) => render_verifying(ui, *p),
-                UiState::Launching => render_launching(ui),
-                UiState::Installing {
-                    progress,
-                    elapsed_secs,
-                } => render_installing(ui, *progress, *elapsed_secs),
+                UiState::Verifying { checked, total } => render_verifying(ui, *checked, *total),
+                UiState::Activity { phase, elapsed_secs } => {
+                    render_activity_phase(ui, *phase, *elapsed_secs)
+                }
                 UiState::Done { .. } => render_done(ui),
                 UiState::Failed(msg) => render_failed(ui, msg),
             }
         });
-}
-
-fn render_connecting(ui: &mut egui::Ui) {
-    ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-        phase_label(ui, "Connecting", theme::ACCENT);
-        ui.add_space(10.0);
-        ui.label(
-            RichText::new("Contacting the download server…")
-                .color(theme::TEXT_MUTED)
-                .font(FontId::proportional(13.0)),
-        );
-        ui.add_space(16.0);
-        indeterminate_bar(ui);
-    });
 }
 
 fn render_downloading(
@@ -435,54 +502,93 @@ fn render_downloading(
     });
 }
 
-fn render_verifying(ui: &mut egui::Ui, progress: f32) {
+fn render_verifying(ui: &mut egui::Ui, checked: u64, total: u64) {
     ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
         phase_label(ui, "Verifying", theme::ACCENT);
         ui.add_space(10.0);
-        progress_bar(ui, progress.clamp(0.0, 1.0));
+        let pct = if total > 0 {
+            (checked as f32 / total as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        progress_bar(ui, pct);
+        ui.add_space(8.0);
+        let left = format!(
+            "{} / {}",
+            format_bytes(checked),
+            if total > 0 {
+                format_bytes(total)
+            } else {
+                "—".to_string()
+            }
+        );
+        let right = format!("{:.0}%", pct * 100.0);
+
+        if ui.available_width() >= 560.0 {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&left)
+                        .color(theme::TEXT_STRONG)
+                        .font(FontId::proportional(12.5)),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(&right)
+                            .color(theme::TEXT_MUTED)
+                            .font(FontId::proportional(12.0)),
+                    );
+                });
+            });
+        } else {
+            ui.label(
+                RichText::new(left)
+                    .color(theme::TEXT_STRONG)
+                    .font(FontId::proportional(12.5)),
+            );
+            ui.label(
+                RichText::new(right)
+                    .color(theme::TEXT_MUTED)
+                    .font(FontId::proportional(12.0)),
+            );
+        }
+
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Checking integrity of the downloaded installer…")
+            RichText::new(phase_detail(Phase::Verifying))
                 .color(theme::TEXT_MUTED)
                 .font(FontId::proportional(12.5)),
         );
     });
 }
 
-fn render_launching(ui: &mut egui::Ui) {
+fn render_activity_phase(ui: &mut egui::Ui, phase: Phase, elapsed_secs: Option<u64>) {
     ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-        phase_label(ui, "Launching installer", theme::ACCENT);
+        phase_label(ui, phase_heading(phase), theme::ACCENT);
         ui.add_space(10.0);
         ui.label(
-            RichText::new("Preparing installer process — Windows may show a UAC prompt.")
+            RichText::new(phase_detail(phase))
                 .color(theme::TEXT_MUTED)
                 .font(FontId::proportional(13.0)),
         );
-        ui.add_space(16.0);
+        ui.add_space(12.0);
         indeterminate_bar(ui);
-    });
-}
-
-fn render_installing(ui: &mut egui::Ui, progress: f32, elapsed_secs: u64) {
-    ui.with_layout(Layout::top_down(Align::LEFT), |ui| {
-        phase_label(ui, "Installing update", theme::ACCENT);
         ui.add_space(10.0);
-        progress_bar(ui, progress.clamp(0.0, 1.0));
-        ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.label(
-                RichText::new("Installer is running in the background.")
-                    .color(theme::TEXT_MUTED)
-                    .font(FontId::proportional(12.5)),
+                RichText::new("Live activity")
+                    .color(theme::TEXT_STRONG)
+                    .font(FontId::proportional(12.0))
+                    .strong(),
             );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let pct = (progress.clamp(0.0, 1.0) * 100.0).round();
-                ui.label(
-                    RichText::new(format!("{pct:.0}%  ·  elapsed {}", format_eta(elapsed_secs)))
-                        .color(theme::TEXT_DIM)
-                        .font(FontId::proportional(12.0)),
-                );
-            });
+            if let Some(elapsed) = phase_elapsed_label(phase, elapsed_secs) {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(
+                        RichText::new(elapsed)
+                            .color(theme::TEXT_DIM)
+                            .font(FontId::proportional(12.0)),
+                    );
+                });
+            }
         });
     });
 }
@@ -698,4 +804,60 @@ fn format_eta(secs: u64) -> String {
 fn elapsed_label(started: Instant) -> String {
     let s = started.elapsed().as_secs();
     format!("elapsed {}", format_eta(s.max(1)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use std::thread;
+
+    fn test_cli() -> Cli {
+        Cli {
+            url: Some("https://example.com/update.exe".into()),
+            version: Some("1.2.3".into()),
+            sha256: None,
+            release_url: None,
+            app_exe: Some("C:\\Program Files\\Stellaris Mod Manager\\Stellaris Mod Manager.exe".into()),
+            app_pid: Some(1234),
+            cleanup_root: Some("C:\\Temp\\StellarisModManager-updater-test".into()),
+            demo: false,
+            phase: None,
+            demo_speed: 1.0,
+        }
+    }
+
+    fn test_app() -> UpdaterApp {
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let worker = WorkerHandle {
+            cancel: Arc::new(AtomicBool::new(false)),
+            _join: thread::spawn(|| {}),
+        };
+        UpdaterApp::new(test_cli(), rx, worker, &egui::Context::default())
+    }
+
+    #[test]
+    fn update_steps_include_explicit_close_relaunch_and_cleanup_stages() {
+        assert_eq!(
+            &UPDATE_STEPS[..],
+            &[
+                "Connecting",
+                "Downloading",
+                "Verifying",
+                "Closing app",
+                "Installing update",
+                "Relaunching app",
+                "Cleaning up",
+                "Finished",
+            ][..]
+        );
+    }
+
+    #[test]
+    fn launching_phase_uses_the_install_step() {
+        let mut app = test_app();
+        app.apply_event(UpdateEvent::Phase(Phase::Launching));
+        assert_eq!(app.current_step, 4);
+    }
 }

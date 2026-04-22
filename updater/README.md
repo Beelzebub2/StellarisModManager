@@ -15,8 +15,9 @@ This process owns the download, integrity check, and installer hand-off.
 - **Integrity:** SHA-256 (`sha2` crate). If no hash is supplied, the check is
   skipped and a warning is logged.
 - **Installer execution:** The Inno Setup installer is launched in silent
-  background mode; the updater keeps the window open and shows install-phase
-  progress until the installer process exits.
+  background mode; the updater keeps the window open and shows explicit
+  activity states for closing the app, running the installer, relaunching, and
+  cleanup. Only download and hash verification show measured progress.
 - **Logs:** `%LOCALAPPDATA%\StellarisModManager\updater.log`.
 
 ## Usage
@@ -45,8 +46,11 @@ smm-updater.exe --demo --demo-speed 2.0
 smm-updater.exe --demo --phase connecting
 smm-updater.exe --demo --phase downloading
 smm-updater.exe --demo --phase verifying
+smm-updater.exe --demo --phase waiting-for-app
 smm-updater.exe --demo --phase launching
 smm-updater.exe --demo --phase installing
+smm-updater.exe --demo --phase relaunching
+smm-updater.exe --demo --phase cleaning-up
 smm-updater.exe --demo --phase done
 smm-updater.exe --demo --phase failed
 ```
@@ -62,7 +66,8 @@ cargo run --release -- --demo
 Pass criteria:
 
 - The updater window appears and advances through Connecting, Downloading,
-  Verifying, Launching, Installing, then Done.
+  Verifying, Closing app, Installing update, Relaunching app, Cleaning up,
+  then Done.
 - The window auto-closes shortly after Done.
 - `%LOCALAPPDATA%\StellarisModManager\updater.log` contains a fresh
   `mode=demo` startup line.
