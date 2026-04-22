@@ -2,6 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { app, BrowserWindow, Menu } from "electron";
 import { registerIpcHandlers } from "./main/ipc";
+import {
+    applyWebviewSecurity,
+    buildMainWindowWebPreferences
+} from "./main/security";
 import { logError, logInfo } from "./main/services/logger";
 import { loadSettingsSnapshot } from "./main/services/settings";
 import { getTitleBarOverlayOptionsForTheme } from "./main/windowChrome";
@@ -90,13 +94,7 @@ function createMainWindow(): void {
         icon: iconPath,
         titleBarStyle: "hidden",
         titleBarOverlay: getTitleBarOverlayOptionsForTheme(settings?.themePalette),
-        webPreferences: {
-            preload: path.join(__dirname, "preload.js"),
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: false,
-            webviewTag: true
-        }
+        webPreferences: buildMainWindowWebPreferences(path.join(__dirname, "preload.js"))
     });
 
     Menu.setApplicationMenu(null);
@@ -168,7 +166,7 @@ app.on("second-instance", () => {
 
 app.on("web-contents-created", (_event, contents) => {
     contents.on("will-attach-webview", (_wae, webPreferences) => {
-        webPreferences.preload = path.join(__dirname, "webviewPreload.js");
+        applyWebviewSecurity(webPreferences, path.join(__dirname, "webviewPreload.js"));
     });
 });
 

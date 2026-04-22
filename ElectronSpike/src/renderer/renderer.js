@@ -3286,6 +3286,45 @@ async function getWorkshopOverlayActionState(workshopId) {
    ============================================================ */
 const WORKSHOP_HOME = "https://steamcommunity.com/workshop/browse/?appid=281990&browsesort=trend&section=readytouseitems&days=90";
 
+function normalizeWorkshopNavigationUrl(rawUrl) {
+    const value = String(rawUrl || "").trim();
+    if (!value) return null;
+
+    try {
+        const parsed = new URL(value.startsWith("http") ? value : `https://${value}`);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+            return null;
+        }
+
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
+
+function shouldStayInWorkshopWebview(url) {
+    const safeUrl = normalizeWorkshopNavigationUrl(url);
+    if (!safeUrl) return false;
+
+    try {
+        const parsed = new URL(safeUrl);
+        return parsed.hostname === "steamcommunity.com" || parsed.hostname === "store.steampowered.com";
+    } catch {
+        return false;
+    }
+}
+
+function navigateWorkshopUrl(url, webview) {
+    const safeUrl = normalizeWorkshopNavigationUrl(url);
+    if (!safeUrl) return;
+
+    if (shouldStayInWorkshopWebview(safeUrl)) {
+        webview.loadURL(safeUrl);
+    } else {
+        void window.spikeApi.openExternalUrl(safeUrl);
+    }
+}
+
 function restoreVersionTabFromWorkshopContext() {
     const context = state.workshopReturnContext;
     if (!context || context.fromTab !== "version") {
@@ -3399,27 +3438,13 @@ function initWorkshop() {
 
     // Handle new-window requests from Steam links (opens in same webview)
     webview.addEventListener("new-window", (e) => {
-        const url = e.url;
-        if (url && url.startsWith("http")) {
-            e.preventDefault();
-            if (url.includes("steamcommunity.com") || url.includes("store.steampowered.com")) {
-                webview.loadURL(url);
-            } else {
-                void window.spikeApi.openExternalUrl(url);
-            }
-        }
+        e.preventDefault();
+        navigateWorkshopUrl(e.url, webview);
     });
 
     webview.addEventListener("ipc-message", async (e) => {
         if (e.channel === "smm-open-url") {
-            const url = String(e.args?.[0] ?? "").trim();
-            if (!url || !url.startsWith("http")) return;
-
-            if (url.includes("steamcommunity.com") || url.includes("store.steampowered.com")) {
-                webview.loadURL(url);
-            } else {
-                void window.spikeApi.openExternalUrl(url);
-            }
+            navigateWorkshopUrl(e.args?.[0], webview);
             return;
         }
 
@@ -3477,15 +3502,13 @@ function initWorkshop() {
     byId("workshopRefresh")?.addEventListener("click", () => webview.reload());
     byId("workshopHome")?.addEventListener("click", () => webview.loadURL(WORKSHOP_HOME));
     byId("workshopGo")?.addEventListener("click", () => {
-        const url = urlInput?.value?.trim();
-        if (url) webview.loadURL(url.startsWith("http") ? url : `https://${url}`);
+        navigateWorkshopUrl(urlInput?.value, webview);
     });
 
     if (urlInput) {
         urlInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") {
-                const url = urlInput.value.trim();
-                if (url) webview.loadURL(url.startsWith("http") ? url : `https://${url}`);
+                navigateWorkshopUrl(urlInput.value, webview);
             }
         });
     }

@@ -12,6 +12,10 @@ import type {
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
 import { getActionStateForCard } from "./downloadManager";
+import {
+    fetchRemoteBuffer,
+    normalizeRemoteAssetUrl
+} from "./remoteAsset";
 import { scrapeSteamWorkshopPage } from "./workshopBrowser";
 const STELLARISYNC_BASE_URL = process.env.STELLARISYNC_BASE_URL?.trim() || "https://stellarisync.rrmtools.uk";
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
@@ -22,6 +26,8 @@ const MAP_CACHE_TTL_MS = 4 * 60 * 1000;
 const DETAIL_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const RESULT_CACHE_TTL_MS = 20 * 60 * 1000;
 const THUMBNAIL_CACHE_TTL_MS = 5 * 24 * 60 * 60 * 1000;
+const THUMBNAIL_FETCH_TIMEOUT_MS = 12_000;
+const THUMBNAIL_MAX_BYTES = 6 * 1024 * 1024;
 const MAX_STEAM_PAGE_PROBES_PER_QUERY = 20;
 const CACHE_FLUSH_DEBOUNCE_MS = 1_500;
 
@@ -635,11 +641,12 @@ function ensureThumbnailFileName(workshopId: string, previewUrl: string): string
 }
 
 async function ensureThumbnailCached(workshopId: string, previewUrl: string | null): Promise<string | null> {
-    if (!previewUrl) {
+    const safePreviewUrl = normalizeRemoteAssetUrl(previewUrl ?? "");
+    if (!safePreviewUrl) {
         return null;
     }
 
-    const fileName = ensureThumbnailFileName(workshopId, previewUrl);
+    const fileName = ensureThumbnailFileName(workshopId, safePreviewUrl);
     const filePath = path.join(thumbnailsDir, fileName);
 
     try {
@@ -652,31 +659,38 @@ async function ensureThumbnailCached(workshopId: string, previewUrl: string | nu
     }
 
     try {
-        const response = await fetch(previewUrl, { method: "GET" });
-        if (!response.ok) {
-            return previewUrl;
+        const result = await fetchRemoteBuffer(safePreviewUrl, {
+            timeoutMs: THUMBNAIL_FETCH_TIMEOUT_MS,
+            maxBytes: THUMBNAIL_MAX_BYTES
+        });
+        if (!result) {
+            return null;
         }
 
-        const bytes = await response.arrayBuffer();
-        await fsp.writeFile(filePath, Buffer.from(bytes));
+        if (!result.buffer) {
+            return result.safeUrl;
+        }
+
+        await fsp.writeFile(filePath, result.buffer);
         return pathToFileURL(filePath).toString();
     } catch {
-        return previewUrl;
+        return safePreviewUrl;
     }
 }
 
 function queueThumbnailWarmup(workshopId: string, previewUrl: string | null): void {
-    if (!previewUrl) {
+    const safePreviewUrl = normalizeRemoteAssetUrl(previewUrl ?? "");
+    if (!safePreviewUrl) {
         return;
     }
 
-    const key = `${workshopId}|${previewUrl}`;
+    const key = `${workshopId}|${safePreviewUrl}`;
     if (thumbnailWarmInFlight.has(key)) {
         return;
     }
 
     const warmPromise = (async () => {
-        await ensureThumbnailCached(workshopId, previewUrl);
+        await ensureThumbnailCached(workshopId, safePreviewUrl);
     })().finally(() => {
         thumbnailWarmInFlight.delete(key);
     });
@@ -685,11 +699,12 @@ function queueThumbnailWarmup(workshopId: string, previewUrl: string | null): vo
 }
 
 async function resolveCardThumbnailUrl(workshopId: string, previewUrl: string | null): Promise<string | null> {
-    if (!previewUrl) {
+    const safePreviewUrl = normalizeRemoteAssetUrl(previewUrl ?? "");
+    if (!safePreviewUrl) {
         return null;
     }
 
-    const fileName = ensureThumbnailFileName(workshopId, previewUrl);
+    const fileName = ensureThumbnailFileName(workshopId, safePreviewUrl);
     const filePath = path.join(thumbnailsDir, fileName);
 
     try {
@@ -701,8 +716,8 @@ async function resolveCardThumbnailUrl(workshopId: string, previewUrl: string | 
         // warmup below
     }
 
-    queueThumbnailWarmup(workshopId, previewUrl);
-    return previewUrl;
+    queueThumbnailWarmup(workshopId, safePreviewUrl);
+    return safePreviewUrl;
 }
 
 function buildQueryCacheKey(query: VersionBrowserQuery): string {
@@ -1022,8 +1037,8 @@ export async function getVersionModDetail(workshopIdRaw: string, selectedVersion
 
     const previewImageUrl = await ensureThumbnailCached(workshopId, detail.preview_url?.trim() || null);
     const additionalPreviewUrls = (detail.previews ?? [])
-        .map((entry) => (entry.previewurl ?? "").trim())
-        .filter((value) => value.length > 0)
+        .map((entry) => normalizeRemoteAssetUrl((entry.previewurl ?? "").trim()))
+        .filter((value): value is string => Boolean(value))
         .slice(0, 6);
 
     const tags = (detail.tags ?? [])

@@ -77,6 +77,7 @@ import {
     queueDownload,
     setDownloadEventEmitter
 } from "./services/downloadManager";
+import { normalizeSafeExternalUrl } from "./security";
 import {
     clearWorkshopCache,
     queryWorkshopMods
@@ -591,7 +592,7 @@ export function registerIpcHandlers(): void {
     });
 
     ipcMain.handle(CHANNELS.openExternalUrl, async (_event, rawUrl: string) => {
-        const value = (rawUrl ?? "").trim();
+        const value = normalizeSafeExternalUrl(rawUrl ?? "");
         if (!value) {
             return false;
         }
