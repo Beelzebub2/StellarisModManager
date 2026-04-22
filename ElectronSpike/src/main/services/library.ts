@@ -55,6 +55,8 @@ interface DbProfileRow {
     IsActive: number;
     CreatedAt: string | null;
     SharedProfileId?: string | null;
+    SharedProfileRevision?: number | null;
+    SharedProfileUpdatedUtc?: string | null;
 }
 
 interface DbModRow {
@@ -109,6 +111,8 @@ interface RemoteSharedProfilePayload {
     id?: string;
     name?: string;
     creator?: string;
+    revision?: number | string | null;
+    updatedUtc?: string | null;
     mods?: unknown;
 }
 
@@ -535,13 +539,54 @@ function normalizeLoadOrder(db: Database.Database): void {
     tx(ordered);
 }
 
-function ensureSharedProfileIdColumn(db: Database.Database): void {
-    const columns = getTableColumns(db, "Profiles");
-    if (columns.has("SharedProfileId")) {
-        return;
+function normalizeSharedProfileRevision(value: unknown): number | null {
+    const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function normalizeSharedProfileUpdatedUtc(value: unknown): string | null {
+    const raw = String(value ?? "").trim();
+    return raw || null;
+}
+
+function hasRemoteSharedProfileChanged(
+    profile: Pick<DbProfileRow, "SharedProfileId" | "SharedProfileRevision" | "SharedProfileUpdatedUtc">,
+    sharedProfileId: string,
+    remoteProfile: RemoteSharedProfilePayload
+): boolean {
+    const localSharedProfileId = sanitizeSharedProfileId(profile.SharedProfileId ?? "");
+    if (localSharedProfileId !== sharedProfileId) {
+        return true;
     }
 
-    db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileId TEXT NULL").run();
+    const localRevision = normalizeSharedProfileRevision(profile.SharedProfileRevision);
+    const remoteRevision = normalizeSharedProfileRevision(remoteProfile.revision);
+    if (localRevision !== null || remoteRevision !== null) {
+        return localRevision !== remoteRevision;
+    }
+
+    const localUpdatedUtc = normalizeSharedProfileUpdatedUtc(profile.SharedProfileUpdatedUtc);
+    const remoteUpdatedUtc = normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc);
+    if (localUpdatedUtc || remoteUpdatedUtc) {
+        return localUpdatedUtc !== remoteUpdatedUtc;
+    }
+
+    return true;
+}
+
+function ensureSharedProfileSyncColumns(db: Database.Database): void {
+    const columns = getTableColumns(db, "Profiles");
+    if (!columns.has("SharedProfileId")) {
+        db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileId TEXT NULL").run();
+    }
+
+    if (!columns.has("SharedProfileRevision")) {
+        db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileRevision INTEGER NULL").run();
+    }
+
+    if (!columns.has("SharedProfileUpdatedUtc")) {
+        db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileUpdatedUtc TEXT NULL").run();
+    }
 }
 
 function getActiveProfileId(db: Database.Database): number | null {
@@ -695,6 +740,8 @@ function mapProfileRow(row: DbProfileRow): LibraryProfile {
         id: row.Id,
         name: row.Name,
         sharedProfileId: row.SharedProfileId?.trim() || null,
+        sharedProfileRevision: normalizeSharedProfileRevision(row.SharedProfileRevision),
+        sharedProfileUpdatedUtc: normalizeSharedProfileUpdatedUtc(row.SharedProfileUpdatedUtc),
         isActive: row.IsActive === 1,
         createdAtUtc: row.CreatedAt || null
     };
@@ -797,6 +844,12 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
         const sharedProfileSelection = profileColumns.has("SharedProfileId")
             ? "SharedProfileId"
             : "NULL AS SharedProfileId";
+        const sharedProfileRevisionSelection = profileColumns.has("SharedProfileRevision")
+            ? "SharedProfileRevision"
+            : "NULL AS SharedProfileRevision";
+        const sharedProfileUpdatedUtcSelection = profileColumns.has("SharedProfileUpdatedUtc")
+            ? "SharedProfileUpdatedUtc"
+            : "NULL AS SharedProfileUpdatedUtc";
 
         const rows = db
             .prepare(
@@ -804,7 +857,9 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
                         Name,
                         IsActive,
                         CreatedAt,
-                        ${sharedProfileSelection}
+                        ${sharedProfileSelection},
+                        ${sharedProfileRevisionSelection},
+                        ${sharedProfileUpdatedUtcSelection}
                  FROM Profiles
                  ORDER BY Name COLLATE NOCASE ASC, Id ASC`
             )
@@ -824,7 +879,9 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
                             Name,
                             IsActive,
                             CreatedAt,
-                            ${sharedProfileSelection}
+                            ${sharedProfileSelection},
+                            ${sharedProfileRevisionSelection},
+                            ${sharedProfileUpdatedUtcSelection}
                      FROM Profiles
                      ORDER BY Name COLLATE NOCASE ASC, Id ASC`
                 )
@@ -883,7 +940,7 @@ function ensureProfileExists(db: Database.Database): void {
         return;
     }
 
-    ensureSharedProfileIdColumn(db);
+    ensureSharedProfileSyncColumns(db);
     db.prepare("INSERT INTO Profiles (Name, IsActive, CreatedAt, SharedProfileId) VALUES (?, 1, ?, NULL)")
         .run("Default", nowIso());
 }
@@ -891,7 +948,7 @@ function ensureProfileExists(db: Database.Database): void {
 function ensureLibrarySchema(db: Database.Database): void {
     ensureModsTable(db);
     ensureProfilesTables(db);
-    ensureSharedProfileIdColumn(db);
+    ensureSharedProfileSyncColumns(db);
     ensureProfileExists(db);
 }
 
@@ -1414,7 +1471,13 @@ export function setLibraryProfileSharedId(request: LibrarySetSharedProfileIdRequ
             return { ok: false, message: "Profile not found." };
         }
 
-        db.prepare("UPDATE Profiles SET SharedProfileId = ? WHERE Id = ?").run(sharedProfileId, request.profileId);
+        db.prepare(`
+            UPDATE Profiles
+            SET SharedProfileId = ?,
+                SharedProfileRevision = NULL,
+                SharedProfileUpdatedUtc = NULL
+            WHERE Id = ?
+        `).run(sharedProfileId, request.profileId);
         return { ok: true, message: "Shared profile ID saved." };
     } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown shared-id error";
@@ -1547,7 +1610,18 @@ export async function publishLibrarySharedProfile(
             };
         }
 
-        db.prepare("UPDATE Profiles SET SharedProfileId = ? WHERE Id = ?").run(sharedProfileId, request.profileId);
+        db.prepare(`
+            UPDATE Profiles
+            SET SharedProfileId = ?,
+                SharedProfileRevision = ?,
+                SharedProfileUpdatedUtc = ?
+            WHERE Id = ?
+        `).run(
+            sharedProfileId,
+            normalizeSharedProfileRevision(remoteProfile.revision),
+            normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc),
+            request.profileId
+        );
 
         const created = publishTarget.shouldCreate || publishTarget.sharedProfileId !== sharedProfileId;
         const remoteName = String(remoteProfile.name ?? payload.name).trim() || payload.name;
@@ -1654,10 +1728,31 @@ export async function syncLibrarySharedProfile(
 
     try {
         const profile = db
-            .prepare("SELECT Id FROM Profiles WHERE Id = ?")
-            .get(request.profileId) as { Id: number } | undefined;
+            .prepare(`
+                SELECT Id, SharedProfileId, SharedProfileRevision, SharedProfileUpdatedUtc
+                FROM Profiles
+                WHERE Id = ?
+            `)
+            .get(request.profileId) as DbProfileRow | undefined;
         if (!profile) {
             return buildSharedProfileSyncFailure("Profile not found.");
+        }
+
+        const remoteProfile = await fetchSharedProfile(sharedProfileId, request.sharedProfileSince);
+        const profileName = typeof remoteProfile.name === "string" && remoteProfile.name.trim()
+            ? remoteProfile.name.trim()
+            : null;
+
+        if (!hasRemoteSharedProfileChanged(profile, sharedProfileId, remoteProfile)) {
+            return {
+                ok: true,
+                message: "No remote changes found.",
+                profileName,
+                missingWorkshopIds: [],
+                enabledCount: 0,
+                disabledCount: 0,
+                syncedLoadOrderCount: 0
+            };
         }
 
         const modColumns = getTableColumns(db, "Mods");
@@ -1666,7 +1761,6 @@ export async function syncLibrarySharedProfile(
             return buildSharedProfileSyncFailure("Could not determine workshop ID column in Mods table.");
         }
 
-        const remoteProfile = await fetchSharedProfile(sharedProfileId, request.sharedProfileSince);
         const remoteMods = normalizeSharedProfileMods(remoteProfile.mods);
         const settings = loadSettingsSnapshot();
         const modsPath = settings?.modsPath?.trim() || getDefaultModsDirectory();
@@ -1709,7 +1803,18 @@ export async function syncLibrarySharedProfile(
         let disabledCount = 0;
 
         const tx = db.transaction(() => {
-            db.prepare("UPDATE Profiles SET SharedProfileId = ? WHERE Id = ?").run(sharedProfileId, request.profileId);
+            db.prepare(`
+                UPDATE Profiles
+                SET SharedProfileId = ?,
+                    SharedProfileRevision = ?,
+                    SharedProfileUpdatedUtc = ?
+                WHERE Id = ?
+            `).run(
+                sharedProfileId,
+                normalizeSharedProfileRevision(remoteProfile.revision),
+                normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc),
+                request.profileId
+            );
 
             const setEnabledAndOrderStmt = db.prepare("UPDATE Mods SET IsEnabled = ?, LoadOrder = ? WHERE Id = ?");
             for (const row of rowsToDisable) {
@@ -1734,9 +1839,6 @@ export async function syncLibrarySharedProfile(
 
         tx();
 
-        const profileName = typeof remoteProfile.name === "string" && remoteProfile.name.trim()
-            ? remoteProfile.name.trim()
-            : null;
         const missingCount = missingWorkshopIds.length;
         const syncedLoadOrderCount = wantedRows.length;
         const profileLabel = profileName ? ` '${profileName}'` : "";
@@ -2373,7 +2475,9 @@ function ensureProfilesTables(db: Database.Database): void {
             Name TEXT NOT NULL,
             IsActive INTEGER NOT NULL DEFAULT 0,
             CreatedAt TEXT NULL,
-            SharedProfileId TEXT NULL
+            SharedProfileId TEXT NULL,
+            SharedProfileRevision INTEGER NULL,
+            SharedProfileUpdatedUtc TEXT NULL
         )`);
     }
 

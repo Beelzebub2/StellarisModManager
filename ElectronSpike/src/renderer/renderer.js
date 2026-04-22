@@ -3109,8 +3109,8 @@ function renderLibraryProfiles() {
         .join("");
 
     const active = getActiveLibraryProfile();
+    const currentSharedId = (active?.sharedProfileId || "").trim();
     if (sharedValue) {
-        const currentSharedId = (active?.sharedProfileId || "").trim();
         sharedValue.textContent = currentSharedId || "No shared profile ID set";
         sharedValue.classList.toggle("is-empty", !currentSharedId);
         if (currentSharedId) {
@@ -3118,6 +3118,14 @@ function renderLibraryProfiles() {
         } else {
             sharedValue.title = "No shared profile ID set";
         }
+    }
+
+    const syncButton = byId("librarySyncSharedProfile");
+    if (syncButton) {
+        syncButton.disabled = !currentSharedId;
+        syncButton.title = currentSharedId
+            ? "Sync this profile with the saved shared profile ID"
+            : "No shared profile ID set";
     }
 
     // Disable delete button when only one profile remains
@@ -3867,6 +3875,72 @@ function hookLibraryControls() {
         await refreshLibrarySnapshot();
     });
 
+    async function runSharedProfileSync(active, sharedProfileId, sharedProfileSince = "") {
+        const syncResult = await window.spikeApi.syncLibrarySharedProfile({
+            profileId: active.id,
+            sharedProfileId,
+            sharedProfileSince
+        });
+        setLibraryStatus(syncResult.message);
+        await refreshLibrarySnapshot();
+
+        const missingWorkshopIds = Array.isArray(syncResult?.missingWorkshopIds)
+            ? syncResult.missingWorkshopIds
+            : [];
+        if (!syncResult.ok || missingWorkshopIds.length <= 0) {
+            return;
+        }
+
+        const profileLabel = syncResult.profileName
+            ? `shared profile '${syncResult.profileName}'`
+            : "the shared profile";
+        const shouldInstall = await showModal(
+            "Install Missing Mods",
+            `${missingWorkshopIds.length} mod(s) from ${profileLabel} are missing locally. Queue them for install now?`,
+            "Queue installs",
+            "Not now"
+        );
+        if (!shouldInstall) {
+            setLibraryStatus(`${missingWorkshopIds.length} missing mod(s) not queued.`);
+            return;
+        }
+
+        let queuedCount = 0;
+        let skippedCount = 0;
+        for (const workshopId of missingWorkshopIds) {
+            const queueResult = await queueDownloadAction({
+                workshopId,
+                modName: workshopId,
+                action: "install"
+            });
+            if (queueResult.blockedBySettings) {
+                setLibraryStatus(queueResult.message);
+                return;
+            }
+            if (queueResult.ok) {
+                queuedCount += 1;
+            } else {
+                skippedCount += 1;
+            }
+        }
+
+        if (queuedCount > 0) {
+            await refreshQueueSnapshot();
+        }
+
+        if (queuedCount > 0 && skippedCount > 0) {
+            setLibraryStatus(`Queued ${queuedCount} missing mod(s); skipped ${skippedCount}.`);
+            return;
+        }
+
+        if (queuedCount > 0) {
+            setLibraryStatus(`Queued ${queuedCount} missing mod(s) for installation.`);
+            return;
+        }
+
+        setLibraryStatus("Missing mods were not queued (they may already be queued or invalid).");
+    }
+
     byId("libraryUseSharedId")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
@@ -3882,69 +3956,25 @@ function hookLibraryControls() {
                 setLibraryStatus("Shared profile ID is required.");
                 return;
             }
-            const syncResult = await window.spikeApi.syncLibrarySharedProfile({
-                profileId: active.id,
-                sharedProfileId: parsedShared.sharedProfileId,
-                sharedProfileSince: parsedShared.sharedProfileSince
-            });
-            setLibraryStatus(syncResult.message);
-            await refreshLibrarySnapshot();
+            await runSharedProfileSync(active, parsedShared.sharedProfileId, parsedShared.sharedProfileSince);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setLibraryStatus(`Failed to sync shared profile: ${message}`);
+        }
+    });
 
-            const missingWorkshopIds = Array.isArray(syncResult?.missingWorkshopIds)
-                ? syncResult.missingWorkshopIds
-                : [];
-            if (!syncResult.ok || missingWorkshopIds.length <= 0) {
-                return;
-            }
+    byId("librarySyncSharedProfile")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
 
-            const profileLabel = syncResult.profileName
-                ? `shared profile '${syncResult.profileName}'`
-                : "the shared profile";
-            const shouldInstall = await showModal(
-                "Install Missing Mods",
-                `${missingWorkshopIds.length} mod(s) from ${profileLabel} are missing locally. Queue them for install now?`,
-                "Queue installs",
-                "Not now"
-            );
-            if (!shouldInstall) {
-                setLibraryStatus(`${missingWorkshopIds.length} missing mod(s) not queued.`);
-                return;
-            }
+        const sharedProfileId = String(active.sharedProfileId || "").trim();
+        if (!sharedProfileId) {
+            setLibraryStatus("No shared profile ID set.");
+            return;
+        }
 
-            let queuedCount = 0;
-            let skippedCount = 0;
-            for (const workshopId of missingWorkshopIds) {
-                const queueResult = await queueDownloadAction({
-                    workshopId,
-                    modName: workshopId,
-                    action: "install"
-                });
-                if (queueResult.blockedBySettings) {
-                    setLibraryStatus(queueResult.message);
-                    return;
-                }
-                if (queueResult.ok) {
-                    queuedCount += 1;
-                } else {
-                    skippedCount += 1;
-                }
-            }
-
-            if (queuedCount > 0) {
-                await refreshQueueSnapshot();
-            }
-
-            if (queuedCount > 0 && skippedCount > 0) {
-                setLibraryStatus(`Queued ${queuedCount} missing mod(s); skipped ${skippedCount}.`);
-                return;
-            }
-
-            if (queuedCount > 0) {
-                setLibraryStatus(`Queued ${queuedCount} missing mod(s) for installation.`);
-                return;
-            }
-
-            setLibraryStatus("Missing mods were not queued (they may already be queued or invalid).");
+        try {
+            await runSharedProfileSync(active, sharedProfileId, "");
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             setLibraryStatus(`Failed to sync shared profile: ${message}`);
