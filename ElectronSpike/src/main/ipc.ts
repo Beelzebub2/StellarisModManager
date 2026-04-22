@@ -45,6 +45,7 @@ import {
 import { logError, logInfo } from "./services/logger";
 import { getLegacyPaths } from "./services/paths";
 import {
+    autoConfigureSteamCmdSnapshot,
     autoDetectSettingsSnapshot,
     detectGameVersionFromPath,
     getDownloadRuntimeOptions,
@@ -90,6 +91,7 @@ const CHANNELS = {
     settings: "spike:getSettings",
     settingsSave: "spike:saveSettings",
     settingsAutoDetect: "spike:autoDetectSettings",
+    settingsAutoConfigureSteamCmd: "spike:autoConfigureSteamCmd",
     settingsValidate: "spike:validateSettings",
     settingsPalettes: "spike:getThemePaletteOptions",
     settingsRuntimes: "spike:getDownloadRuntimeOptions",
@@ -242,6 +244,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.settings);
     ipcMain.removeHandler(CHANNELS.settingsSave);
     ipcMain.removeHandler(CHANNELS.settingsAutoDetect);
+    ipcMain.removeHandler(CHANNELS.settingsAutoConfigureSteamCmd);
     ipcMain.removeHandler(CHANNELS.settingsValidate);
     ipcMain.removeHandler(CHANNELS.settingsPalettes);
     ipcMain.removeHandler(CHANNELS.settingsRuntimes);
@@ -328,6 +331,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.settingsAutoDetect, async (_event, settings?: SettingsSnapshot) => {
         return autoDetectSettingsSnapshot(settings);
+    });
+
+    ipcMain.handle(CHANNELS.settingsAutoConfigureSteamCmd, async (_event, settings?: SettingsSnapshot) => {
+        return autoConfigureSteamCmdSnapshot(settings);
     });
 
     ipcMain.handle(CHANNELS.settingsValidate, async (_event, settings: SettingsSnapshot) => {

@@ -1,5 +1,7 @@
 import fs from "node:fs";
+import http from "node:http";
 import { execFileSync } from "node:child_process";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import type {
@@ -8,6 +10,7 @@ import type {
     SettingsSnapshot,
     SettingsValidationResult
 } from "../../shared/types";
+import { logError, logInfo } from "./logger";
 import { getLegacyPaths } from "./paths";
 import { discoverSteamLibraries } from "./steamDiscovery";
 
@@ -23,6 +26,9 @@ const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "Steamworks", "SteamCmd"];
 const WINDOWS_USER_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders";
 const WINDOWS_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders";
 const WINDOWS_DOCUMENTS_VALUE = "Personal";
+const STEAMCMD_BOOTSTRAP_TIMEOUT_MS = 45000;
+const STEAMCMD_BOOTSTRAP_REDIRECT_LIMIT = 5;
+const STEAMCMD_BOOTSTRAP_DIR_NAME = "steamcmd";
 
 interface WindowsDocumentsResolverInput {
     homeDir?: string;
@@ -33,6 +39,26 @@ interface WindowsDocumentsResolverInput {
 }
 
 interface DefaultModsPathResolverInput extends WindowsDocumentsResolverInput {
+    platform?: NodeJS.Platform;
+}
+
+interface SteamCmdBootstrapSpec {
+    archiveUrl: string;
+    archiveFileName: string;
+    archiveKind: "zip" | "tar.gz";
+    executableName: string;
+}
+
+interface SteamCmdInstallRequest extends SteamCmdBootstrapSpec {
+    installRoot: string;
+}
+
+interface AutoConfigureSteamCmdSnapshotOptions {
+    baseSettings?: SettingsSnapshot;
+    discovery?: ReturnType<typeof discoverSteamLibraries>;
+    installRoot?: string;
+    installSteamCmd?: (request: SteamCmdInstallRequest) => Promise<void>;
+    allowExecutableDiscovery?: boolean;
     platform?: NodeJS.Platform;
 }
 
@@ -340,30 +366,18 @@ function dedupePaths(paths: Array<string | undefined>): string[] {
     return result;
 }
 
-function findSteamCmdExecutable(discovery: ReturnType<typeof discoverSteamLibraries>): string | undefined {
-    const envDirect = dedupePaths([
-        coerceString(process.env.STEAMCMD_PATH),
-        coerceString(process.env.STEAMCMD),
-        coerceString(process.env.STEAMCMDEXE)
-    ]);
-
-    for (const candidate of envDirect) {
-        if (fs.existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    const roots = dedupePaths([
-        ...discovery.existingSteamRoots,
-        ...discovery.libraries.map((entry) => entry.path),
-        getLegacyPaths().productDir,
-        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Steam"),
-        path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Steam")
-    ]);
-
-    const executableNames = process.platform === "win32"
+function getSteamCmdExecutableNames(platform: NodeJS.Platform = process.platform): string[] {
+    return platform === "win32"
         ? ["steamcmd.exe"]
         : ["steamcmd.sh", "steamcmd"];
+}
+
+function findSteamCmdExecutableInRoots(
+    candidateRoots: string[],
+    platform: NodeJS.Platform = process.platform
+): string | undefined {
+    const executableNames = getSteamCmdExecutableNames(platform);
+    const roots = dedupePaths(candidateRoots);
 
     for (const root of roots) {
         const folders = [
@@ -384,6 +398,29 @@ function findSteamCmdExecutable(discovery: ReturnType<typeof discoverSteamLibrar
     }
 
     return undefined;
+}
+
+function findSteamCmdExecutable(discovery: ReturnType<typeof discoverSteamLibraries>): string | undefined {
+    const envDirect = dedupePaths([
+        coerceString(process.env.STEAMCMD_PATH),
+        coerceString(process.env.STEAMCMD),
+        coerceString(process.env.STEAMCMDEXE)
+    ]);
+
+    for (const candidate of envDirect) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    const roots = dedupePaths([
+        ...discovery.existingSteamRoots,
+        ...discovery.libraries.map((entry) => entry.path),
+        getLegacyPaths().productDir,
+        path.join(process.env.ProgramFiles ?? "C:\\Program Files", "Steam"),
+        path.join(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Steam")
+    ]);
+    return findSteamCmdExecutableInRoots(roots);
 }
 
 function resolveSteamCmdDownloadPath(
@@ -448,6 +485,298 @@ export function resolveSteamCmdAutoConfigForTest(input: {
             allowExecutableDiscovery: input.skipExecutableDiscovery !== true
         }
     );
+}
+
+function getSteamCmdBootstrapSpec(platform: NodeJS.Platform = process.platform): SteamCmdBootstrapSpec | undefined {
+    switch (platform) {
+        case "win32":
+            return {
+                archiveUrl: "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip",
+                archiveFileName: "steamcmd.zip",
+                archiveKind: "zip",
+                executableName: "steamcmd.exe"
+            };
+        case "linux":
+            return {
+                archiveUrl: "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz",
+                archiveFileName: "steamcmd_linux.tar.gz",
+                archiveKind: "tar.gz",
+                executableName: "steamcmd.sh"
+            };
+        case "darwin":
+            return {
+                archiveUrl: "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_osx.tar.gz",
+                archiveFileName: "steamcmd_osx.tar.gz",
+                archiveKind: "tar.gz",
+                executableName: "steamcmd.sh"
+            };
+        default:
+            return undefined;
+    }
+}
+
+function isAppOwnedSteamCmdRoot(candidate: string): boolean {
+    const resolvedCandidate = path.resolve(candidate);
+    const productDir = path.resolve(getLegacyPaths().productDir);
+    return resolvedCandidate === productDir || resolvedCandidate.startsWith(`${productDir}${path.sep}`);
+}
+
+function looksLikeDedicatedSteamCmdRoot(candidate: string): boolean {
+    return path.basename(candidate).trim().toLowerCase() === STEAMCMD_BOOTSTRAP_DIR_NAME;
+}
+
+function escapePowerShellSingleQuotedString(value: string): string {
+    return value.replace(/'/g, "''");
+}
+
+function resolveSteamCmdInstallRoot(current: SettingsSnapshot, overridePath?: string): string {
+    const overridden = coerceString(overridePath);
+    if (overridden) {
+        return overridden;
+    }
+
+    const configuredExecutable = coerceString(current.steamCmdPath);
+    if (configuredExecutable && fs.existsSync(configuredExecutable)) {
+        return path.dirname(configuredExecutable);
+    }
+
+    const configuredDownloadRoot = coerceString(current.steamCmdDownloadPath);
+    if (configuredDownloadRoot) {
+        const existingExecutable = findSteamCmdExecutableInRoots([configuredDownloadRoot]);
+        if (existingExecutable) {
+            return path.dirname(existingExecutable);
+        }
+
+        if (isAppOwnedSteamCmdRoot(configuredDownloadRoot) || looksLikeDedicatedSteamCmdRoot(configuredDownloadRoot)) {
+            return configuredDownloadRoot;
+        }
+    }
+
+    return path.join(getLegacyPaths().productDir, STEAMCMD_BOOTSTRAP_DIR_NAME);
+}
+
+async function downloadFileWithRedirects(
+    urlString: string,
+    destinationPath: string,
+    redirectCount = 0
+): Promise<void> {
+    if (redirectCount > STEAMCMD_BOOTSTRAP_REDIRECT_LIMIT) {
+        throw new Error("Too many redirects while downloading SteamCMD.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+        const url = new URL(urlString);
+        const client = url.protocol === "https:" ? https : http;
+        const request = client.get(url, { timeout: STEAMCMD_BOOTSTRAP_TIMEOUT_MS }, (response) => {
+            const statusCode = response.statusCode ?? 0;
+            if (statusCode >= 301 && statusCode <= 308 && response.headers.location) {
+                response.resume();
+                const redirectedUrl = new URL(response.headers.location, url).toString();
+                downloadFileWithRedirects(redirectedUrl, destinationPath, redirectCount + 1).then(resolve, reject);
+                return;
+            }
+
+            if (statusCode < 200 || statusCode >= 300) {
+                response.resume();
+                reject(new Error(`HTTP ${statusCode}`));
+                return;
+            }
+
+            const stream = fs.createWriteStream(destinationPath);
+            const handleFailure = (error: unknown) => {
+                stream.destroy();
+                try {
+                    fs.rmSync(destinationPath, { force: true });
+                } catch {
+                    // ignore cleanup failures for partial downloads
+                }
+                reject(error instanceof Error ? error : new Error("SteamCMD download failed."));
+            };
+
+            response.on("error", handleFailure);
+            stream.on("error", handleFailure);
+            stream.on("finish", () => resolve());
+            response.pipe(stream);
+        });
+
+        request.on("error", reject);
+        request.on("timeout", () => {
+            request.destroy(new Error("Request timed out"));
+        });
+    });
+}
+
+function extractSteamCmdArchive(archivePath: string, destinationPath: string, archiveKind: SteamCmdBootstrapSpec["archiveKind"]): void {
+    fs.mkdirSync(destinationPath, { recursive: true });
+
+    if (archiveKind === "zip") {
+        const command = `Expand-Archive -LiteralPath '${escapePowerShellSingleQuotedString(archivePath)}' -DestinationPath '${escapePowerShellSingleQuotedString(destinationPath)}' -Force`;
+        try {
+            execFileSync(
+                "powershell.exe",
+                [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    command
+                ],
+                { encoding: "utf8" }
+            );
+        } catch (error) {
+            const stderr = error instanceof Error && "stderr" in error
+                ? String((error as { stderr?: string | Buffer }).stderr ?? "").trim()
+                : "";
+            if (stderr) {
+                throw new Error(`SteamCMD zip extraction failed: ${stderr}`);
+            }
+            throw error;
+        }
+        return;
+    }
+
+    execFileSync("tar", ["-xzf", archivePath, "-C", destinationPath], { encoding: "utf8" });
+}
+
+export function extractSteamCmdArchiveForTest(input: {
+    archivePath: string;
+    destinationPath: string;
+    archiveKind: SteamCmdBootstrapSpec["archiveKind"];
+}): void {
+    extractSteamCmdArchive(input.archivePath, input.destinationPath, input.archiveKind);
+}
+
+async function installSteamCmdToRoot(request: SteamCmdInstallRequest): Promise<void> {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "smm-steamcmd-bootstrap-"));
+    const archivePath = path.join(tempRoot, request.archiveFileName);
+
+    try {
+        logInfo(`Downloading SteamCMD archive to ${archivePath}`);
+        await downloadFileWithRedirects(request.archiveUrl, archivePath);
+        extractSteamCmdArchive(archivePath, request.installRoot, request.archiveKind);
+    } finally {
+        try {
+            fs.rmSync(tempRoot, { recursive: true, force: true });
+        } catch {
+            // ignore temp cleanup failures
+        }
+    }
+}
+
+async function autoConfigureSteamCmdSnapshotInternal(
+    options: AutoConfigureSteamCmdSnapshotOptions
+): Promise<SettingsAutoDetectResult> {
+    const current: SettingsSnapshot = {
+        ...loadSettingsOrDefault(),
+        ...(options.baseSettings ?? {})
+    };
+    const discovery = options.discovery ?? discoverSteamLibraries();
+    const platform = options.platform ?? process.platform;
+
+    const hasGamePath = coerceString(current.gamePath);
+    if (!hasGamePath) {
+        const gameLibrary = discovery.libraries.find((entry) => entry.hasStellaris);
+        if (gameLibrary) {
+            current.gamePath = gameLibrary.stellarisPath;
+        }
+    }
+
+    if (!coerceString(current.modsPath)) {
+        current.modsPath = getDefaultModsPath();
+    }
+
+    let steamCmdAutoConfig = resolveSteamCmdAutoConfig(current, discovery, {
+        allowExecutableDiscovery: options.allowExecutableDiscovery !== false
+    });
+    let downloadedSteamCmd = false;
+
+    if (!steamCmdAutoConfig.steamCmdPath || !steamCmdAutoConfig.steamCmdDownloadPath) {
+        const bootstrapSpec = getSteamCmdBootstrapSpec(platform);
+        if (!bootstrapSpec) {
+            return {
+                ok: false,
+                message: `SteamCMD auto-configuration is not supported on platform '${platform}'.`,
+                settings: current
+            };
+        }
+
+        const installRoot = resolveSteamCmdInstallRoot(current, options.installRoot);
+        const installSteamCmd = options.installSteamCmd ?? installSteamCmdToRoot;
+
+        try {
+            await installSteamCmd({
+                installRoot,
+                ...bootstrapSpec
+            });
+            downloadedSteamCmd = true;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown SteamCMD bootstrap error";
+            logError(`SteamCMD bootstrap failed: ${message}`);
+            return {
+                ok: false,
+                message: `Failed to download and extract SteamCMD: ${message}`,
+                settings: current
+            };
+        }
+
+        const installedExecutable = findSteamCmdExecutableInRoots([installRoot], platform);
+        current.steamCmdPath = installedExecutable;
+        current.steamCmdDownloadPath = installRoot;
+        steamCmdAutoConfig = resolveSteamCmdAutoConfig(current, discovery, {
+            allowExecutableDiscovery: false
+        });
+    }
+
+    current.steamCmdPath = steamCmdAutoConfig.steamCmdPath;
+    current.steamCmdDownloadPath = steamCmdAutoConfig.steamCmdDownloadPath;
+    current.workshopDownloadRuntime = steamCmdAutoConfig.workshopDownloadRuntime;
+
+    const detectedVersion = detectGameVersion(current.gamePath);
+    if (detectedVersion) {
+        current.lastDetectedGameVersion = detectedVersion;
+    }
+
+    if (!current.steamCmdPath || !current.steamCmdDownloadPath) {
+        return {
+            ok: false,
+            message: "SteamCMD auto-configuration could not resolve a usable install.",
+            settings: current
+        };
+    }
+
+    return {
+        ok: true,
+        message: downloadedSteamCmd
+            ? "SteamCMD downloaded and configured. Review and save settings."
+            : "SteamCMD detected and configured. Review and save settings.",
+        settings: current
+    };
+}
+
+export async function autoConfigureSteamCmdSnapshot(baseSettings?: SettingsSnapshot): Promise<SettingsAutoDetectResult> {
+    return autoConfigureSteamCmdSnapshotInternal({ baseSettings });
+}
+
+export async function autoConfigureSteamCmdSnapshotForTest(input: {
+    currentSettings?: SettingsSnapshot;
+    discovery: ReturnType<typeof discoverSteamLibraries>;
+    installRoot?: string;
+    installSteamCmd?: (request: SteamCmdInstallRequest) => Promise<void>;
+    skipExecutableDiscovery?: boolean;
+    platform?: NodeJS.Platform;
+}): Promise<SettingsAutoDetectResult> {
+    return autoConfigureSteamCmdSnapshotInternal({
+        baseSettings: {
+            ...defaultSettings(),
+            ...(input.currentSettings ?? {})
+        },
+        discovery: input.discovery,
+        installRoot: input.installRoot,
+        installSteamCmd: input.installSteamCmd,
+        allowExecutableDiscovery: input.skipExecutableDiscovery !== true,
+        platform: input.platform
+    });
 }
 
 function readSettingsRaw(): unknown | null {

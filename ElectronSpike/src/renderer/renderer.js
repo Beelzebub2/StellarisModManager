@@ -48,7 +48,9 @@ const state = {
 };
 
 const libraryVisibility = globalThis.libraryVisibility || {};
+const appUpdateState = globalThis.appUpdateState || {};
 const promptInputBehavior = globalThis.promptInputBehavior || {};
+const downloadQueueState = globalThis.downloadQueueState || {};
 
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
@@ -913,6 +915,10 @@ function parseByteProgress(rawMessage) {
     return `${match[1]} / ${match[2]} ${match[3].toUpperCase()}`;
 }
 
+function queueProgressMode(item) {
+    return String(item?.progressMode || "").toLowerCase() === "indeterminate" ? "indeterminate" : "determinate";
+}
+
 function buildQueueMessageForDisplay(item, developerModeEnabled) {
     const status = String(item.status || "").toLowerCase();
     const action = item.action === "uninstall" ? "uninstall" : "install";
@@ -933,6 +939,9 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
     }
 
     if (status === "running") {
+        if (/Preparing .*staged files|Committing .*staged files|Downloading from Steam\.\.\.|installed data/i.test(rawMessage)) {
+            return rawMessage;
+        }
         if (/steamworks unavailable|steam not running/i.test(rawMessage) || /steamcmd|SteamCMD/i.test(rawMessage)) {
             if (/preparing|preparing batch/i.test(rawMessage)) return "Starting download via SteamCMD...";
             if (/verifying downloaded files/i.test(rawMessage)) return "Verifying downloaded files...";
@@ -1135,15 +1144,15 @@ function animateQueueRowLayout(previousLayout) {
         const animation = view.root.animate([
             {
                 transform: `translate(${deltaX}px, ${deltaY}px)`,
-                opacity: 0.86
+                opacity: 0.7
             },
             {
                 transform: "translate(0, 0)",
                 opacity: 1
             }
         ], {
-            duration: 420,
-            easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+            duration: 350,
+            easing: "cubic-bezier(0.34, 1.56, 0.64, 1)"
         });
         view.layoutAnimation = animation;
         animation.onfinish = animation.oncancel = () => {
@@ -1269,6 +1278,7 @@ function createQueueRow(workshopId) {
         dismissBtn,
         lastStatus: null,
         lastProgress: null,
+        lastProgressMode: "determinate",
         lastMessage: "",
         layoutAnimation: null
     };
@@ -1277,15 +1287,19 @@ function createQueueRow(workshopId) {
 function updateQueueRow(view, item) {
     const status = String(item.status || "queued").toLowerCase();
     const progress = queueClampProgress(item.progress);
+    const progressMode = queueProgressMode(item);
+    const isIndeterminate = status === "running" && progressMode === "indeterminate";
     const isActive = status === "queued" || status === "running";
     const canRetry = status === "failed" || status === "cancelled";
     const developerModeEnabled = isDeveloperModeEnabled();
     const previousStatus = view.lastStatus;
     const previousProgress = view.lastProgress;
+    const previousProgressMode = view.lastProgressMode;
     const previousMessage = view.lastMessage;
     const nextMessage = buildQueueMessageForDisplay(item, developerModeEnabled);
 
     view.root.setAttribute("data-status", status);
+    view.root.setAttribute("data-progress-mode", progressMode);
 
     const name = item.modName || getModNameByWorkshopId(item.workshopId);
     view.idEl.textContent = name;
@@ -1295,14 +1309,8 @@ function updateQueueRow(view, item) {
     view.stageEl.setAttribute("data-status", status);
 
     view.actionEl.textContent = queueActionLabel(item.action);
-    view.percentEl.textContent = `${Math.round(progress)}%`;
-
-    // Show byte progress extracted from the raw message (e.g. "45.2 / 128.5 MB")
-    const byteProgress = status === "running" ? parseByteProgress(item.message) : null;
-    if (view.bytesEl) {
-        view.bytesEl.textContent = byteProgress ?? "";
-        view.bytesEl.hidden = !byteProgress;
-    }
+    if (view.percentEl) view.percentEl.hidden = true;
+    if (view.bytesEl) view.bytesEl.hidden = true;
 
     view.messageEl.textContent = nextMessage;
     view.progressBar.style.width = `${progress}%`;
@@ -1332,7 +1340,7 @@ function updateQueueRow(view, item) {
     } else if (
         status === "running"
         && previousStatus === status
-        && (previousProgress !== progress || previousMessage !== nextMessage)
+        && (previousProgress !== progress || previousMessage !== nextMessage || previousProgressMode !== progressMode)
     ) {
         triggerTransientClass(view.root, "is-progressing", 420);
         triggerTransientClass(view.progressBar, "is-live", 420);
@@ -1342,6 +1350,7 @@ function updateQueueRow(view, item) {
 
     view.lastStatus = status;
     view.lastProgress = progress;
+    view.lastProgressMode = progressMode;
     view.lastMessage = nextMessage;
 }
 
@@ -1364,6 +1373,8 @@ function syncQueueSection(container, sectionItems, emptyLabel, emptyIconName) {
 
     const desiredIds = new Set();
 
+    let currentChild = container.firstElementChild;
+
     for (const item of sectionItems) {
         desiredIds.add(item.workshopId);
 
@@ -1375,7 +1386,12 @@ function syncQueueSection(container, sectionItems, emptyLabel, emptyIconName) {
 
         const previousParent = view.root.parentElement;
         updateQueueRow(view, item);
-        container.appendChild(view.root);
+        
+        if (currentChild === view.root) {
+            currentChild = currentChild.nextElementSibling;
+        } else {
+            container.insertBefore(view.root, currentChild);
+        }
 
         if (previousParent && previousParent !== container) {
             triggerTransientClass(view.root, "is-section-moving", 520);
@@ -1480,18 +1496,33 @@ function renderQueueList(snapshot) {
     if (queueCancelAll) queueCancelAll.disabled = active === 0;
     if (queueClearFinished) queueClearFinished.disabled = finished === 0;
 
-    const overallSource = activeItems.length > 0 ? activeItems : items;
-    const overallPct = overallSource.length === 0
-        ? 0
-        : Math.round(overallSource.reduce((sum, item) => sum + queueClampProgress(item.progress), 0) / overallSource.length);
+    const overallModel = typeof downloadQueueState.getQueueOverallProgressModel === "function"
+        ? downloadQueueState.getQueueOverallProgressModel(items)
+        : {
+            percent: activeItems.length === 0
+                ? 0
+                : Math.round(activeItems.reduce((sum, item) => sum + queueClampProgress(item.progress), 0) / activeItems.length),
+            source: activeItems.length > 0 ? "running" : "none",
+            count: activeItems.length,
+            indeterminate: false
+        };
+    const overallPct = overallModel.percent;
 
     if (queueOverallBar) {
+        queueOverallBar.setAttribute("data-progress-mode", "determinate");
         queueOverallBar.style.width = `${overallPct}%`;
     }
 
     if (queueOverallLabel) {
         if (totalTracked === 0) queueOverallLabel.textContent = "No queue activity.";
-        else if (active > 0) queueOverallLabel.textContent = `${overallPct}% average progress across active operations.`;
+        else if (active > 0 && overallModel.source === "running-indeterminate") {
+            queueOverallLabel.textContent = `${overallModel.count} live operation${overallModel.count === 1 ? "" : "s"} running...`;
+        }
+        else if (active > 0 && overallModel.source === "running") {
+            queueOverallLabel.textContent = `Processing ${overallModel.count} live operation${overallModel.count === 1 ? "" : "s"}...`;
+        } else if (active > 0) {
+            queueOverallLabel.textContent = `${pendingCount} queued operation${pendingCount === 1 ? "" : "s"} waiting for a download slot.`;
+        }
         else queueOverallLabel.textContent = `${finished} recent operation${finished === 1 ? "" : "s"} tracked here.`;
     }
 
@@ -2066,24 +2097,37 @@ async function detectWorkshopRuntimeSettings() {
 }
 
 async function autoConfigureSteamCmdSettings() {
-    const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
-    const detectedSteamCmdPath = String(result?.settings?.steamCmdPath || "").trim();
-    const detectedSteamCmdDownloadPath = String(result?.settings?.steamCmdDownloadPath || "").trim();
-
-    if (!detectedSteamCmdPath || !detectedSteamCmdDownloadPath) {
-        setSettingsStatus("Could not auto-configure SteamCMD because no valid steamcmd executable was detected.");
-        return;
+    const button = byId("settingsAutoConfigureSteamCmd");
+    if (button) {
+        button.disabled = true;
     }
 
-    if (detectedSteamCmdPath) setInputValue("settingsSteamCmdPathInput", detectedSteamCmdPath);
-    if (detectedSteamCmdDownloadPath) setInputValue("settingsSteamCmdDownloadPathInput", detectedSteamCmdDownloadPath);
+    setSettingsStatus("Configuring SteamCMD. This may download and extract the runtime...");
 
-    const detectedRuntime = String(result?.settings?.workshopDownloadRuntime || "").trim();
-    if (detectedRuntime) setInputValue("settingsWorkshopRuntimeInput", detectedRuntime);
+    try {
+        const result = await window.spikeApi.autoConfigureSteamCmd(buildSettingsFromForm());
+        const detectedSteamCmdPath = String(result?.settings?.steamCmdPath || "").trim();
+        const detectedSteamCmdDownloadPath = String(result?.settings?.steamCmdDownloadPath || "").trim();
 
-    syncSettingsRuntimeVisibility();
-    markSettingsDirty(true);
-    setSettingsStatus("SteamCMD auto-configuration applied. Review and save settings.");
+        if (!result?.ok || !detectedSteamCmdPath || !detectedSteamCmdDownloadPath) {
+            setSettingsStatus(String(result?.message || "Could not auto-configure SteamCMD."));
+            return;
+        }
+
+        if (detectedSteamCmdPath) setInputValue("settingsSteamCmdPathInput", detectedSteamCmdPath);
+        if (detectedSteamCmdDownloadPath) setInputValue("settingsSteamCmdDownloadPathInput", detectedSteamCmdDownloadPath);
+
+        const detectedRuntime = String(result?.settings?.workshopDownloadRuntime || "").trim();
+        if (detectedRuntime) setInputValue("settingsWorkshopRuntimeInput", detectedRuntime);
+
+        syncSettingsRuntimeVisibility();
+        markSettingsDirty(true);
+        setSettingsStatus(String(result?.message || "SteamCMD auto-configuration applied. Review and save settings."));
+    } finally {
+        if (button) {
+            button.disabled = false;
+        }
+    }
 }
 
 async function ensurePublicUsernameConfigured(forcePrompt = false) {
@@ -2522,7 +2566,6 @@ function renderLibraryDetail(mod) {
     setText("libraryDetailVersion", toDisplayValue(mod.version));
     setText("libraryDetailGameVersion", toDisplayValue(mod.gameVersion));
     setText("libraryDetailInstalledAt", formatUtc(mod.lastUpdatedAtUtc || mod.installedAtUtc));
-    setText("libraryDetailDescription", mod.description || "No description available.");
 
     // Subscriber chip
     const subChip = byId("libraryDetailSubscribersChip");
@@ -3816,7 +3859,22 @@ function hookLibraryControls() {
 /* ============================================================
    APP UPDATES
    ============================================================ */
-state.appUpdate = { release: null, message: "Not checked yet.", busy: false };
+state.appUpdate = { latestRelease: null, message: "Not checked yet.", busy: false };
+
+function getAppUpdateView() {
+    const latestRelease = state.appUpdate.latestRelease || null;
+    const skippedVersion = state.settingsModel?.skippedAppVersion || "";
+    const helper = appUpdateState.getVisibleAppUpdateState;
+    if (typeof helper === "function") {
+        return helper(latestRelease, skippedVersion);
+    }
+
+    return {
+        bannerRelease: latestRelease && latestRelease.version !== skippedVersion ? latestRelease : null,
+        settingsRelease: latestRelease,
+        isSkipped: !!(latestRelease && latestRelease.version === skippedVersion)
+    };
+}
 
 async function checkForAppUpdates(source = "auto") {
     if (state.appUpdate.busy) return;
@@ -3826,11 +3884,9 @@ async function checkForAppUpdates(source = "auto") {
     try {
         const result = await window.spikeApi.checkAppUpdate();
         state.appUpdate.message = result.message;
-        const release = result.hasUpdate ? result.release : null;
-        const skipped = state.settingsModel?.skippedAppVersion || "";
-        state.appUpdate.release = release && release.version !== skipped ? release : null;
+        state.appUpdate.latestRelease = result.hasUpdate ? result.release : null;
     } catch (err) {
-        state.appUpdate.release = null;
+        state.appUpdate.latestRelease = null;
         state.appUpdate.message = `Update check failed: ${err?.message || err}`;
     } finally {
         state.appUpdate.busy = false;
@@ -3842,7 +3898,7 @@ async function checkForAppUpdates(source = "auto") {
 function renderAppUpdateBanner() {
     const banner = byId("updateBanner");
     if (!banner) return;
-    const release = state.appUpdate.release;
+    const { bannerRelease: release } = getAppUpdateView();
     if (!release) {
         banner.classList.add("hidden");
         return;
@@ -3863,7 +3919,7 @@ function renderSettingsAppUpdate() {
     if (statusEl) statusEl.textContent = state.appUpdate.message || "Not checked yet.";
 
     const card = byId("settingsUpdateAvailable");
-    const release = state.appUpdate.release;
+    const { settingsRelease: release, isSkipped } = getAppUpdateView();
     if (!card) return;
     if (!release) {
         card.classList.add("hidden");
@@ -3874,10 +3930,12 @@ function renderSettingsAppUpdate() {
     if (badge) badge.textContent = `v${release.version}`;
     const changelog = byId("settingsUpdateChangelog");
     if (changelog) changelog.textContent = release.changelog || "See release notes on GitHub.";
+    const skipBtn = byId("settingsSkipVersionBtn");
+    if (skipBtn) skipBtn.classList.toggle("hidden", isSkipped);
 }
 
 async function launchAppUpdateFlow() {
-    const release = state.appUpdate.release;
+    const { settingsRelease: release } = getAppUpdateView();
     if (!release) return;
     const result = await window.spikeApi.startAppUpdate(release);
     if (!result?.ok) {
@@ -3888,11 +3946,10 @@ async function launchAppUpdateFlow() {
 }
 
 async function skipCurrentAppVersion() {
-    const release = state.appUpdate.release;
+    const { settingsRelease: release } = getAppUpdateView();
     if (!release) return;
     await window.spikeApi.skipAppVersion(release.version);
     if (state.settingsModel) state.settingsModel.skippedAppVersion = release.version;
-    state.appUpdate.release = null;
     renderAppUpdateBanner();
     renderSettingsAppUpdate();
 }
@@ -3911,7 +3968,8 @@ function hookAppUpdateControls() {
     byId("settingsDownloadUpdateBtn")?.addEventListener("click", () => void launchAppUpdateFlow());
     byId("settingsSkipVersionBtn")?.addEventListener("click", () => void skipCurrentAppVersion());
     byId("settingsViewReleaseBtn")?.addEventListener("click", () => {
-        const url = state.appUpdate.release?.releaseUrl;
+        const { settingsRelease: release } = getAppUpdateView();
+        const url = release?.releaseUrl;
         if (url) void window.spikeApi.openExternalUrl(url);
     });
 }

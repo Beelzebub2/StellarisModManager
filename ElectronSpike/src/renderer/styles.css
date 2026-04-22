@@ -1120,6 +1120,10 @@ body[data-theme="frost-white"] .aurora {
     box-shadow: 0 0 10px var(--accent-glow);
 }
 
+.queue-overall-progress>span[data-progress-mode="indeterminate"] {
+    animation: queueIndeterminateSlide 1.35s ease-in-out infinite;
+}
+
 .queue-item {
     border: 1px solid var(--border);
     background: var(--bg-3);
@@ -1357,6 +1361,14 @@ body[data-theme="frost-white"] .aurora {
     transform-origin: left center;
 }
 
+.queue-item[data-progress-mode="indeterminate"] .queue-progress>span {
+    /* Step-based progress now uses shimmer only */
+}
+
+.queue-item[data-progress-mode="indeterminate"] .queue-progress>span.is-live {
+    animation: queueBarNudge 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 .queue-progress>span.is-live {
     animation: queueBarNudge 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1390,20 +1402,37 @@ body[data-theme="frost-white"] .aurora {
     }
 }
 
+@keyframes queueIndeterminateSlide {
+    0% {
+        transform: translateX(-60%);
+    }
+
+    50% {
+        transform: translateX(90%);
+    }
+
+    100% {
+        transform: translateX(-60%);
+    }
+}
+
 @keyframes queueItemLift {
     0% {
         transform: translateY(0) scale(1);
         box-shadow: 0 0 0 transparent;
+        background-color: var(--bg-1);
     }
 
     45% {
-        transform: translateY(-2px) scale(1.008);
-        box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 14%, transparent);
+        transform: translateY(-2px) scale(1.01);
+        box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 18%, transparent);
+        background-color: var(--bg-2);
     }
 
     100% {
         transform: translateY(0) scale(1);
         box-shadow: 0 0 0 transparent;
+        background-color: var(--bg-1);
     }
 }
 
@@ -1413,7 +1442,7 @@ body[data-theme="frost-white"] .aurora {
     }
 
     35% {
-        transform: translateY(-3px) scale(1.012);
+        transform: translateY(-3px) scale(1.015);
     }
 
     100% {
@@ -1423,8 +1452,8 @@ body[data-theme="frost-white"] .aurora {
 
 @keyframes queueItemSlide {
     0% {
-        transform: translateX(12px);
-        opacity: 0.78;
+        transform: translateX(16px);
+        opacity: 0.5;
     }
 
     100% {
@@ -1436,32 +1465,38 @@ body[data-theme="frost-white"] .aurora {
 @keyframes queueCompleteBloom {
     0% {
         box-shadow: 0 0 0 transparent;
+        transform: scale(1);
     }
 
-    50% {
+    40% {
         box-shadow:
-            0 0 0 1px color-mix(in srgb, var(--success-border) 68%, transparent),
-            0 12px 32px color-mix(in srgb, var(--success) 18%, transparent);
+            0 0 0 1px color-mix(in srgb, var(--success-border) 85%, transparent),
+            0 14px 34px color-mix(in srgb, var(--success) 24%, transparent);
+        transform: scale(1.015);
     }
 
     100% {
         box-shadow: 0 0 0 transparent;
+        transform: scale(1);
     }
 }
 
 @keyframes queueAttentionBloom {
     0% {
         box-shadow: 0 0 0 transparent;
+        transform: scale(1);
     }
 
-    50% {
+    40% {
         box-shadow:
-            0 0 0 1px color-mix(in srgb, var(--danger-border) 70%, transparent),
-            0 12px 30px color-mix(in srgb, var(--danger) 18%, transparent);
+            0 0 0 1px color-mix(in srgb, var(--danger-border) 85%, transparent),
+            0 14px 32px color-mix(in srgb, var(--danger) 24%, transparent);
+        transform: scale(1.015);
     }
 
     100% {
         box-shadow: 0 0 0 transparent;
+        transform: scale(1);
     }
 }
 
@@ -1473,9 +1508,9 @@ body[data-theme="frost-white"] .aurora {
     }
 
     45% {
-        transform: scaleY(1.22);
-        filter: brightness(1.12) saturate(1.1);
-        box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 28%, transparent);
+        transform: scaleY(1.3);
+        filter: brightness(1.2) saturate(1.15);
+        box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 35%, transparent);
     }
 
     100% {
@@ -1491,7 +1526,8 @@ body[data-theme="frost-white"] .aurora {
     }
 
     40% {
-        transform: scale(1.04);
+        transform: scale(1.06);
+        box-shadow: 0 4px 12px color-mix(in srgb, var(--text-2) 15%, transparent);
     }
 
     100% {

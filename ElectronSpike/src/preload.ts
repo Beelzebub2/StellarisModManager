@@ -54,6 +54,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:saveSettings", settings) as Promise<SettingsSaveResult>,
     autoDetectSettings: (settings?: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:autoDetectSettings", settings) as Promise<SettingsAutoDetectResult>,
+    autoConfigureSteamCmd: (settings?: SettingsSnapshot) =>
+        ipcRenderer.invoke("spike:autoConfigureSteamCmd", settings) as Promise<SettingsAutoDetectResult>,
     validateSettings: (settings: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:validateSettings", settings) as Promise<SettingsValidationResult>,
     getThemePaletteOptions: () =>

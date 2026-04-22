@@ -28,8 +28,11 @@ const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteSt
 const MAX_CONCURRENT_DOWNLOADS = 3;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
 const STEAMCMD_STALL_MS = 2 * 60 * 1000;
+const STEAMCMD_PROGRESS_POLL_MS = 1000;
 const WORKSHOP_TITLE_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 type DownloadRuntime = "Auto" | "SteamKit2" | "SteamCmd";
+type QueueProgressMode = NonNullable<DownloadQueueItem["progressMode"]>;
+type SteamCmdPhase = "launching" | "preallocating" | "downloading" | "committing" | "verifying" | "deploying";
 
 type EventEmitter = (event: DownloadQueueEvent) => void;
 
@@ -74,11 +77,32 @@ interface SteamFileDetailsResponse {
 interface SteamPublishedFileDetail {
     publishedfileid?: string;
     title?: string;
+    file_size?: string;
 }
 
 interface CachedWorkshopTitle {
     fetchedAtUtc: string;
-    title: string;
+    title: string | null;
+    fileSizeBytes: number | null;
+}
+
+
+interface SteamCmdPhaseUpdate {
+    progress: number;
+    progressMode: QueueProgressMode;
+    message: string;
+}
+
+interface SteamCmdContentLogEvent {
+    phase?: Extract<SteamCmdPhase, "preallocating" | "downloading" | "committing">;
+    downloadBytesTotal?: number;
+    stageBytesTotal?: number;
+}
+
+interface SteamCmdLogTailState {
+    path: string;
+    offset: number;
+    remainder: string;
 }
 
 const installPathById = new Map<string, string>();
@@ -192,10 +216,13 @@ function isPlaceholderModName(workshopId: string, modName: string | undefined): 
     return trimmed.toLowerCase() === `workshop mod ${workshopId}`.toLowerCase();
 }
 
-async function fetchWorkshopTitle(workshopId: string): Promise<string | null> {
+async function fetchWorkshopMetadata(workshopId: string): Promise<{ title: string | null; fileSizeBytes: number | null }> {
     const cached = workshopTitleCache.get(workshopId);
     if (cached && isCacheFresh(cached.fetchedAtUtc, WORKSHOP_TITLE_CACHE_TTL_MS)) {
-        return cached.title;
+        return {
+            title: cached.title,
+            fileSizeBytes: cached.fileSizeBytes
+        };
     }
 
     const formData = new URLSearchParams();
@@ -212,27 +239,45 @@ async function fetchWorkshopTitle(workshopId: string): Promise<string | null> {
         });
 
         if (!response.ok) {
-            return cached?.title ?? null;
+            return {
+                title: cached?.title ?? null,
+                fileSizeBytes: cached?.fileSizeBytes ?? null
+            };
         }
 
         const payload = (await response.json()) as SteamFileDetailsResponse;
         const detail = (payload.response?.publishedfiledetails ?? [])
             .find((entry) => String(entry.publishedfileid ?? "").trim() === workshopId);
         const title = (detail?.title ?? "").trim();
-
-        if (!title) {
-            return cached?.title ?? null;
-        }
+        const rawFileSize = Number.parseInt(String(detail?.file_size ?? "").trim(), 10);
+        const fileSizeBytes = Number.isFinite(rawFileSize) && rawFileSize > 0 ? rawFileSize : null;
 
         workshopTitleCache.set(workshopId, {
             fetchedAtUtc: nowIso(),
-            title
+            title: title || cached?.title || null,
+            fileSizeBytes
         });
 
-        return title;
+        return {
+            title: title || cached?.title || null,
+            fileSizeBytes
+        };
     } catch {
-        return cached?.title ?? null;
+        return {
+            title: cached?.title ?? null,
+            fileSizeBytes: cached?.fileSizeBytes ?? null
+        };
     }
+}
+
+async function fetchWorkshopTitle(workshopId: string): Promise<string | null> {
+    const metadata = await fetchWorkshopMetadata(workshopId);
+    return metadata.title;
+}
+
+async function fetchWorkshopFileSize(workshopId: string): Promise<number | null> {
+    const metadata = await fetchWorkshopMetadata(workshopId);
+    return metadata.fileSizeBytes;
 }
 
 async function resolveQueueModName(workshopId: string, modName: string | undefined): Promise<string> {
@@ -251,7 +296,8 @@ function upsertQueueItem(
     action: "install" | "uninstall",
     status: DownloadQueueItem["status"],
     progress: number,
-    message: string
+    message: string,
+    progressMode: QueueProgressMode = "determinate"
 ): DownloadQueueItem {
     const next: DownloadQueueItem = {
         workshopId,
@@ -259,6 +305,7 @@ function upsertQueueItem(
         action,
         status,
         progress: Math.min(100, Math.max(0, Math.trunc(progress))),
+        progressMode,
         message,
         updatedAtUtc: nowIso()
     };
@@ -418,16 +465,10 @@ function getMachineMetrics(metrics?: Partial<MachineMetrics>): MachineMetrics {
 }
 
 function getRecommendedSteamCmdConcurrency(metrics?: Partial<MachineMetrics>): number {
-    const resolved = getMachineMetrics(metrics);
-    if (resolved.cpuCount <= 4 || resolved.totalMemoryGb <= 8) {
-        return 1;
-    }
-
-    if (resolved.cpuCount <= 8 || resolved.totalMemoryGb <= 16) {
-        return 2;
-    }
-
-    return 3;
+    void metrics;
+    // SteamCMD writes progress into global logs relative to its install root.
+    // Restrict it to a single worker so progress stays attributable to one mod.
+    return 1;
 }
 
 export function getRecommendedSteamCmdConcurrencyForTest(metrics?: Partial<MachineMetrics>): number {
@@ -575,7 +616,7 @@ function upsertQuotedDescriptorField(content: string, key: string, value: string
 async function deployDownloadedModToModsPath(
     workshopId: string,
     downloadedInstallPath: string,
-    reportProgress: (progress: number, message: string) => void,
+    reportProgress: (progress: number, message: string, progressMode?: QueueProgressMode) => void,
     keepSource = false
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
     const modsRoot = resolveModsInstallRoot();
@@ -630,14 +671,14 @@ async function deployDownloadedModToModsPath(
 async function runSteamworksInstall(
     entry: { workshopId: string; modName: string },
     job: RunningJob,
-    reportProgress: (progress: number, message: string) => void
+    reportProgress: (progress: number, message: string, progressMode?: QueueProgressMode) => void
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
     const downloadResult = await runSteamworksDownload(entry.workshopId, job, reportProgress);
     if (!downloadResult.ok) return downloadResult;
 
     // Deploy from Steam's workshop cache to the Stellaris mods folder.
     // keepSource=true because the source is Steam's workshop cache — we must not delete it.
-    reportProgress(96, `Deploying ${entry.workshopId} to mods path...`);
+    reportProgress(90, `Deploying ${entry.workshopId} to mods path...`, "determinate");
     const deployed = await deployDownloadedModToModsPath(entry.workshopId, downloadResult.installPath, reportProgress, true);
     if (!deployed.ok) return deployed;
 
@@ -649,13 +690,161 @@ async function runSteamworksInstall(
 
 // --- SteamCMD download (fallback) ---
 
-function parseSteamCmdProgress(line: string): number | null {
-    const match = line.match(/(\d{1,3}\.\d{2})%/);
-    if (!match) return null;
-    const parsed = Number.parseFloat(match[1]);
-    if (!Number.isFinite(parsed)) return null;
-    return Math.max(1, Math.min(95, Math.round(parsed)));
+function normalizeSteamCmdProgress(progress: number): number | null {
+    if (!Number.isFinite(progress)) return null;
+    return Math.max(1, Math.min(95, Math.round(progress)));
 }
+
+// Removed duplicate formatSteamCmdSizeLabel
+
+function splitSteamCmdOutputLines(text: string): string[] {
+    return text
+        .split(/[\r\n]+/)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+}
+
+function formatSteamCmdSizeLabel(totalBytes: number | null): string | null {
+    if (!Number.isFinite(totalBytes) || (totalBytes ?? 0) <= 0) {
+        return null;
+    }
+
+    const units = [
+        { unit: "GB", size: 1024 ** 3, decimals: 2 },
+        { unit: "MB", size: 1024 ** 2, decimals: 1 },
+        { unit: "KB", size: 1024, decimals: 1 }
+    ];
+    const selected = units.find((entry) => (totalBytes ?? 0) >= entry.size) ?? units[units.length - 1];
+    return `${((totalBytes ?? 0) / selected.size).toFixed(selected.decimals)} ${selected.unit}`;
+}
+
+async function createSteamCmdLogTailState(logPath: string): Promise<SteamCmdLogTailState> {
+    try {
+        const stat = await fsp.stat(logPath);
+        return {
+            path: logPath,
+            offset: stat.size,
+            remainder: ""
+        };
+    } catch {
+        return {
+            path: logPath,
+            offset: 0,
+            remainder: ""
+        };
+    }
+}
+
+async function readSteamCmdLogTailLines(state: SteamCmdLogTailState): Promise<string[]> {
+    try {
+        const stat = await fsp.stat(state.path);
+        const fileSize = stat.size;
+        if (fileSize < state.offset) {
+            state.offset = 0;
+            state.remainder = "";
+        }
+        if (fileSize === state.offset) {
+            return [];
+        }
+
+        const handle = await fsp.open(state.path, "r");
+        try {
+            const nextChunk = Buffer.alloc(fileSize - state.offset);
+            const readResult = await handle.read(nextChunk, 0, nextChunk.length, state.offset);
+            state.offset = fileSize;
+
+            const combined = state.remainder + nextChunk.subarray(0, readResult.bytesRead).toString("utf8");
+            const parts = combined.split(/\r?\n/);
+            state.remainder = parts.pop() ?? "";
+            return parts.map((line) => line.trim()).filter((line) => line.length > 0);
+        } finally {
+            await handle.close();
+        }
+    } catch {
+        return [];
+    }
+}
+
+function parseSteamCmdContentLogLine(line: string): SteamCmdContentLogEvent | null {
+    const trimmed = line.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    const updateStartedMatch = trimmed.match(/update started\s*:\s*download\s+\d+\/(\d+).*stage\s+\d+\/(\d+)/i);
+    if (updateStartedMatch) {
+        return {
+            phase: "downloading",
+            downloadBytesTotal: Number.parseInt(updateStartedMatch[1] ?? "", 10),
+            stageBytesTotal: Number.parseInt(updateStartedMatch[2] ?? "", 10)
+        };
+    }
+
+    if (/Workshop update changed\s*:\s*.*Preallocating/i.test(trimmed)) {
+        return { phase: "preallocating" };
+    }
+
+    if (/Workshop update changed\s*:\s*.*Downloading,Staging/i.test(trimmed)) {
+        return { phase: "downloading" };
+    }
+
+    if (/Workshop update changed\s*:\s*.*Committing/i.test(trimmed) || /starting commit from /i.test(trimmed)) {
+        return { phase: "committing" };
+    }
+
+    return null;
+}
+
+function buildSteamCmdPhaseProgress(input: {
+    workshopId: string;
+    previousProgress: number;
+    phase: Extract<SteamCmdPhase, "preallocating" | "downloading" | "committing">;
+    downloadBytesTotal?: number | null;
+    stageBytesTotal?: number | null;
+}): SteamCmdPhaseUpdate {
+    const downloadSizeLabel = formatSteamCmdSizeLabel(input.downloadBytesTotal ?? null);
+    const stageSizeLabel = formatSteamCmdSizeLabel(input.stageBytesTotal ?? null);
+
+    if (input.phase === "preallocating") {
+        return {
+            progress: 25,
+            progressMode: "indeterminate",
+            message: stageSizeLabel
+                ? `Preparing ${stageSizeLabel} of staged files...`
+                : "Preparing staged files..."
+        };
+    }
+
+    if (input.phase === "committing") {
+        return {
+            progress: 75,
+            progressMode: "indeterminate",
+            message: stageSizeLabel
+                ? `Committing ${stageSizeLabel} of staged files...`
+                : "Committing staged files..."
+        };
+    }
+
+    const hasDistinctTransferSize = (input.downloadBytesTotal ?? 0) > 0
+        && (input.stageBytesTotal ?? 0) > (input.downloadBytesTotal ?? 0) * 1.05;
+
+    let message = "Downloading from Steam...";
+    if (downloadSizeLabel && stageSizeLabel && hasDistinctTransferSize) {
+        message = `Downloading from Steam... ${downloadSizeLabel} transfer for ${stageSizeLabel} installed data.`;
+    } else if (downloadSizeLabel) {
+        message = `Downloading from Steam... ${downloadSizeLabel} total.`;
+    } else if (stageSizeLabel) {
+        message = `Downloading from Steam... Final size ${stageSizeLabel}.`;
+    }
+
+    return {
+        progress: 50,
+        progressMode: "indeterminate",
+        message
+    };
+}
+
+
 
 function extractSteamCmdFailureDetail(line: string): string | null {
     const explicit = line.match(/ERROR!\s*Download item\s+\d+\s+failed\s*\([^)]*\)\.?/i);
@@ -673,7 +862,7 @@ function extractSteamCmdFailureDetail(line: string): string | null {
 async function runSteamCmdDownload(
     workshopId: string,
     job: RunningJob,
-    reportProgress: (progress: number, message: string) => void
+    reportProgress: (progress: number, message: string, progressMode?: QueueProgressMode) => void
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
     const settings = loadSettingsSnapshot();
     const steamCmdPath = settings?.steamCmdPath?.trim() ?? "";
@@ -690,6 +879,11 @@ async function runSteamCmdDownload(
     for (const candidate of outputCandidates) {
         await removePathIfExists(candidate);
     }
+    const steamCmdLogDir = path.join(path.dirname(steamCmdPath), "logs");
+    const [contentLogTail, consoleLogTail] = await Promise.all([
+        createSteamCmdLogTailState(path.join(steamCmdLogDir, "content_log.txt")),
+        createSteamCmdLogTailState(path.join(steamCmdLogDir, "console_log.txt"))
+    ]);
 
     const args = [
         "+force_install_dir", forceInstallDir,
@@ -698,10 +892,31 @@ async function runSteamCmdDownload(
         "+quit"
     ];
 
-    reportProgress(6, `Launching SteamCMD for ${workshopId}...`);
-
     const statusHints: string[] = [];
     let explicitFailureMessage: string | null = null;
+    let reportedProgress = 0;
+    let reportedProgressMode: QueueProgressMode = "determinate";
+    const emitSteamCmdProgress = (
+        progress: number | null,
+        message: string,
+        options?: { floor?: number; progressMode?: QueueProgressMode }
+    ): void => {
+        const floor = options?.floor ?? 0;
+        const nextProgress = Math.max(
+            reportedProgress,
+            floor,
+            progress ?? reportedProgress
+        );
+        reportedProgress = nextProgress;
+        if (options?.progressMode) {
+            reportedProgressMode = options.progressMode;
+        } else if (progress !== null) {
+            reportedProgressMode = "determinate";
+        }
+        reportProgress(nextProgress, message, reportedProgressMode);
+    };
+    emitSteamCmdProgress(6, `Launching SteamCMD for ${workshopId}...`);
+
     const appendStatusHint = (line: string): void => {
         const trimmed = line.trim();
         if (!trimmed) return;
@@ -711,6 +926,67 @@ async function runSteamCmdDownload(
         }
         statusHints.push(trimmed);
         if (statusHints.length > 8) statusHints.shift();
+    };
+
+    let lastObservedBytes = 0;
+    let hasExplicitSteamCmdProgress = false;
+    let phaseState: {
+        phase: Extract<SteamCmdPhase, "preallocating" | "downloading" | "committing">;
+        downloadBytesTotal: number | null;
+        stageBytesTotal: number | null;
+    } = {
+        phase: "downloading",
+        downloadBytesTotal: null,
+        stageBytesTotal: null
+    };
+    let lastPhaseSignature = "";
+    const applyPhaseEvent = (event: SteamCmdContentLogEvent): void => {
+        let didChange = false;
+
+        if (typeof event.downloadBytesTotal === "number" && Number.isFinite(event.downloadBytesTotal) && event.downloadBytesTotal > 0) {
+            phaseState.downloadBytesTotal = event.downloadBytesTotal;
+            didChange = true;
+        }
+
+        if (typeof event.stageBytesTotal === "number" && Number.isFinite(event.stageBytesTotal) && event.stageBytesTotal > 0) {
+            phaseState.stageBytesTotal = event.stageBytesTotal;
+            didChange = true;
+        }
+
+        if (event.phase && phaseState.phase !== event.phase) {
+            phaseState.phase = event.phase;
+            didChange = true;
+        }
+
+        if (!didChange) {
+            return;
+        }
+
+        const phaseSignature = JSON.stringify([
+            phaseState.phase,
+            phaseState.downloadBytesTotal,
+            phaseState.stageBytesTotal
+        ]);
+        if (phaseSignature === lastPhaseSignature) {
+            return;
+        }
+        lastPhaseSignature = phaseSignature;
+
+        if (hasExplicitSteamCmdProgress && phaseState.phase === "downloading") {
+            return;
+        }
+
+        const phaseProgress = buildSteamCmdPhaseProgress({
+            workshopId,
+            previousProgress: reportedProgress,
+            phase: phaseState.phase,
+            downloadBytesTotal: phaseState.downloadBytesTotal,
+            stageBytesTotal: phaseState.stageBytesTotal
+        });
+        emitSteamCmdProgress(phaseProgress.progress, phaseProgress.message, {
+            floor: phaseProgress.progress,
+            progressMode: phaseProgress.progressMode
+        });
     };
 
     const result = await new Promise<{ ok: boolean; message: string }>((resolve) => {
@@ -724,6 +1000,7 @@ async function runSteamCmdDownload(
         let timedOut = false;
         let stalled = false;
         let lastActivityAt = Date.now();
+        let stopProgressPoll = false;
         const markActivity = (): void => {
             lastActivityAt = Date.now();
         };
@@ -739,38 +1016,70 @@ async function runSteamCmdDownload(
             stalled = true;
             try { child.kill(); } catch { /* ignore */ }
         }, 5000);
+        const progressPoll = async (): Promise<void> => {
+            while (!stopProgressPoll) {
+                try {
+                    const [contentLogLines, consoleLogLines] = await Promise.all([
+                        readSteamCmdLogTailLines(contentLogTail),
+                        readSteamCmdLogTailLines(consoleLogTail)
+                    ]);
+
+                    for (const line of contentLogLines) {
+                        markActivity();
+                        const event = parseSteamCmdContentLogLine(line);
+                        if (event) {
+                            applyPhaseEvent(event);
+                        }
+                    }
+
+                    for (const line of consoleLogLines) {
+                        markActivity();
+                        if (new RegExp(`Downloading item\\s+${workshopId}\\s+\\.\\.\\.`, "i").test(line)) {
+                            applyPhaseEvent({ phase: "downloading" });
+                        }
+                    }
+                } catch {
+                    // ignore transient log and filesystem errors while SteamCMD is active
+                }
+
+                if (stopProgressPoll) {
+                    break;
+                }
+
+                await sleep(STEAMCMD_PROGRESS_POLL_MS);
+            }
+        };
+        void progressPoll();
 
         child.stdout.on("data", (chunk) => {
             markActivity();
             const text = chunk.toString("utf8");
-            for (const line of text.split(/\r?\n/)) {
-                const trimmed = line.trim();
-                if (!trimmed) continue;
-                const parsed = parseSteamCmdProgress(trimmed);
-                if (parsed !== null) {
-                    reportProgress(parsed, `Downloading ${workshopId}... ${parsed}%`);
-                } else {
-                    appendStatusHint(trimmed);
-                }
+            for (const trimmed of splitSteamCmdOutputLines(text)) {
+                appendStatusHint(trimmed);
             }
         });
 
         child.stderr.on("data", (chunk) => {
             markActivity();
-            const text = chunk.toString("utf8").trim();
-            if (text) {
-                reportProgress(12, `SteamCMD: ${text}`);
-                appendStatusHint(text);
+            const text = chunk.toString("utf8");
+            for (const trimmed of splitSteamCmdOutputLines(text)) {
+                emitSteamCmdProgress(null, `SteamCMD: ${trimmed}`, {
+                    floor: 6,
+                    progressMode: "indeterminate"
+                });
+                appendStatusHint(trimmed);
             }
         });
 
         child.on("error", (error) => {
+            stopProgressPoll = true;
             clearTimeout(timeout);
             clearInterval(stallWatch);
             resolve({ ok: false, message: error.message });
         });
 
         child.on("close", (code) => {
+            stopProgressPoll = true;
             clearTimeout(timeout);
             clearInterval(stallWatch);
             if (timedOut) { resolve({ ok: false, message: "SteamCMD download timed out." }); return; }
@@ -792,7 +1101,10 @@ async function runSteamCmdDownload(
         return { ok: false, installPath: outputCandidates[0] ?? "", message: `SteamCMD reported download failure: ${explicitFailureMessage}` };
     }
 
-    reportProgress(94, `Verifying downloaded files for ${workshopId}...`);
+    emitSteamCmdProgress(94, `Verifying downloaded files for ${workshopId}...`, {
+        floor: 94,
+        progressMode: "determinate"
+    });
     const located = await findDownloadedWorkshopPath(outputCandidates);
     if (!located.foundPath) {
         const hint = statusHints.length > 0 ? ` Last SteamCMD output: ${statusHints.join(" | ")}` : "";
@@ -806,7 +1118,16 @@ async function runSteamCmdDownload(
         };
     }
 
-    const deployed = await deployDownloadedModToModsPath(workshopId, located.foundPath, reportProgress);
+    const deployed = await deployDownloadedModToModsPath(
+        workshopId,
+        located.foundPath,
+        (progress, message, progressMode) => {
+            emitSteamCmdProgress(progress, message, {
+                floor: progress,
+                progressMode
+            });
+        }
+    );
 
     // Clean up the temp download dir (the whole dl-{workshopId} folder)
     await removePathIfExists(forceInstallDir);
@@ -877,12 +1198,12 @@ async function runJob(entry: QueueEntry): Promise<void> {
             upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 3, "Preparing download...");
 
             let installResult = runtime === "SteamCmd"
-                ? await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
-                    upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+                ? await runSteamCmdDownload(entry.workshopId, job, (progress, message, progressMode) => {
+                    upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message, progressMode);
                 })
                 : runtime === "SteamKit2"
-                    ? await runSteamworksInstall(entry, job, (progress, message) => {
-                        upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+                    ? await runSteamworksInstall(entry, job, (progress, message, progressMode) => {
+                        upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message, progressMode);
                     })
                     : {
                         ok: false,
@@ -895,8 +1216,8 @@ async function runJob(entry: QueueEntry): Promise<void> {
                 if (fallback.shouldFallback) {
                     logInfo(`Download queue: Steamworks install for ${entry.workshopId} is unavailable in this session. Falling back to SteamCmd.`);
                     upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 4, fallback.message);
-                    installResult = await runSteamCmdDownload(entry.workshopId, job, (progress, message) => {
-                        upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message);
+                    installResult = await runSteamCmdDownload(entry.workshopId, job, (progress, message, progressMode) => {
+                        upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message, progressMode);
                     });
                 } else if (
                     !hasConfiguredSteamCmd()
@@ -1039,6 +1360,21 @@ export function getActionStateForCard(workshopId: string): ModActionState {
 
 export async function resolveQueueModNameForTest(workshopId: string, modName?: string): Promise<string> {
     return resolveQueueModName(workshopId, modName);
+}
+
+
+export function parseSteamCmdContentLogLineForTest(line: string): SteamCmdContentLogEvent | null {
+    return parseSteamCmdContentLogLine(line);
+}
+
+export function buildSteamCmdPhaseProgressForTest(input: {
+    workshopId: string;
+    previousProgress: number;
+    phase: Extract<SteamCmdPhase, "preallocating" | "downloading" | "committing">;
+    downloadBytesTotal?: number | null;
+    stageBytesTotal?: number | null;
+}): SteamCmdPhaseUpdate {
+    return buildSteamCmdPhaseProgress(input);
 }
 
 export async function queueDownload(request: DownloadActionRequest): Promise<DownloadActionResult> {

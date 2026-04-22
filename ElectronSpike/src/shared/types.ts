@@ -448,6 +448,7 @@ export interface DownloadQueueItem {
     action: "install" | "uninstall";
     status: "queued" | "running" | "completed" | "failed" | "cancelled";
     progress: number;
+    progressMode?: "determinate" | "indeterminate";
     message: string;
     updatedAtUtc: string;
 }
@@ -495,6 +496,7 @@ export interface SpikeApi {
     getSettings: () => Promise<SettingsSnapshot | null>;
     saveSettings: (settings: SettingsSnapshot) => Promise<SettingsSaveResult>;
     autoDetectSettings: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
+    autoConfigureSteamCmd: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;
     getThemePaletteOptions: () => Promise<string[]>;
     getDownloadRuntimeOptions: () => Promise<string[]>;

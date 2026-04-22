@@ -15,7 +15,7 @@ test("chooses conservative SteamCMD concurrency on weaker machines", () => {
     );
 });
 
-test("uses moderate SteamCMD concurrency on typical machines", () => {
+test("keeps SteamCMD downloads on a single worker on typical machines so progress stays attributable", () => {
     assert.equal(typeof downloadManager.getRecommendedSteamCmdConcurrencyForTest, "function");
 
     assert.equal(
@@ -23,11 +23,11 @@ test("uses moderate SteamCMD concurrency on typical machines", () => {
             cpuCount: 8,
             totalMemoryGb: 16
         }),
-        2
+        1
     );
 });
 
-test("caps SteamCMD concurrency at three isolated workers on stronger machines", () => {
+test("keeps SteamCMD downloads on a single worker even on stronger machines", () => {
     assert.equal(typeof downloadManager.getRecommendedSteamCmdConcurrencyForTest, "function");
 
     assert.equal(
@@ -35,11 +35,11 @@ test("caps SteamCMD concurrency at three isolated workers on stronger machines",
             cpuCount: 16,
             totalMemoryGb: 32
         }),
-        3
+        1
     );
 });
 
-test("SteamCMD installs now use isolated workers instead of shared batches", () => {
+test("SteamCMD installs still use isolated workers, but only one at a time", () => {
     assert.equal(typeof downloadManager.resolveInstallQueueModeForTest, "function");
 
     assert.deepEqual(
@@ -50,7 +50,7 @@ test("SteamCMD installs now use isolated workers instead of shared batches", () 
         }),
         {
             mode: "isolated-workers",
-            concurrency: 3
+            concurrency: 1
         }
     );
 });
