@@ -6,14 +6,24 @@ const path = require("node:path");
 const htmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 
-test("shared profile actions expose a direct sync button and disable it without a saved ID", () => {
+test("shared profile actions expose update and sync controls, with copy remaining copy-only", () => {
     const html = fs.readFileSync(htmlPath, "utf8");
     const renderer = fs.readFileSync(rendererPath, "utf8");
 
+    assert.match(html, /<button id="libraryUpdateSharedProfile"[\s\S]*?>[\s\S]*?Update/i);
     assert.match(html, /<button id="librarySyncSharedProfile"[\s\S]*?>[\s\S]*?Sync/i);
+    assert.ok(
+        html.indexOf('id="libraryUpdateSharedProfile"') < html.indexOf('id="librarySyncSharedProfile"'),
+        "update action should appear before sync in the shared ID menu"
+    );
+
+    assert.match(renderer, /libraryUpdateSharedProfile/);
+    assert.match(renderer, /libraryUpdateSharedProfile[\s\S]*publishLibrarySharedProfile\(/);
     assert.match(renderer, /librarySyncSharedProfile/);
     assert.match(renderer, /syncButton\.disabled\s*=\s*!currentSharedId/);
+    assert.match(renderer, /shareButton\.disabled\s*=\s*!currentSharedId/);
     assert.match(renderer, /runSharedProfileSync\(/);
     assert.match(renderer, /libraryUseSharedId[\s\S]*runSharedProfileSync\(/);
     assert.match(renderer, /librarySyncSharedProfile[\s\S]*runSharedProfileSync\(/);
+    assert.match(renderer, /libraryShareProfile[\s\S]*copyText\(sharedProfileId\)/);
 });

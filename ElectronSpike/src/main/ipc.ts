@@ -7,6 +7,7 @@ import type {
     DownloadActionRequest,
     DownloadQueueSnapshot,
     LibraryCompatibilityReportRequest,
+    LibraryApplyLoadOrderRequest,
     LibraryModContextMenuCommand,
     LibraryMoveDirectionRequest,
     LibraryPublishSharedProfileRequest,
@@ -42,7 +43,11 @@ import {
     importLibraryMods,
     migrateModsPath,
     getCompatibilityTags,
+    getLibraryLoadOrderSuggestion,
     moveLibraryMod,
+    applyLibraryLoadOrderSuggestion,
+    previewLibrarySharedProfileSync,
+    previewLibraryProfileActivation,
     publishLibrarySharedProfile,
     reorderLibraryMod,
     renameLibraryProfile,
@@ -125,10 +130,14 @@ const CHANNELS = {
     libraryCreateProfile: "spike:createLibraryProfile",
     libraryRenameProfile: "spike:renameLibraryProfile",
     libraryDeleteProfile: "spike:deleteLibraryProfile",
+    libraryPreviewProfileActivation: "spike:previewLibraryProfileActivation",
     libraryActivateProfile: "spike:activateLibraryProfile",
     librarySetSharedProfileId: "spike:setLibraryProfileSharedId",
     libraryPublishSharedProfile: "spike:publishLibrarySharedProfile",
+    libraryPreviewSharedProfileSync: "spike:previewLibrarySharedProfileSync",
     librarySyncSharedProfile: "spike:syncLibrarySharedProfile",
+    libraryLoadOrderSuggestion: "spike:getLibraryLoadOrderSuggestion",
+    libraryApplyLoadOrderSuggestion: "spike:applyLibraryLoadOrderSuggestion",
     librarySetModEnabled: "spike:setLibraryModEnabled",
     libraryMoveMod: "spike:moveLibraryMod",
     libraryReorderMod: "spike:reorderLibraryMod",
@@ -373,10 +382,14 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.libraryCreateProfile);
     ipcMain.removeHandler(CHANNELS.libraryRenameProfile);
     ipcMain.removeHandler(CHANNELS.libraryDeleteProfile);
+    ipcMain.removeHandler(CHANNELS.libraryPreviewProfileActivation);
     ipcMain.removeHandler(CHANNELS.libraryActivateProfile);
     ipcMain.removeHandler(CHANNELS.librarySetSharedProfileId);
     ipcMain.removeHandler(CHANNELS.libraryPublishSharedProfile);
+    ipcMain.removeHandler(CHANNELS.libraryPreviewSharedProfileSync);
     ipcMain.removeHandler(CHANNELS.librarySyncSharedProfile);
+    ipcMain.removeHandler(CHANNELS.libraryLoadOrderSuggestion);
+    ipcMain.removeHandler(CHANNELS.libraryApplyLoadOrderSuggestion);
     ipcMain.removeHandler(CHANNELS.librarySetModEnabled);
     ipcMain.removeHandler(CHANNELS.libraryMoveMod);
     ipcMain.removeHandler(CHANNELS.libraryReorderMod);
@@ -531,6 +544,10 @@ export function registerIpcHandlers(): void {
         return deleteLibraryProfile(profileId);
     });
 
+    ipcMain.handle(CHANNELS.libraryPreviewProfileActivation, async (_event, profileId: number) => {
+        return previewLibraryProfileActivation(profileId);
+    });
+
     ipcMain.handle(CHANNELS.libraryActivateProfile, async (_event, profileId: number) => {
         return activateLibraryProfile(profileId);
     });
@@ -543,8 +560,20 @@ export function registerIpcHandlers(): void {
         return publishLibrarySharedProfile(request);
     });
 
+    ipcMain.handle(CHANNELS.libraryPreviewSharedProfileSync, async (_event, request: LibrarySyncSharedProfileRequest) => {
+        return previewLibrarySharedProfileSync(request);
+    });
+
     ipcMain.handle(CHANNELS.librarySyncSharedProfile, async (_event, request: LibrarySyncSharedProfileRequest) => {
         return syncLibrarySharedProfile(request);
+    });
+
+    ipcMain.handle(CHANNELS.libraryLoadOrderSuggestion, async () => {
+        return getLibraryLoadOrderSuggestion();
+    });
+
+    ipcMain.handle(CHANNELS.libraryApplyLoadOrderSuggestion, async (_event, request: LibraryApplyLoadOrderRequest) => {
+        return applyLibraryLoadOrderSuggestion(request);
     });
 
     ipcMain.handle(CHANNELS.librarySetModEnabled, async (_event, request: LibrarySetModEnabledRequest) => {

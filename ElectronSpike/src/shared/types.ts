@@ -439,6 +439,41 @@ export interface LibrarySyncSharedProfileResult extends LibraryActionResult {
     syncedLoadOrderCount: number;
 }
 
+export interface LibraryLoadOrderChange {
+    modId: number;
+    workshopId: string;
+    name: string;
+    fromIndex: number;
+    toIndex: number;
+}
+
+export interface LibraryLoadOrderPreviewResult extends LibraryActionResult {
+    profileName?: string | null;
+    orderedWorkshopIds: string[];
+    changes: LibraryLoadOrderChange[];
+    appliedRules: string[];
+    appliedEdges: string[];
+    warnings: string[];
+    confidence: "high" | "medium" | "low";
+}
+
+export interface LibraryApplyLoadOrderRequest {
+    orderedWorkshopIds: string[];
+}
+
+export interface LibrarySharedProfileSyncPreviewResult extends LibraryLoadOrderPreviewResult {
+    missingWorkshopIds: string[];
+    enableModNames: string[];
+    disableModNames: string[];
+    remoteRevision: number | null;
+    remoteUpdatedUtc: string | null;
+}
+
+export interface LibraryProfileActivationPreviewResult extends LibraryLoadOrderPreviewResult {
+    enableModNames: string[];
+    disableModNames: string[];
+}
+
 export interface LibraryCompatibilityReportRequest {
     workshopId: string;
     gameVersion: string;
@@ -713,10 +748,14 @@ export interface SpikeApi {
     createLibraryProfile: (name: string) => Promise<LibraryActionResult>;
     renameLibraryProfile: (request: LibraryRenameProfileRequest) => Promise<LibraryActionResult>;
     deleteLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
+    previewLibraryProfileActivation: (profileId: number) => Promise<LibraryProfileActivationPreviewResult>;
     activateLibraryProfile: (profileId: number) => Promise<LibraryActionResult>;
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) => Promise<LibraryActionResult>;
     publishLibrarySharedProfile: (request: LibraryPublishSharedProfileRequest) => Promise<LibraryPublishSharedProfileResult>;
+    previewLibrarySharedProfileSync: (request: LibrarySyncSharedProfileRequest) => Promise<LibrarySharedProfileSyncPreviewResult>;
     syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) => Promise<LibrarySyncSharedProfileResult>;
+    getLibraryLoadOrderSuggestion: () => Promise<LibraryLoadOrderPreviewResult>;
+    applyLibraryLoadOrderSuggestion: (request: LibraryApplyLoadOrderRequest) => Promise<LibraryActionResult>;
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) => Promise<LibraryActionResult>;
     moveLibraryMod: (request: LibraryMoveDirectionRequest) => Promise<LibraryActionResult>;
     reorderLibraryMod: (request: LibraryReorderRequest) => Promise<LibraryActionResult>;
