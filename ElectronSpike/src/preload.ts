@@ -11,9 +11,12 @@ import type {
     LaunchGameResult,
     LibraryActionResult,
     LibraryCompatibilityReportRequest,
+    LibraryApplyLoadOrderRequest,
+    LibraryLoadOrderPreviewResult,
     LibraryModContextMenuCommandEvent,
     LibraryImportResult,
     LibraryMoveDirectionRequest,
+    LibraryProfileActivationPreviewResult,
     MergePlan,
     ModMergerAnalyzeRequest,
     ModMergerAnalyzeResult,
@@ -35,6 +38,7 @@ import type {
     LibrarySetSharedProfileIdRequest,
     LibrarySyncSharedProfileRequest,
     LibrarySyncSharedProfileResult,
+    LibrarySharedProfileSyncPreviewResult,
     LibrarySnapshot,
     ShowLibraryModContextMenuRequest,
     SettingsAutoDetectResult,
@@ -93,14 +97,22 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:renameLibraryProfile", request) as Promise<LibraryActionResult>,
     deleteLibraryProfile: (profileId: number) =>
         ipcRenderer.invoke("spike:deleteLibraryProfile", profileId) as Promise<LibraryActionResult>,
+    previewLibraryProfileActivation: (profileId: number) =>
+        ipcRenderer.invoke("spike:previewLibraryProfileActivation", profileId) as Promise<LibraryProfileActivationPreviewResult>,
     activateLibraryProfile: (profileId: number) =>
         ipcRenderer.invoke("spike:activateLibraryProfile", profileId) as Promise<LibraryActionResult>,
     setLibraryProfileSharedId: (request: LibrarySetSharedProfileIdRequest) =>
         ipcRenderer.invoke("spike:setLibraryProfileSharedId", request) as Promise<LibraryActionResult>,
     publishLibrarySharedProfile: (request: LibraryPublishSharedProfileRequest) =>
         ipcRenderer.invoke("spike:publishLibrarySharedProfile", request) as Promise<LibraryPublishSharedProfileResult>,
+    previewLibrarySharedProfileSync: (request: LibrarySyncSharedProfileRequest) =>
+        ipcRenderer.invoke("spike:previewLibrarySharedProfileSync", request) as Promise<LibrarySharedProfileSyncPreviewResult>,
     syncLibrarySharedProfile: (request: LibrarySyncSharedProfileRequest) =>
         ipcRenderer.invoke("spike:syncLibrarySharedProfile", request) as Promise<LibrarySyncSharedProfileResult>,
+    getLibraryLoadOrderSuggestion: () =>
+        ipcRenderer.invoke("spike:getLibraryLoadOrderSuggestion") as Promise<LibraryLoadOrderPreviewResult>,
+    applyLibraryLoadOrderSuggestion: (request: LibraryApplyLoadOrderRequest) =>
+        ipcRenderer.invoke("spike:applyLibraryLoadOrderSuggestion", request) as Promise<LibraryActionResult>,
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) =>
         ipcRenderer.invoke("spike:setLibraryModEnabled", request) as Promise<LibraryActionResult>,
     moveLibraryMod: (request: LibraryMoveDirectionRequest) =>

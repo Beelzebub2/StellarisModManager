@@ -139,6 +139,7 @@ const ICON_PATHS = Object.freeze({
     refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
     home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
     merge: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="m9 8-4 4 4 4"/><path d="m15 8 4 4-4 4"/><path d="M14 12H10"/>',
+    sparkles: '<path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14z"/><path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9L5 14z"/>',
     chevronUp: '<polyline points="18 15 12 9 6 15"/>',
     chevronDown: '<polyline points="6 9 12 15 18 9"/>'
 });
@@ -3097,6 +3098,240 @@ function getLibraryModById(modId) {
     return s ? s.mods.find((m) => m.id === modId) || null : null;
 }
 
+function getEnabledLibraryModsOrdered() {
+    const s = state.library.snapshot;
+    if (!s) return [];
+    return s.mods
+        .filter((m) => m.isEnabled)
+        .sort((a, b) => a.loadOrder - b.loadOrder || a.name.localeCompare(b.name));
+}
+
+function buildManualLoadOrderPreview(modId, targetIndex) {
+    const enabledMods = getEnabledLibraryModsOrdered();
+    const sourceIndex = enabledMods.findIndex((m) => m.id === modId);
+    if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= enabledMods.length || sourceIndex === targetIndex) {
+        return null;
+    }
+
+    const proposedMods = enabledMods.slice();
+    const [moved] = proposedMods.splice(sourceIndex, 1);
+    proposedMods.splice(targetIndex, 0, moved);
+    const changes = [];
+    for (let i = 0; i < proposedMods.length; i++) {
+        const mod = proposedMods[i];
+        const fromIndex = enabledMods.findIndex((entry) => entry.id === mod.id);
+        if (fromIndex !== i) {
+            changes.push({
+                modId: mod.id,
+                workshopId: mod.workshopId,
+                name: mod.name,
+                fromIndex,
+                toIndex: i
+            });
+        }
+    }
+
+    return {
+        ok: true,
+        message: "Review the manual load-order change before applying it.",
+        orderedWorkshopIds: proposedMods.map((mod) => mod.workshopId).filter(Boolean),
+        changes,
+        appliedRules: [],
+        appliedEdges: [],
+        warnings: [],
+        confidence: "high"
+    };
+}
+
+function formatLoadOrderPosition(index) {
+    return index >= 0 ? `#${index + 1}` : "Disabled";
+}
+
+function buildLoadOrderPreviewHtml(preview, extraHtml = "") {
+    const changes = Array.isArray(preview?.changes) ? preview.changes : [];
+    const warnings = Array.isArray(preview?.warnings) ? preview.warnings : [];
+    const rules = Array.isArray(preview?.appliedRules) ? preview.appliedRules : [];
+    const edges = Array.isArray(preview?.appliedEdges) ? preview.appliedEdges : [];
+    const changesHtml = changes.length > 0
+        ? changes.slice(0, 18).map((change) => `
+            <li class="load-order-preview-row">
+                <span class="load-order-preview-position">${escapeHtml(formatLoadOrderPosition(change.fromIndex))}</span>
+                <strong class="load-order-preview-title">${escapeHtml(change.name || change.workshopId || `Mod ${change.modId}`)}</strong>
+                <span class="load-order-preview-direction">${escapeHtml(formatLoadOrderPosition(change.toIndex))}</span>
+            </li>
+        `).join("")
+        : `
+            <li class="load-order-preview-empty">
+                <strong class="load-order-preview-empty-title">No order moves</strong>
+                <p class="load-order-preview-empty-copy">The current order already matches this preview.</p>
+            </li>
+        `;
+    const warningHtml = warnings.length > 0
+        ? `<div class="load-order-preview-warnings">${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</div>`
+        : "";
+
+    return `
+        <div class="modal-extra-load-order">
+            <div class="load-order-preview-metrics">
+                <span class="status-chip">${changes.length} move${changes.length === 1 ? "" : "s"}</span>
+                <span class="status-chip status-chip-muted">Confidence: ${escapeHtml(preview?.confidence || "unknown")}</span>
+                <span class="status-chip status-chip-muted">${rules.length} rule${rules.length === 1 ? "" : "s"}</span>
+                <span class="status-chip status-chip-muted">${edges.length} edge${edges.length === 1 ? "" : "s"}</span>
+            </div>
+            ${extraHtml}
+            ${warningHtml}
+            <ol class="load-order-preview-list">${changesHtml}</ol>
+        </div>
+    `;
+}
+
+async function showLoadOrderPreviewModal(title, preview, confirmLabel = "Apply order", extraHtml = "") {
+    const choice = await showChoiceModal(
+        title,
+        preview?.message || "Review the proposed load-order changes before applying them.",
+        {
+            confirmLabel,
+            cancelLabel: "Cancel",
+            alternateLabel: "Keep current order",
+            detailHtml: buildLoadOrderPreviewHtml(preview, extraHtml)
+        }
+    );
+
+    return choice === "confirm";
+}
+
+async function confirmManualLoadOrderChange(modId, targetIndex, title = "Confirm Load-Order Change") {
+    const preview = buildManualLoadOrderPreview(modId, targetIndex);
+    if (!preview) {
+        setLibraryStatus("No load-order change needed.");
+        return false;
+    }
+
+    return showLoadOrderPreviewModal(title, preview, "Move mod");
+}
+
+async function confirmEnableStateChange(mod, willEnable) {
+    if (!mod) {
+        return false;
+    }
+
+    const action = willEnable ? "Enable" : "Disable";
+    const preview = {
+        ok: true,
+        message: `${action} '${mod.name}'? This updates the enabled set and may renumber load order.`,
+        orderedWorkshopIds: getEnabledLibraryModsOrdered().map((entry) => entry.workshopId).filter(Boolean),
+        changes: [],
+        appliedRules: [],
+        appliedEdges: [],
+        warnings: [],
+        confidence: "medium"
+    };
+    const extraHtml = `<p class="load-order-preview-note">${escapeHtml(action)} ${escapeHtml(mod.name)} (${escapeHtml(mod.workshopId || "local mod")}).</p>`;
+    return showLoadOrderPreviewModal(`${action} Mod`, preview, action, extraHtml);
+}
+
+async function showSharedProfileSyncPreview(preview) {
+    const enableNames = Array.isArray(preview?.enableModNames) ? preview.enableModNames : [];
+    const disableNames = Array.isArray(preview?.disableModNames) ? preview.disableModNames : [];
+    const missingIds = Array.isArray(preview?.missingWorkshopIds) ? preview.missingWorkshopIds : [];
+    const extraHtml = `
+        <div class="shared-sync-preview-grid">
+            <div class="shared-sync-preview-card"><span>Enable</span><strong>${enableNames.length}</strong></div>
+            <div class="shared-sync-preview-card"><span>Disable</span><strong>${disableNames.length}</strong></div>
+            <div class="shared-sync-preview-card"><span>Missing locally</span><strong>${missingIds.length}</strong></div>
+        </div>
+        ${enableNames.length > 0 ? `<p class="load-order-preview-note">Will enable: ${escapeHtml(enableNames.slice(0, 6).join(", "))}${enableNames.length > 6 ? "..." : ""}</p>` : ""}
+        ${disableNames.length > 0 ? `<p class="load-order-preview-note">Will disable: ${escapeHtml(disableNames.slice(0, 6).join(", "))}${disableNames.length > 6 ? "..." : ""}</p>` : ""}
+        ${missingIds.length > 0 ? `<p class="load-order-preview-note">Missing workshop IDs: ${escapeHtml(missingIds.slice(0, 8).join(", "))}${missingIds.length > 8 ? "..." : ""}</p>` : ""}
+    `;
+
+    return showLoadOrderPreviewModal("Confirm Shared Profile Sync", preview, "Sync profile", extraHtml);
+}
+
+async function showProfileActivationPreview(preview) {
+    const enableNames = Array.isArray(preview?.enableModNames) ? preview.enableModNames : [];
+    const disableNames = Array.isArray(preview?.disableModNames) ? preview.disableModNames : [];
+    const extraHtml = `
+        <div class="shared-sync-preview-grid">
+            <div class="shared-sync-preview-card"><span>Enable</span><strong>${enableNames.length}</strong></div>
+            <div class="shared-sync-preview-card"><span>Disable</span><strong>${disableNames.length}</strong></div>
+            <div class="shared-sync-preview-card"><span>Moves</span><strong>${Array.isArray(preview?.changes) ? preview.changes.length : 0}</strong></div>
+            <div class="shared-sync-preview-card"><span>Profile</span><strong>${escapeHtml(preview?.profileName || "Selected profile")}</strong></div>
+        </div>
+        ${enableNames.length > 0 ? `<p class="load-order-preview-note">Will enable: ${escapeHtml(enableNames.slice(0, 6).join(", "))}${enableNames.length > 6 ? "..." : ""}</p>` : ""}
+        ${disableNames.length > 0 ? `<p class="load-order-preview-note">Will disable: ${escapeHtml(disableNames.slice(0, 6).join(", "))}${disableNames.length > 6 ? "..." : ""}</p>` : ""}
+    `;
+
+    return showLoadOrderPreviewModal("Activate Library Profile", preview, "Activate profile", extraHtml);
+}
+
+async function activateLibraryProfileWithPreview(profileId) {
+    if (state.library.snapshot?.activeProfileId === profileId) {
+        return true;
+    }
+
+    const preview = await window.spikeApi.previewLibraryProfileActivation(profileId);
+    if (!preview.ok) {
+        setLibraryStatus(preview.message);
+        return false;
+    }
+
+    if (!await showProfileActivationPreview(preview)) {
+        setLibraryStatus("Profile activation cancelled.");
+        return false;
+    }
+
+    const result = await window.spikeApi.activateLibraryProfile(profileId);
+    setLibraryStatus(result.message);
+    await refreshLibrarySnapshot();
+    return result.ok === true;
+}
+
+function buildRemoveModLoadOrderPreview(mod) {
+    const enabledMods = getEnabledLibraryModsOrdered();
+    const sourceIndex = enabledMods.findIndex((entry) => entry.id === mod.id);
+    const proposedMods = enabledMods.filter((entry) => entry.id !== mod.id);
+    const changes = [];
+
+    for (let i = 0; i < proposedMods.length; i++) {
+        const entry = proposedMods[i];
+        const fromIndex = enabledMods.findIndex((candidate) => candidate.id === entry.id);
+        if (fromIndex !== i) {
+            changes.push({
+                modId: entry.id,
+                workshopId: entry.workshopId,
+                name: entry.name,
+                fromIndex,
+                toIndex: i
+            });
+        }
+    }
+
+    return {
+        ok: true,
+        message: sourceIndex >= 0
+            ? `Remove '${mod.name}'? This will uninstall the mod and renumber the enabled load order.`
+            : `Remove '${mod.name}'? This mod is disabled, so the enabled load order will not change.`,
+        orderedWorkshopIds: proposedMods.map((entry) => entry.workshopId).filter(Boolean),
+        changes,
+        appliedRules: [],
+        appliedEdges: [],
+        warnings: [],
+        confidence: "high"
+    };
+}
+
+async function confirmRemoveLibraryMod(mod) {
+    if (!mod) {
+        return false;
+    }
+
+    const enabledMods = getEnabledLibraryModsOrdered();
+    const sourceIndex = enabledMods.findIndex((entry) => entry.id === mod.id);
+    const extraHtml = `<p class="load-order-preview-note">Will uninstall ${escapeHtml(mod.name)} (${escapeHtml(mod.workshopId || "local mod")}). Current enabled position: ${escapeHtml(formatLoadOrderPosition(sourceIndex))}.</p>`;
+    return showLoadOrderPreviewModal("Remove Mod", buildRemoveModLoadOrderPreview(mod), "Remove", extraHtml);
+}
+
 function selectLibraryMod(modId) {
     if (!Number.isFinite(modId) || modId <= 0 || state.library.selectedModId === modId) {
         return false;
@@ -3163,10 +3398,6 @@ async function runLibraryModContextMenuCommand(command, modId) {
     }
 
     if (command === "remove-mod") {
-        const confirmed = await showModal("Remove Mod", `Remove '${mod.name}'?`, "Remove", "Cancel");
-        if (!confirmed) {
-            return;
-        }
         await removeLibraryModWithFeedback(mod);
     }
 }
@@ -3683,6 +3914,11 @@ async function removeLibraryModWithFeedback(mod) {
         return;
     }
 
+    if (!await confirmRemoveLibraryMod(mod)) {
+        setLibraryStatus("Remove cancelled.");
+        return;
+    }
+
     state.library.removingModIds.add(mod.id);
     renderLibraryList();
     setLibraryStatus(`Removing ${mod.name}...`);
@@ -3726,6 +3962,11 @@ async function handleLibraryDrop(list, row, clientY, sourceId) {
         targetIndex--;
     }
 
+    if (!await confirmManualLoadOrderChange(sourceId, targetIndex, "Confirm Drag Reorder")) {
+        clearLibraryDragDecorations(list);
+        return;
+    }
+
     const result = await window.spikeApi.reorderLibraryMod({ modId: sourceId, targetIndex });
     setLibraryStatus(result.message);
     await refreshLibrarySnapshot();
@@ -3763,6 +4004,12 @@ function hookLibraryListDelegation() {
             const action = button.getAttribute("data-action") || "";
             if (action === "move-up" || action === "move-down") {
                 const direction = action === "move-up" ? "up" : "down";
+                const enabledMods = getEnabledLibraryModsOrdered();
+                const sourceIndex = enabledMods.findIndex((mod) => mod.id === modId);
+                const targetIndex = direction === "up" ? sourceIndex - 1 : sourceIndex + 1;
+                if (!await confirmManualLoadOrderChange(modId, targetIndex, "Confirm Load-Order Move")) {
+                    return;
+                }
                 const result = await window.spikeApi.moveLibraryMod({ modId, direction });
                 setLibraryStatus(result.message);
                 await refreshLibrarySnapshot();
@@ -3775,8 +4022,6 @@ function hookLibraryListDelegation() {
                     return;
                 }
 
-                const confirmed = await showModal("Remove Mod", "Remove this mod and delete its local files?", "Remove", "Cancel");
-                if (!confirmed) return;
                 await removeLibraryModWithFeedback(mod);
             }
 
@@ -3807,6 +4052,13 @@ function hookLibraryListDelegation() {
 
         const id = Number.parseInt(target.getAttribute("data-mod-id") || "0", 10);
         if (!Number.isFinite(id) || id <= 0) return;
+
+        const mod = getLibraryModById(id);
+        const nextChecked = target.checked === true;
+        if (!await confirmEnableStateChange(mod, nextChecked)) {
+            target.checked = !nextChecked;
+            return;
+        }
 
         const result = await window.spikeApi.setLibraryModEnabled({ modId: id, isEnabled: target.checked === true });
         setLibraryStatus(result.message);
@@ -3961,6 +4213,22 @@ function renderLibraryProfiles() {
         syncButton.disabled = !currentSharedId;
         syncButton.title = currentSharedId
             ? "Sync this profile with the saved shared profile ID"
+            : "No shared profile ID set";
+    }
+
+    const updateButton = byId("libraryUpdateSharedProfile");
+    if (updateButton) {
+        updateButton.disabled = !active;
+        updateButton.title = currentSharedId
+            ? "Send this profile's current enabled mods and load order to Stellarisync"
+            : "Publish this profile to Stellarisync and create a shared profile ID";
+    }
+
+    const shareButton = byId("libraryShareProfile");
+    if (shareButton) {
+        shareButton.disabled = !currentSharedId;
+        shareButton.title = currentSharedId
+            ? "Copy the saved shared profile ID"
             : "No shared profile ID set";
     }
 
@@ -5132,9 +5400,10 @@ function hookLibraryControls() {
     byId("libraryProfileSelect")?.addEventListener("change", async (e) => {
         const id = Number.parseInt(e.target.value || "0", 10);
         if (!Number.isFinite(id) || id <= 0) return;
-        const result = await window.spikeApi.activateLibraryProfile(id);
-        setLibraryStatus(result.message);
-        await refreshLibrarySnapshot();
+        const activated = await activateLibraryProfileWithPreview(id);
+        if (!activated && state.library.snapshot?.activeProfileId) {
+            e.target.value = String(state.library.snapshot.activeProfileId);
+        }
     });
 
     byId("libraryNewProfile")?.addEventListener("click", async () => {
@@ -5149,8 +5418,10 @@ function hookLibraryControls() {
                 // Find and activate the new profile so it actually switches in the UI
                 const p = state.library.snapshot.profiles.find(x => x.name.toLowerCase() === name.toLowerCase());
                 if (p) {
-                    await window.spikeApi.activateLibraryProfile(p.id);
-                    await refreshLibrarySnapshot();
+                    const activated = await activateLibraryProfileWithPreview(p.id);
+                    if (!activated) {
+                        return;
+                    }
                 }
 
                 // Fresh profile has no enabled mods; hide disabled ones so the view isn't cluttered.
@@ -5187,11 +5458,32 @@ function hookLibraryControls() {
     });
 
     async function runSharedProfileSync(active, sharedProfileId, sharedProfileSince = "") {
-        const syncResult = await window.spikeApi.syncLibrarySharedProfile({
+        const request = {
             profileId: active.id,
             sharedProfileId,
             sharedProfileSince
-        });
+        };
+        const preview = await window.spikeApi.previewLibrarySharedProfileSync(request);
+        if (!preview.ok) {
+            setLibraryStatus(preview.message);
+            return;
+        }
+
+        const hasChanges = (preview.changes || []).length > 0
+            || (preview.enableModNames || []).length > 0
+            || (preview.disableModNames || []).length > 0
+            || (preview.missingWorkshopIds || []).length > 0;
+        if (!hasChanges) {
+            setLibraryStatus(preview.message);
+            return;
+        }
+
+        if (!await showSharedProfileSyncPreview(preview)) {
+            setLibraryStatus("Shared profile sync cancelled.");
+            return;
+        }
+
+        const syncResult = await window.spikeApi.syncLibrarySharedProfile(request);
         setLibraryStatus(syncResult.message);
         await refreshLibrarySnapshot();
 
@@ -5252,6 +5544,28 @@ function hookLibraryControls() {
         setLibraryStatus("Missing mods were not queued (they may already be queued or invalid).");
     }
 
+    byId("libraryUpdateSharedProfile")?.addEventListener("click", async () => {
+        const active = getActiveLibraryProfile();
+        if (!active) { setLibraryStatus("No active profile."); return; }
+
+        if (!await ensurePublicUsernameConfigured(true)) {
+            setLibraryStatus("Public username is required for profile sharing.");
+            return;
+        }
+
+        const publishResult = await window.spikeApi.publishLibrarySharedProfile({ profileId: active.id });
+        if (!publishResult.ok || !publishResult.sharedProfileId) {
+            setLibraryStatus(publishResult.message);
+            return;
+        }
+
+        const statusSuffix = publishResult.created
+            ? ` Shared ID: ${publishResult.sharedProfileId}`
+            : "";
+        setLibraryStatus(`${publishResult.message}${statusSuffix}`);
+        await refreshLibrarySnapshot();
+    });
+
     byId("libraryUseSharedId")?.addEventListener("click", async () => {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
@@ -5296,24 +5610,18 @@ function hookLibraryControls() {
         const active = getActiveLibraryProfile();
         if (!active) { setLibraryStatus("No active profile."); return; }
 
-        if (!await ensurePublicUsernameConfigured(true)) {
-            setLibraryStatus("Public username is required for profile sharing.");
+        const sharedProfileId = String(active.sharedProfileId || "").trim();
+        if (!sharedProfileId) {
+            setLibraryStatus("No shared profile ID set. Update this profile to Stellarisync first.");
             return;
         }
 
-        const publishResult = await window.spikeApi.publishLibrarySharedProfile({ profileId: active.id });
-        if (!publishResult.ok || !publishResult.sharedProfileId) {
-            setLibraryStatus(publishResult.message);
-            return;
-        }
-
-        const copied = await window.spikeApi.copyText(publishResult.sharedProfileId);
+        const copied = await window.spikeApi.copyText(sharedProfileId);
         setLibraryStatus(
             copied
-                ? `${publishResult.message} ID copied: ${publishResult.sharedProfileId}`
-                : `${publishResult.message} ID: ${publishResult.sharedProfileId}`
+                ? `Shared profile ID copied: ${sharedProfileId}`
+                : `Shared profile ID: ${sharedProfileId}`
         );
-        await refreshLibrarySnapshot();
     });
 
     byId("libraryCheckUpdates")?.addEventListener("click", async () => {
@@ -5346,6 +5654,30 @@ function hookLibraryControls() {
             await revealNewlyAddedDisabledMods(previousLibrarySnapshot);
         }
     });
+
+    async function runSharedLoadOrderSuggestion() {
+        setLibraryStatus("Fetching Stellarisync load-order suggestions...");
+        const preview = await window.spikeApi.getLibraryLoadOrderSuggestion();
+        if (!preview.ok || !Array.isArray(preview.changes) || preview.changes.length === 0) {
+            setLibraryStatus(preview.message);
+            return;
+        }
+
+        if (!await showLoadOrderPreviewModal("Apply Stellarisync Suggested Order", preview, "Apply suggestion")) {
+            setLibraryStatus("Suggested load order cancelled.");
+            return;
+        }
+
+        const result = await window.spikeApi.applyLibraryLoadOrderSuggestion({
+            orderedWorkshopIds: preview.orderedWorkshopIds || []
+        });
+        setLibraryStatus(result.message);
+        if (result.ok) {
+            await refreshLibrarySnapshot();
+        }
+    }
+
+    byId("librarySuggestLoadOrder")?.addEventListener("click", () => void runSharedLoadOrderSuggestion());
 
     byId("librarySubmitTagsOnly")?.addEventListener("click", () => void runLibraryTagOnlySubmission());
 

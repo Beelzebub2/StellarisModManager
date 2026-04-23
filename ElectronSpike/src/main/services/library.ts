@@ -10,6 +10,7 @@ import type {
     CompatibilityTagGroupConsensus,
     ConsensusState,
     LibraryActionResult,
+    LibraryApplyLoadOrderRequest,
     LibraryCompatibilityReportRequest,
     LibraryImportResult,
     LibraryCompatibilitySummary,
@@ -19,6 +20,7 @@ import type {
     ModsPathMigrationResult,
     LibraryPublishSharedProfileRequest,
     LibraryPublishSharedProfileResult,
+    LibraryProfileActivationPreviewResult,
     LibraryReorderRequest,
     LibraryProfile,
     LibraryRenameProfileRequest,
@@ -26,6 +28,9 @@ import type {
     LibrarySetSharedProfileIdRequest,
     LibrarySyncSharedProfileRequest,
     LibrarySyncSharedProfileResult,
+    LibrarySharedProfileSyncPreviewResult,
+    LibraryLoadOrderChange,
+    LibraryLoadOrderPreviewResult,
     LibrarySnapshot,
     SettingsSnapshot,
     ScanLocalModsResult
@@ -134,6 +139,14 @@ interface RemoteSharedProfilePayload {
     mods?: unknown;
 }
 
+interface RemoteLoadOrderResolvePayload {
+    orderedMods?: unknown;
+    appliedRules?: unknown;
+    appliedEdges?: unknown;
+    warnings?: unknown;
+    confidence?: unknown;
+}
+
 interface SharedProfilePublishPayload {
     name: string;
     creator: string;
@@ -148,6 +161,7 @@ interface SharedProfilePublishTarget {
 interface SyncModRow {
     Id: number;
     WorkshopId: string;
+    Name?: string;
     IsEnabled: number;
     LoadOrder: number;
     InstalledPath?: string;
@@ -1565,6 +1579,72 @@ export function deleteLibraryProfile(profileId: number): LibraryActionResult {
     }
 }
 
+export function previewLibraryProfileActivation(profileId: number): LibraryProfileActivationPreviewResult {
+    const db = openLibraryDb();
+    if (!db) {
+        return buildProfileActivationPreviewFailure("mods.db is not available.");
+    }
+
+    try {
+        const target = db.prepare("SELECT Id, Name FROM Profiles WHERE Id = ?").get(profileId) as { Id: number; Name: string } | undefined;
+        if (!target) {
+            return buildProfileActivationPreviewFailure("Profile not found.");
+        }
+
+        const activeProfileId = getActiveProfileId(db);
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            return buildProfileActivationPreviewFailure("Could not determine workshop ID column in Mods table.");
+        }
+
+        const localRows = db
+            .prepare(`SELECT Id, ${workshopColumn} AS WorkshopId, Name, IsEnabled, LoadOrder FROM Mods`)
+            .all() as SyncModRow[];
+        const currentRows = localRows
+            .filter((row) => row.IsEnabled === 1)
+            .sort((a, b) => a.LoadOrder - b.LoadOrder || String(a.Name || "").localeCompare(String(b.Name || "")));
+        const profileRows = db
+            .prepare(
+                `SELECT m.Id, m.${workshopColumn} AS WorkshopId, m.Name, pe.IsEnabled, pe.LoadOrder
+                 FROM ProfileEntries pe
+                 INNER JOIN Mods m ON m.Id = pe.ModId
+                 WHERE pe.ProfileId = ? AND pe.IsEnabled = 1
+                 ORDER BY pe.LoadOrder ASC, pe.Id ASC`
+            )
+            .all(profileId) as SyncModRow[];
+        const wantedSet = new Set(profileRows.map((row) => row.Id));
+        const rowsToEnable = profileRows.filter((row) => {
+            const current = localRows.find((entry) => entry.Id === row.Id);
+            return !current || current.IsEnabled !== 1;
+        });
+        const rowsToDisable = localRows.filter((row) => row.IsEnabled === 1 && !wantedSet.has(row.Id));
+        const preview = buildLoadOrderPreview(
+            currentRows,
+            profileRows,
+            profileRows.map((row) => sanitizeWorkshopId(row.WorkshopId)).filter(isValidWorkshopId),
+            activeProfileId === profileId
+                ? `Profile '${target.Name}' is already active. Review the current enabled load order.`
+                : `Review profile '${target.Name}' before it changes enabled mods or load order.`,
+            {
+                profileName: target.Name,
+                confidence: "high"
+            }
+        );
+
+        return {
+            ...preview,
+            enableModNames: rowsToEnable.map((row) => row.Name?.trim() || row.WorkshopId || `Mod ${row.Id}`),
+            disableModNames: rowsToDisable.map((row) => row.Name?.trim() || row.WorkshopId || `Mod ${row.Id}`)
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown activate-profile preview error";
+        return buildProfileActivationPreviewFailure(`Failed to preview profile activation: ${message}`);
+    } finally {
+        db.close();
+    }
+}
+
 export function activateLibraryProfile(profileId: number): LibraryActionResult {
     const db = openLibraryDb();
     if (!db) {
@@ -1860,6 +1940,388 @@ async function fetchSharedProfile(sharedProfileId: string, sinceRaw?: string): P
     }
 
     return (await response.json()) as RemoteSharedProfilePayload;
+}
+
+function buildLoadOrderPreviewFailure(message: string): LibraryLoadOrderPreviewResult {
+    return {
+        ok: false,
+        message,
+        orderedWorkshopIds: [],
+        changes: [],
+        appliedRules: [],
+        appliedEdges: [],
+        warnings: [],
+        confidence: "low"
+    };
+}
+
+function buildSharedProfileSyncPreviewFailure(message: string): LibrarySharedProfileSyncPreviewResult {
+    return {
+        ...buildLoadOrderPreviewFailure(message),
+        profileName: null,
+        missingWorkshopIds: [],
+        enableModNames: [],
+        disableModNames: [],
+        remoteRevision: null,
+        remoteUpdatedUtc: null
+    };
+}
+
+function buildProfileActivationPreviewFailure(message: string): LibraryProfileActivationPreviewResult {
+    return {
+        ...buildLoadOrderPreviewFailure(message),
+        profileName: null,
+        enableModNames: [],
+        disableModNames: []
+    };
+}
+
+function normalizeRemoteStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((entry) => String(entry ?? "").trim())
+        .filter((entry) => entry.length > 0);
+}
+
+function normalizeResolveConfidence(value: unknown): "high" | "medium" | "low" {
+    const text = String(value ?? "").trim().toLowerCase();
+    return text === "high" || text === "medium" || text === "low" ? text : "low";
+}
+
+async function fetchLoadOrderResolve(mods: string[], gameVersion: string | null): Promise<RemoteLoadOrderResolvePayload> {
+    const response = await fetch(`${STELLARISYNC_BASE_URL}/mods/load-order-resolve`, {
+        method: "POST",
+        headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            gameVersion: gameVersion || undefined,
+            mods
+        })
+    });
+
+    if (!response.ok) {
+        let reason = `Request failed with HTTP ${response.status}.`;
+        try {
+            const payload = await response.json() as { error?: string };
+            if (typeof payload.error === "string" && payload.error.trim()) {
+                reason = payload.error.trim();
+            }
+        } catch {
+            // keep fallback message
+        }
+
+        throw new Error(reason);
+    }
+
+    return (await response.json()) as RemoteLoadOrderResolvePayload;
+}
+
+function getEnabledLoadOrderRows(db: Database.Database, workshopColumn: string): SyncModRow[] {
+    return db
+        .prepare(
+            `SELECT Id, ${workshopColumn} AS WorkshopId, Name, IsEnabled, LoadOrder
+             FROM Mods
+             WHERE IsEnabled = 1
+             ORDER BY LoadOrder ASC, Name COLLATE NOCASE ASC, Id ASC`
+        )
+        .all() as SyncModRow[];
+}
+
+function buildLoadOrderPreview(
+    currentRows: SyncModRow[],
+    proposedRows: SyncModRow[],
+    orderedWorkshopIds: string[],
+    message: string,
+    extras?: Partial<LibraryLoadOrderPreviewResult>
+): LibraryLoadOrderPreviewResult {
+    const currentIndexById = new Map<number, number>();
+    currentRows.forEach((row, index) => currentIndexById.set(row.Id, index));
+
+    const changes: LibraryLoadOrderChange[] = [];
+    proposedRows.forEach((row, index) => {
+        const fromIndex = currentIndexById.has(row.Id) ? currentIndexById.get(row.Id) ?? -1 : -1;
+        if (fromIndex === index) {
+            return;
+        }
+
+        changes.push({
+            modId: row.Id,
+            workshopId: sanitizeWorkshopId(row.WorkshopId),
+            name: row.Name?.trim() || row.WorkshopId || `Mod ${row.Id}`,
+            fromIndex,
+            toIndex: index
+        });
+    });
+
+    return {
+        ok: true,
+        message,
+        orderedWorkshopIds,
+        changes,
+        appliedRules: extras?.appliedRules ?? [],
+        appliedEdges: extras?.appliedEdges ?? [],
+        warnings: extras?.warnings ?? [],
+        confidence: extras?.confidence ?? "medium",
+        profileName: extras?.profileName ?? null
+    };
+}
+
+function buildProposedRowsFromWorkshopIds(currentRows: SyncModRow[], orderedWorkshopIds: string[]): SyncModRow[] {
+    const byWorkshopId = new Map<string, SyncModRow>();
+    for (const row of currentRows) {
+        const workshopId = sanitizeWorkshopId(row.WorkshopId);
+        if (isValidWorkshopId(workshopId) && !byWorkshopId.has(workshopId)) {
+            byWorkshopId.set(workshopId, row);
+        }
+    }
+
+    const seen = new Set<number>();
+    const proposedRows: SyncModRow[] = [];
+    for (const rawWorkshopId of orderedWorkshopIds) {
+        const workshopId = sanitizeWorkshopId(rawWorkshopId);
+        const row = byWorkshopId.get(workshopId);
+        if (!row || seen.has(row.Id)) {
+            continue;
+        }
+
+        seen.add(row.Id);
+        proposedRows.push(row);
+    }
+
+    for (const row of currentRows) {
+        if (!seen.has(row.Id)) {
+            seen.add(row.Id);
+            proposedRows.push(row);
+        }
+    }
+
+    return proposedRows;
+}
+
+function applyConfirmedLoadOrder(db: Database.Database, orderedWorkshopIds: string[]): number {
+    const modColumns = getTableColumns(db, "Mods");
+    const workshopColumn = getWorkshopColumn(modColumns);
+    if (!workshopColumn) {
+        throw new Error("Could not determine workshop ID column in Mods table.");
+    }
+
+    const currentRows = getEnabledLoadOrderRows(db, workshopColumn);
+    const proposedRows = buildProposedRowsFromWorkshopIds(currentRows, orderedWorkshopIds);
+    const updateStmt = db.prepare("UPDATE Mods SET LoadOrder = ? WHERE Id = ?");
+
+    for (let i = 0; i < proposedRows.length; i++) {
+        updateStmt.run(i, proposedRows[i].Id);
+    }
+
+    normalizeLoadOrder(db);
+    saveActiveProfileSnapshot(db);
+    syncDlcLoadFromDb(db);
+    return proposedRows.length;
+}
+
+export async function getLibraryLoadOrderSuggestion(): Promise<LibraryLoadOrderPreviewResult> {
+    const db = openLibraryDb();
+    if (!db) {
+        return buildLoadOrderPreviewFailure("mods.db is not available.");
+    }
+
+    try {
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            return buildLoadOrderPreviewFailure("Could not determine workshop ID column in Mods table.");
+        }
+
+        const currentRows = getEnabledLoadOrderRows(db, workshopColumn);
+        const currentWorkshopIds = currentRows
+            .map((row) => sanitizeWorkshopId(row.WorkshopId))
+            .filter(isValidWorkshopId);
+
+        if (currentWorkshopIds.length < 2) {
+            return buildLoadOrderPreviewFailure("At least two enabled Workshop mods are required for load-order suggestions.");
+        }
+
+        const settings = loadSettingsSnapshot();
+        const gameVersion = normalizeDetectedGameVersion(settings?.lastDetectedGameVersion);
+        const payload = await fetchLoadOrderResolve(currentWorkshopIds, gameVersion);
+        const orderedWorkshopIds = normalizeRemoteStringArray(payload.orderedMods)
+            .map(sanitizeWorkshopId)
+            .filter(isValidWorkshopId);
+        const proposedRows = buildProposedRowsFromWorkshopIds(currentRows, orderedWorkshopIds);
+        const preview = buildLoadOrderPreview(
+            currentRows,
+            proposedRows,
+            proposedRows.map((row) => sanitizeWorkshopId(row.WorkshopId)).filter(isValidWorkshopId),
+            "Review the suggested Stellarisync load order before applying it.",
+            {
+                appliedRules: normalizeRemoteStringArray(payload.appliedRules),
+                appliedEdges: normalizeRemoteStringArray(payload.appliedEdges),
+                warnings: normalizeRemoteStringArray(payload.warnings),
+                confidence: normalizeResolveConfidence(payload.confidence)
+            }
+        );
+
+        if (preview.changes.length === 0) {
+            return {
+                ...preview,
+                message: "Stellarisync found no load-order changes for the enabled mods."
+            };
+        }
+
+        return preview;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown load-order suggestion error";
+        return buildLoadOrderPreviewFailure(`Failed to get load-order suggestion: ${message}`);
+    } finally {
+        db.close();
+    }
+}
+
+export function applyLibraryLoadOrderSuggestion(request: LibraryApplyLoadOrderRequest): LibraryActionResult {
+    const db = openLibraryDb();
+    if (!db) {
+        return { ok: false, message: "mods.db is not available." };
+    }
+
+    try {
+        const orderedWorkshopIds = Array.isArray(request.orderedWorkshopIds)
+            ? request.orderedWorkshopIds.map(sanitizeWorkshopId).filter(isValidWorkshopId)
+            : [];
+        if (orderedWorkshopIds.length < 2) {
+            return { ok: false, message: "A confirmed ordered workshop ID list is required." };
+        }
+
+        const tx = db.transaction(() => applyConfirmedLoadOrder(db, orderedWorkshopIds));
+        const appliedCount = tx();
+        return { ok: true, message: `Applied suggested load order to ${appliedCount} enabled mod(s).` };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown load-order apply error";
+        return { ok: false, message: `Failed to apply load order: ${message}` };
+    } finally {
+        db.close();
+    }
+}
+
+export async function previewLibrarySharedProfileSync(
+    request: LibrarySyncSharedProfileRequest
+): Promise<LibrarySharedProfileSyncPreviewResult> {
+    const sharedProfileId = sanitizeSharedProfileId(request.sharedProfileId ?? "");
+    if (!sharedProfileId) {
+        return buildSharedProfileSyncPreviewFailure("Shared profile ID is required.");
+    }
+
+    if (!isValidSharedProfileId(sharedProfileId)) {
+        return buildSharedProfileSyncPreviewFailure("Invalid shared profile ID format.");
+    }
+
+    const db = openLibraryDb();
+    if (!db) {
+        return buildSharedProfileSyncPreviewFailure("mods.db is not available.");
+    }
+
+    try {
+        const profile = db
+            .prepare(`
+                SELECT Id, SharedProfileId, SharedProfileRevision, SharedProfileUpdatedUtc
+                FROM Profiles
+                WHERE Id = ?
+            `)
+            .get(request.profileId) as DbProfileRow | undefined;
+        if (!profile) {
+            return buildSharedProfileSyncPreviewFailure("Profile not found.");
+        }
+
+        const remoteProfile = await fetchSharedProfile(sharedProfileId, request.sharedProfileSince);
+        const profileName = typeof remoteProfile.name === "string" && remoteProfile.name.trim()
+            ? remoteProfile.name.trim()
+            : null;
+        if (!hasRemoteSharedProfileChanged(profile, sharedProfileId, remoteProfile)) {
+            return {
+                ...buildSharedProfileSyncPreviewFailure("No remote changes found."),
+                ok: true,
+                profileName,
+                remoteRevision: normalizeSharedProfileRevision(remoteProfile.revision),
+                remoteUpdatedUtc: normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc)
+            };
+        }
+
+        const modColumns = getTableColumns(db, "Mods");
+        const workshopColumn = getWorkshopColumn(modColumns);
+        if (!workshopColumn) {
+            return buildSharedProfileSyncPreviewFailure("Could not determine workshop ID column in Mods table.");
+        }
+
+        const remoteMods = normalizeSharedProfileMods(remoteProfile.mods);
+        const settings = loadSettingsSnapshot();
+        const descriptorModsPath = resolveDescriptorModsDirectory(settings);
+        const managedModsPath = resolveManagedModsDirectory(settings);
+        const workshopRoots = getWorkshopContentRoots(settings?.steamCmdDownloadPath);
+        const localRows = db
+            .prepare(
+                `SELECT Id, ${workshopColumn} AS WorkshopId, Name, IsEnabled, LoadOrder, InstalledPath, DescriptorPath
+                 FROM Mods`
+            )
+            .all() as SyncModRow[];
+        const currentRows = localRows
+            .filter((row) => row.IsEnabled === 1)
+            .sort((a, b) => a.LoadOrder - b.LoadOrder || String(a.Name || "").localeCompare(String(b.Name || "")));
+
+        const localByWorkshopId = new Map<string, SyncModRow>();
+        for (const row of localRows) {
+            const workshopId = sanitizeWorkshopId(row.WorkshopId);
+            if (isValidWorkshopId(workshopId) && !localByWorkshopId.has(workshopId)) {
+                localByWorkshopId.set(workshopId, row);
+            }
+        }
+
+        const missingWorkshopIds: string[] = [];
+        const wantedRows: SyncModRow[] = [];
+        const wantedSet = new Set(remoteMods);
+        for (const workshopId of remoteMods) {
+            const local = localByWorkshopId.get(workshopId);
+            if (!local || !isWorkshopModInstalledLocally(workshopId, local, descriptorModsPath, managedModsPath, workshopRoots)) {
+                missingWorkshopIds.push(workshopId);
+                continue;
+            }
+
+            wantedRows.push(local);
+        }
+
+        const rowsToDisable = localRows.filter((row) => {
+            const workshopId = sanitizeWorkshopId(row.WorkshopId);
+            return row.IsEnabled === 1 && !wantedSet.has(workshopId);
+        });
+        const rowsToEnable = wantedRows.filter((row) => row.IsEnabled !== 1);
+        const preview = buildLoadOrderPreview(
+            currentRows,
+            wantedRows,
+            wantedRows.map((row) => sanitizeWorkshopId(row.WorkshopId)).filter(isValidWorkshopId),
+            "Review the shared profile sync before it changes enabled mods or load order.",
+            {
+                profileName,
+                confidence: "high"
+            }
+        );
+
+        return {
+            ...preview,
+            missingWorkshopIds,
+            enableModNames: rowsToEnable.map((row) => row.Name?.trim() || row.WorkshopId || `Mod ${row.Id}`),
+            disableModNames: rowsToDisable.map((row) => row.Name?.trim() || row.WorkshopId || `Mod ${row.Id}`),
+            remoteRevision: normalizeSharedProfileRevision(remoteProfile.revision),
+            remoteUpdatedUtc: normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc)
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown shared-profile preview error";
+        return buildSharedProfileSyncPreviewFailure(`Failed to preview shared profile: ${message}`);
+    } finally {
+        db.close();
+    }
 }
 
 export async function syncLibrarySharedProfile(
