@@ -1,20 +1,26 @@
+
+<p align="center">
+	<img src="ElectronSpike/assets/splash-art.png" alt="Stellaris Mod Manager Banner" width="600"/>
+</p>
+
 # Stellaris Mod Manager
 
 [![Build Installer](https://img.shields.io/github/actions/workflow/status/Beelzebub2/StellarisModManager/release-installer.yml?label=build%20installer)](https://github.com/Beelzebub2/StellarisModManager/actions/workflows/release-installer.yml)
 [![Issues](https://img.shields.io/github/issues/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/issues)
 [![Release](https://img.shields.io/github/v/release/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/releases)
 
-Desktop mod manager for Stellaris built with Electron and TypeScript.
 
-## What it does
+<p align="center"><b>Desktop mod manager for Stellaris built with Electron and TypeScript.</b></p>
 
-- **Library** — manage installed mods, toggle enabled/disabled, drag-and-drop load order
-- **Profiles** — create, rename, and switch profiles; share profiles via a public ID
-- **Version browser** — browse and install Steam Workshop mods filtered by your game version
-- **Auto-detection** — reads your game path to detect the installed Stellaris version automatically
-- **Compatibility reports** — report per-version compatibility and see community consensus
-- **Updates** — check for mod updates and reinstall in bulk
-- **Optional sync API** — Stellarisync Node.js service for community compatibility data
+## Features
+
+- **Library:** Manage installed mods, toggle enabled/disabled, drag-and-drop load order
+- **Profiles:** Create, rename, and switch profiles; share profiles via a public ID
+- **Version browser:** Browse and install Steam Workshop mods filtered by your game version
+- **Auto-detection:** Reads your game path to detect the installed Stellaris version automatically
+- **Compatibility reports:** Report per-version compatibility and see community consensus
+- **Updates:** Check for mod updates and reinstall in bulk
+- **Optional sync API:** Stellarisync Node.js service for community compatibility data
 
 ## Quick start
 
@@ -49,7 +55,7 @@ npm run pack
 
 Output is written to `ElectronSpike/release/`.
 
-## Settings — game version detection
+## Settings: Game version detection
 
 Set the **Game path** in Settings and the app will read `launcher-settings.json` from the game directory to detect your installed version. The detected version is shown in the Settings page and automatically pre-selects the correct version in the Version Browser tab. Detection runs when you:
 
