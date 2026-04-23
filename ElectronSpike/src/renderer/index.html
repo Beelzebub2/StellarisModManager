@@ -65,6 +65,14 @@
             <button id="modsPathMigrationNoticeOpen" type="button" class="button-secondary">Open progress</button>
         </aside>
 
+        <aside id="mergerProgressNotice" class="merger-progress-notice hidden" aria-live="polite">
+            <div class="merger-progress-notice-copy">
+                <strong id="mergerProgressNoticeTitle" class="merger-progress-notice-title">Merger working</strong>
+                <span id="mergerProgressNoticeMessage" class="merger-progress-notice-message">Preparing • 0% complete</span>
+            </div>
+            <button id="mergerProgressNoticeOpen" type="button" class="button-secondary">Open progress</button>
+        </aside>
+
         <!-- ==================== WORKSPACE ==================== -->
         <section class="workspace">
             <!-- ---- SIDEBAR ---- -->
@@ -87,13 +95,17 @@
                             <span class="nav-icon" data-icon="versions"></span>
                             <span class="nav-label">By Version</span>
                         </button>
+                        <button id="tabDownloads" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="queue"></span>
+                            <span class="nav-label">Downloads</span>
+                        </button>
                         <button id="tabLibrary" class="nav-btn" type="button">
                             <span class="nav-icon" data-icon="library"></span>
                             <span class="nav-label">Library</span>
                         </button>
-                        <button id="tabDownloads" class="nav-btn" type="button">
-                            <span class="nav-icon" data-icon="queue"></span>
-                            <span class="nav-label">Downloads</span>
+                        <button id="tabMerger" class="nav-btn" type="button">
+                            <span class="nav-icon" data-icon="merge"></span>
+                            <span class="nav-label">Merger</span>
                         </button>
                         <button id="tabWorkshop" class="nav-btn" type="button">
                             <span class="nav-icon" data-icon="workshop"></span>
@@ -400,25 +412,18 @@
                                     </div>
                                 </section>
 
-                                <section class="library-detail-actions-grid">
-                                    <button id="libraryActionUpdate" type="button"
-                                        class="action-btn action-btn-success">
-                                        <span class="nav-icon" data-icon="check"></span> Update
-                                    </button>
-                                    <button id="libraryActionReinstall" type="button" class="action-btn">
-                                        <span class="nav-icon" data-icon="reinstall"></span> Reinstall
-                                    </button>
-                                    <button id="libraryActionWorkshop" type="button" class="action-btn">
-                                        <span class="nav-icon" data-icon="workshop"></span> Workshop
-                                    </button>
-                                    <button id="libraryActionLocation" type="button" class="action-btn">
-                                        <span class="nav-icon" data-icon="folder"></span> File location
-                                    </button>
+                                <section class="detail-block">
+                                    <div class="detail-block-head">
+                                        <h4>Quick Actions</h4>
+                                    </div>
+                                    <p class="muted">Right-click this mod in the Library list for Workshop, update,
+                                        file-location, and remove actions.</p>
+                                    <section class="library-detail-actions-grid">
+                                        <button id="libraryActionReinstall" type="button" class="action-btn">
+                                            <span class="nav-icon" data-icon="reinstall"></span> Reinstall
+                                        </button>
+                                    </section>
                                 </section>
-
-                                <button id="libraryActionRemove" type="button" class="button-danger full-width">
-                                    <span class="nav-icon" data-icon="trash"></span> Remove mod
-                                </button>
                             </div>
                         </article>
                     </section>
@@ -431,6 +436,100 @@
                         </div>
                         <span id="libraryUpdatesFooter" class="status-chip status-chip-muted">Updates: 0</span>
                     </footer>
+                </section>
+
+                <!-- ======== MERGER PAGE ======== -->
+                <section id="pageMerger" class="page-section page-section-merger hidden">
+                    <header class="merger-header">
+                        <div>
+                            <p class="eyebrow">Merger</p>
+                            <h2>Analyze and Build a Deterministic Merge</h2>
+                            <p class="muted merger-header-copy">Scan the active profile, inspect file-level conflicts, and build a merged local mod without modifying the original sources.</p>
+                        </div>
+                        <div class="merger-header-meta">
+                            <span id="mergerProfileChip" class="status-chip status-chip-muted">Profile: --</span>
+                            <span id="mergerEnabledChip" class="status-chip status-chip-muted">Enabled mods: 0</span>
+                            <span id="mergerAnalysisChip" class="status-chip status-chip-muted">Last analysis: Never</span>
+                        </div>
+                    </header>
+
+                    <section class="merger-toolbar settings-card settings-card-primary">
+                        <div class="merger-toolbar-actions">
+                            <button id="mergerAnalyzeBtn" type="button">
+                                <span class="nav-icon" data-icon="refresh"></span> Analyze conflicts
+                            </button>
+                            <button id="mergerBuildBtn" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="merge"></span> Build merged mod
+                            </button>
+                            <button id="mergerOpenOutputBtn" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="folder"></span> Open output folder
+                            </button>
+                            <button id="mergerExportReportBtn" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="export"></span> Export report
+                            </button>
+                        </div>
+                        <div class="merger-toolbar-meta">
+                            <p class="settings-key">Last output path</p>
+                            <p id="mergerLastOutputPath" class="settings-value mono">Not built yet.</p>
+                        </div>
+                    </section>
+
+                    <section class="merger-metrics downloads-metrics">
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Enabled Mods</p>
+                            <p id="mergerMetricEnabledMods" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Files Scanned</p>
+                            <p id="mergerMetricFilesScanned" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric downloads-metric-warn">
+                            <p class="downloads-metric-label">File Conflicts</p>
+                            <p id="mergerMetricFileConflicts" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Script Conflicts</p>
+                            <p id="mergerMetricScriptConflicts" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Localisation</p>
+                            <p id="mergerMetricLocalisationConflicts" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Asset Conflicts</p>
+                            <p id="mergerMetricAssetConflicts" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Auto Resolved</p>
+                            <p id="mergerMetricAutoResolved" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric downloads-metric-warn">
+                            <p class="downloads-metric-label">Unresolved</p>
+                            <p id="mergerMetricUnresolved" class="downloads-metric-value">0</p>
+                        </article>
+                    </section>
+
+                    <section class="merger-main">
+                        <article class="merger-tree-shell">
+                            <header class="merger-tree-header">
+                                <div>
+                                    <h3>Conflict Tree</h3>
+                                    <p class="muted">Grouped by file type using the current profile load order.</p>
+                                </div>
+                                <span id="mergerConflictTreeCount" class="status-chip status-chip-muted">0 entries</span>
+                            </header>
+                            <div id="mergerConflictTree" class="merger-conflict-tree">
+                                <div class="merger-empty muted">Run an analysis to populate the merger tree.</div>
+                            </div>
+                            <footer class="merger-tree-footer">
+                                <span id="mergerStatus" class="muted">Merger ready.</span>
+                            </footer>
+                        </article>
+
+                        <article id="mergerDetailPanel" class="merger-detail-shell">
+                            <div class="merger-empty muted">Select a merged file entry to inspect the winner, source mods, and resolution options.</div>
+                        </article>
+                    </section>
                 </section>
 
                 <!-- ======== DOWNLOADS PAGE ======== -->

@@ -1627,6 +1627,40 @@ body[data-theme="frost-white"] .aurora {
         transform var(--dur-base) var(--ease-out);
 }
 
+.page-section-merger {
+    overflow: visible;
+    align-content: start;
+    grid-template-rows: auto auto auto auto;
+    padding-right: 4px;
+}
+
+body[data-active-tab="merger"] {
+    overflow: auto;
+}
+
+body[data-active-tab="merger"].drawer-open {
+    overflow: hidden;
+}
+
+body[data-active-tab="merger"] .window-shell {
+    height: auto;
+    min-height: var(--app-vh);
+    grid-template-rows: auto auto auto;
+}
+
+body[data-active-tab="merger"] .workspace {
+    align-items: start;
+}
+
+body[data-active-tab="merger"] .content {
+    overflow: visible;
+    grid-template-rows: auto;
+}
+
+body[data-active-tab="merger"] .page-section.hidden {
+    display: none !important;
+}
+
 .page-section.hidden {
     display: grid !important;
     visibility: hidden;
@@ -2124,6 +2158,18 @@ button:disabled {
     transition-duration: 80ms;
 }
 
+.mod-card-skeleton {
+    pointer-events: none;
+}
+
+.mod-card-skeleton:hover,
+.mod-card-skeleton:active {
+    transform: none;
+    box-shadow: none;
+    border-color: var(--border);
+    background: var(--bg-2);
+}
+
 .mod-thumb {
     all: unset;
     box-sizing: border-box;
@@ -2170,6 +2216,12 @@ button:disabled {
     transition: transform var(--dur-slow) var(--ease-out);
 }
 
+.mod-thumb-skeleton {
+    cursor: default;
+    position: relative;
+    background: linear-gradient(140deg, var(--bg-3), var(--bg-4));
+}
+
 .mod-fallback {
     height: 100%;
     display: grid;
@@ -2189,6 +2241,61 @@ button:disabled {
     gap: 16px;
     flex: 1 0 auto;
     min-width: 0;
+}
+
+.version-skeleton-copy {
+    display: grid;
+    gap: 12px;
+}
+
+.version-skeleton-title {
+    width: min(78%, 220px);
+    height: 24px;
+}
+
+.version-skeleton-badges,
+.version-skeleton-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.version-skeleton-badge {
+    width: 74px;
+    height: 22px;
+    border-radius: var(--r-pill);
+}
+
+.version-skeleton-badge-wide {
+    width: 116px;
+}
+
+.version-skeleton-stat {
+    min-width: 84px;
+    display: grid;
+    gap: 6px;
+}
+
+.version-skeleton-stat-value {
+    width: 72px;
+    height: 14px;
+}
+
+.version-skeleton-stat-label {
+    width: 54px;
+    height: 8px;
+}
+
+.version-skeleton-meta {
+    width: 100%;
+    height: 34px;
+}
+
+.version-skeleton-action {
+    display: block;
+    width: 132px;
+    height: 36px;
+    border-radius: var(--r-pill);
 }
 
 .mod-copy {
@@ -3230,6 +3337,202 @@ button:disabled {
     align-content: start;
 }
 
+.merger-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.merger-header-copy {
+    margin: 6px 0 0;
+    max-width: 72ch;
+}
+
+.merger-header-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.merger-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+}
+
+.merger-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.merger-toolbar-meta {
+    min-width: 260px;
+    display: grid;
+    gap: 4px;
+}
+
+.merger-metrics {
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+}
+
+.merger-main {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.95fr);
+    gap: 10px;
+    align-items: start;
+}
+
+.merger-tree-shell,
+.merger-detail-shell {
+    min-height: 0;
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    padding: 16px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+}
+
+.merger-tree-shell {
+    overflow: visible;
+}
+
+.merger-detail-shell {
+    overflow: visible;
+}
+
+.merger-tree-header,
+.merger-detail-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.merger-tree-header h3,
+.merger-detail-header h3,
+.merger-tree-group-header h4 {
+    margin: 0;
+}
+
+.merger-conflict-tree {
+    min-height: 0;
+    max-height: min(58vh, 560px);
+    overflow: auto;
+    display: grid;
+    gap: 12px;
+    padding-right: 4px;
+}
+
+.merger-tree-group {
+    display: grid;
+    gap: 8px;
+}
+
+.merger-tree-group-header h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-3);
+}
+
+.merger-tree-row,
+.merger-source-row {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-3);
+    color: inherit;
+    text-align: left;
+    transition:
+        transform var(--dur-fast) var(--ease-out),
+        border-color var(--dur-fast) var(--ease-out),
+        background var(--dur-fast) var(--ease-out);
+}
+
+.merger-tree-row:hover,
+.merger-source-row:hover {
+    transform: translateY(-1px);
+    border-color: var(--accent-border);
+}
+
+.merger-tree-row.is-selected,
+.merger-source-row.is-current {
+    border-color: var(--accent-border);
+    background: color-mix(in srgb, var(--accent-soft) 34%, var(--bg-3));
+}
+
+.merger-tree-row-main,
+.merger-tree-row-meta,
+.merger-source-main,
+.merger-source-meta {
+    display: grid;
+    gap: 6px;
+}
+
+.merger-tree-row-meta,
+.merger-source-meta {
+    justify-items: end;
+}
+
+.merger-tree-footer {
+    display: flex;
+    align-items: center;
+}
+
+.merger-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.merger-detail-card {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-3);
+}
+
+.merger-detail-actions,
+.merger-detail-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.merger-detail-chips {
+    justify-content: flex-end;
+}
+
+.merger-source-list {
+    display: grid;
+    gap: 8px;
+    max-height: min(44vh, 420px);
+    overflow: auto;
+    padding-right: 4px;
+    align-content: start;
+}
+
+.merger-empty {
+    padding: 18px;
+    border: 1px dashed var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-3);
+}
+
 .settings-card {
     padding: 18px;
     display: grid;
@@ -4017,22 +4320,26 @@ pre {
     gap: 8px;
 }
 
-.migration-progress-shell {
+.migration-progress-shell,
+.merger-progress-shell {
     display: grid;
     gap: 12px;
     margin-top: 4px;
 }
 
-.migration-progress-copy {
+.migration-progress-copy,
+.merger-progress-copy {
     display: grid;
     gap: 8px;
 }
 
-.migration-progress-copy p {
+.migration-progress-copy p,
+.merger-progress-copy p {
     margin: 0;
 }
 
-.migration-progress-phase {
+.migration-progress-phase,
+.merger-progress-phase {
     margin: 0;
     font-size: 11.5px;
     letter-spacing: 0.08em;
@@ -4040,12 +4347,14 @@ pre {
     color: var(--accent-hover);
 }
 
-.migration-progress-current {
+.migration-progress-current,
+.merger-progress-current {
     line-height: 1.45;
     word-break: break-word;
 }
 
-.migration-progress-meta {
+.migration-progress-meta,
+.merger-progress-meta {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -4053,7 +4362,8 @@ pre {
     gap: 8px 12px;
 }
 
-.migration-progress-track {
+.migration-progress-track,
+.merger-progress-track {
     position: relative;
     height: 12px;
     border-radius: 999px;
@@ -4063,7 +4373,8 @@ pre {
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
-.migration-progress-track > span {
+.migration-progress-track > span,
+.merger-progress-track > span {
     display: block;
     width: 0;
     height: 100%;
@@ -4073,19 +4384,21 @@ pre {
     transition: width var(--dur-base) var(--ease), opacity var(--dur-base) var(--ease);
 }
 
-.migration-progress-track > span[data-progress-mode="indeterminate"] {
+.migration-progress-track > span[data-progress-mode="indeterminate"],
+.merger-progress-track > span[data-progress-mode="indeterminate"] {
     width: 38%;
     background: linear-gradient(90deg, transparent 0%, var(--accent-hover) 28%, var(--accent) 100%);
     animation: migrationTrackSlide 1.25s linear infinite;
 }
 
-.migration-progress-track > span[data-progress-mode="determinate"] {
+.migration-progress-track > span[data-progress-mode="determinate"],
+.merger-progress-track > span[data-progress-mode="determinate"] {
     animation: none;
 }
 
-.migration-notice {
+.migration-notice,
+.merger-progress-notice {
     position: fixed;
-    top: calc(env(titlebar-area-height, 54px) + 16px);
     right: 18px;
     z-index: 95;
     width: min(320px, calc(100vw - 36px));
@@ -4102,7 +4415,20 @@ pre {
     cursor: pointer;
 }
 
-.migration-notice-copy {
+.migration-notice {
+    top: calc(env(titlebar-area-height, 54px) + 16px);
+}
+
+.merger-progress-notice {
+    top: calc(env(titlebar-area-height, 54px) + 16px);
+}
+
+#modsPathMigrationNotice:not(.hidden) ~ #mergerProgressNotice:not(.hidden) {
+    top: calc(env(titlebar-area-height, 54px) + 88px);
+}
+
+.migration-notice-copy,
+.merger-progress-notice-copy {
     min-width: 0;
     flex: 1 1 auto;
     display: grid;
@@ -4110,31 +4436,39 @@ pre {
 }
 
 .migration-notice-title,
-.migration-notice-message {
+.migration-notice-message,
+.merger-progress-notice-title,
+.merger-progress-notice-message {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.migration-notice-title {
+.migration-notice-title,
+.merger-progress-notice-title {
     font-size: 12.5px;
     line-height: 1.3;
 }
 
-.migration-notice-message {
+.migration-notice-message,
+.merger-progress-notice-message {
     font-size: 11px;
     line-height: 1.35;
     color: var(--text-2);
 }
 
-.migration-notice button {
+.migration-notice button,
+.merger-progress-notice button {
     flex: 0 0 auto;
     white-space: nowrap;
 }
 
 body[data-theme="starlight-white"] .migration-notice,
 body[data-theme="ivory-white"] .migration-notice,
-body[data-theme="frost-white"] .migration-notice {
+body[data-theme="frost-white"] .migration-notice,
+body[data-theme="starlight-white"] .merger-progress-notice,
+body[data-theme="ivory-white"] .merger-progress-notice,
+body[data-theme="frost-white"] .merger-progress-notice {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(236, 241, 248, 0.94));
 }
 
@@ -4247,6 +4581,12 @@ body[data-theme="frost-white"] .migration-notice {
             color-mix(in srgb, var(--text-3) 12%, transparent) 50%,
             transparent 100%);
     animation: skeletonShimmer 1.4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton::after {
+        animation: none !important;
+    }
 }
 
 .skeleton-card {
@@ -4371,6 +4711,11 @@ body[data-theme="frost-white"] .migration-notice {
         grid-template-columns: 1fr;
     }
 
+    .merger-main,
+    .merger-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
     .settings-shell {
         grid-template-columns: 1fr;
     }
@@ -4462,6 +4807,13 @@ body[data-theme="frost-white"] .migration-notice {
     }
 }
 
+@media (max-width: 1400px) {
+    .merger-main,
+    .merger-detail-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 @media (max-width: 900px) {
     body {
         overflow: auto;
@@ -4489,6 +4841,16 @@ body[data-theme="frost-white"] .migration-notice {
         top: calc(env(titlebar-area-height, 54px) + 12px);
         right: 12px;
         width: min(340px, calc(100vw - 24px));
+    }
+
+    .merger-progress-notice {
+        top: calc(env(titlebar-area-height, 54px) + 12px);
+        right: 12px;
+        width: min(340px, calc(100vw - 24px));
+    }
+
+    #modsPathMigrationNotice:not(.hidden) ~ #mergerProgressNotice:not(.hidden) {
+        top: calc(env(titlebar-area-height, 54px) + 84px);
     }
 
     .sidebar {
@@ -4521,6 +4883,28 @@ body[data-theme="frost-white"] .migration-notice {
     .downloads-columns,
     .settings-task-grid {
         grid-template-columns: 1fr;
+    }
+
+    .merger-header,
+    .merger-toolbar,
+    .merger-tree-row,
+    .merger-source-row,
+    .merger-detail-header {
+        flex-direction: column;
+    }
+
+    .merger-header-meta,
+    .merger-detail-chips {
+        justify-content: flex-start;
+    }
+
+    .merger-tree-row-meta,
+    .merger-source-meta {
+        justify-items: start;
+    }
+
+    .merger-metrics {
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
     }
 
     .library-toolbar,
@@ -4582,6 +4966,10 @@ body[data-theme="frost-white"] .migration-notice {
     }
 
     .downloads-metrics {
+        grid-template-columns: 1fr;
+    }
+
+    .merger-metrics {
         grid-template-columns: 1fr;
     }
 

@@ -11,8 +11,18 @@ import type {
     LaunchGameResult,
     LibraryActionResult,
     LibraryCompatibilityReportRequest,
+    LibraryModContextMenuCommandEvent,
     LibraryImportResult,
     LibraryMoveDirectionRequest,
+    MergePlan,
+    ModMergerAnalyzeRequest,
+    ModMergerAnalyzeResult,
+    ModMergerBuildRequest,
+    ModMergerBuildResult,
+    ModMergerExportReportResult,
+    ModMergerProgressStatus,
+    ModMergerResolutionResult,
+    ModMergerSetResolutionRequest,
     ModsPathMigrationRequest,
     ModsPathMigrationResult,
     ModsPathMigrationStatus,
@@ -26,6 +36,7 @@ import type {
     LibrarySyncSharedProfileRequest,
     LibrarySyncSharedProfileResult,
     LibrarySnapshot,
+    ShowLibraryModContextMenuRequest,
     SettingsAutoDetectResult,
     SettingsSaveResult,
     SettingsSnapshot,
@@ -96,6 +107,18 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:moveLibraryMod", request) as Promise<LibraryActionResult>,
     reorderLibraryMod: (request: LibraryReorderRequest) =>
         ipcRenderer.invoke("spike:reorderLibraryMod", request) as Promise<LibraryActionResult>,
+    showLibraryModContextMenu: (request: ShowLibraryModContextMenuRequest) =>
+        ipcRenderer.invoke("spike:showLibraryModContextMenu", request) as Promise<void>,
+    onLibraryModContextMenuCommand: (handler: (event: LibraryModContextMenuCommandEvent) => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, payload: unknown) => {
+            handler(payload as LibraryModContextMenuCommandEvent);
+        };
+
+        ipcRenderer.on("spike:onLibraryModContextMenuCommand", listener);
+        return () => {
+            ipcRenderer.removeListener("spike:onLibraryModContextMenuCommand", listener);
+        };
+    },
     uninstallLibraryMod: (modId: number) =>
         ipcRenderer.invoke("spike:uninstallLibraryMod", modId) as Promise<LibraryActionResult>,
     checkLibraryUpdates: () =>
@@ -110,6 +133,18 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:reportLibraryCompatibility", request) as Promise<LibraryActionResult>,
     scanLocalMods: () =>
         ipcRenderer.invoke("spike:scanLocalMods") as Promise<ScanLocalModsResult>,
+    modMergerAnalyze: (request?: ModMergerAnalyzeRequest) =>
+        ipcRenderer.invoke("spike:modMergerAnalyze", request) as Promise<ModMergerAnalyzeResult>,
+    modMergerGetPlan: () =>
+        ipcRenderer.invoke("spike:modMergerGetPlan") as Promise<MergePlan | null>,
+    getModMergerProgressStatus: () =>
+        ipcRenderer.invoke("spike:getModMergerProgressStatus") as Promise<ModMergerProgressStatus>,
+    modMergerSetResolution: (request: ModMergerSetResolutionRequest) =>
+        ipcRenderer.invoke("spike:modMergerSetResolution", request) as Promise<ModMergerResolutionResult>,
+    modMergerBuild: (request?: ModMergerBuildRequest) =>
+        ipcRenderer.invoke("spike:modMergerBuild", request) as Promise<ModMergerBuildResult>,
+    modMergerExportReport: () =>
+        ipcRenderer.invoke("spike:modMergerExportReport") as Promise<ModMergerExportReportResult>,
     getSteamDiscoverySummary: () =>
         ipcRenderer.invoke("spike:getSteamDiscoverySummary") as Promise<SteamDiscoverySummary>,
     startSteamCmdProbe: (request?: SteamCmdProbeRequest) =>

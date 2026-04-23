@@ -15,6 +15,8 @@ const state = {
     settingsTab: "general",
     downloadEventUnsubscribe: null,
     searchDebounceHandle: null,
+    versionLoadingDelayHandle: null,
+    versionSkeletonVisible: false,
     versionRequestSeq: 0,
     activeDetailWorkshopId: null,
     activeCards: [],
@@ -25,6 +27,7 @@ const state = {
     gamePollingHandle: null,
     stellarisyncPollingHandle: null,
     modsPathMigrationPollingHandle: null,
+    mergerProgressPollingHandle: null,
     modsPathMigration: {
         active: false,
         sourceModsPath: null,
@@ -62,6 +65,28 @@ const state = {
         availableTags: [],
         selectedReportTags: [],
         savedReportTagsByModVersion: {}
+    },
+    merger: {
+        plan: null,
+        summary: null,
+        selectedVirtualPath: null,
+        lastBuildOutputPath: null,
+        lastReportPath: null,
+        progress: {
+            active: false,
+            operation: null,
+            startedAtUtc: null,
+            completedAtUtc: null,
+            phase: null,
+            currentItemLabel: null,
+            processedItemCount: 0,
+            totalItemCount: 0,
+            progressPercent: 0,
+            message: null,
+            lastResultOk: null,
+            modalVisible: false,
+            backgrounded: false
+        }
     }
 };
 
@@ -69,6 +94,9 @@ const libraryVisibility = globalThis.libraryVisibility || {};
 const appUpdateState = globalThis.appUpdateState || {};
 const promptInputBehavior = globalThis.promptInputBehavior || {};
 const downloadQueueState = globalThis.downloadQueueState || {};
+
+const VERSION_SKELETON_DELAY_MS = 220;
+const VERSION_SKELETON_CARD_COUNT = 6;
 
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
@@ -110,6 +138,7 @@ const ICON_PATHS = Object.freeze({
     forward: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
     refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
     home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+    merge: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="m9 8-4 4 4 4"/><path d="m15 8 4 4-4 4"/><path d="M14 12H10"/>',
     chevronUp: '<polyline points="18 15 12 9 6 15"/>',
     chevronDown: '<polyline points="6 9 12 15 18 9"/>'
 });
@@ -320,6 +349,11 @@ function setLibraryStatus(text) {
     if (state.selectedTab === "library") setGlobalStatus(text);
 }
 
+function setMergerStatus(text) {
+    setText("mergerStatus", text);
+    if (state.selectedTab === "merger") setGlobalStatus(text);
+}
+
 function setResultSummary(total, page, pages) {
     setText("resultCountChip", `${total} matches`);
     setText("pageCursorChip", `Page ${page}/${pages}`);
@@ -374,6 +408,89 @@ function setLoadingState(isLoading) {
 function syncSearchClearButton() {
     const btn = byId("searchClear");
     if (btn) btn.disabled = !state.searchText;
+}
+
+function clearVersionLoadingDelay() {
+    if (state.versionLoadingDelayHandle !== null) {
+        clearTimeout(state.versionLoadingDelayHandle);
+        state.versionLoadingDelayHandle = null;
+    }
+}
+
+function resetVersionCardsLoadingState(container = byId("versionCards")) {
+    if (!container) return;
+    container.classList.remove("is-loading-skeleton");
+    container.setAttribute("aria-busy", "false");
+    state.versionSkeletonVisible = false;
+}
+
+function buildVersionSkeletonCards(count = VERSION_SKELETON_CARD_COUNT) {
+    return Array.from({ length: count }, () => `
+        <article class="mod-card mod-card-skeleton" aria-hidden="true">
+            <div class="mod-thumb mod-thumb-skeleton skeleton"></div>
+            <div class="mod-body">
+                <div class="mod-copy version-skeleton-copy">
+                    <div class="skeleton version-skeleton-title"></div>
+                    <div class="version-skeleton-badges">
+                        <span class="skeleton version-skeleton-badge"></span>
+                        <span class="skeleton version-skeleton-badge version-skeleton-badge-wide"></span>
+                    </div>
+                    <div class="version-skeleton-stats">
+                        <div class="version-skeleton-stat">
+                            <span class="skeleton version-skeleton-stat-value"></span>
+                            <span class="skeleton version-skeleton-stat-label"></span>
+                        </div>
+                        <div class="version-skeleton-stat">
+                            <span class="skeleton version-skeleton-stat-value"></span>
+                            <span class="skeleton version-skeleton-stat-label"></span>
+                        </div>
+                    </div>
+                    <div class="skeleton version-skeleton-meta"></div>
+                </div>
+                <div class="mod-footer">
+                    <span class="skeleton version-skeleton-action"></span>
+                </div>
+            </div>
+        </article>`).join("\n");
+}
+
+function renderVersionLoadingSkeletons() {
+    const container = byId("versionCards");
+    if (!container) return;
+
+    state.activeCards = [];
+    state.versionSkeletonVisible = true;
+    container.classList.add("is-loading-skeleton");
+    container.setAttribute("aria-busy", "true");
+    container.innerHTML = buildVersionSkeletonCards();
+}
+
+function scheduleVersionLoadingSkeleton(requestSeq) {
+    clearVersionLoadingDelay();
+    state.versionSkeletonVisible = false;
+
+    state.versionLoadingDelayHandle = window.setTimeout(() => {
+        state.versionLoadingDelayHandle = null;
+        if (!state.isLoading || requestSeq !== state.versionRequestSeq) {
+            return;
+        }
+
+        renderVersionLoadingSkeletons();
+    }, VERSION_SKELETON_DELAY_MS);
+}
+
+function renderVersionFeedbackCard(title, message) {
+    state.activeCards = [];
+    clearVersionLoadingDelay();
+    const container = byId("versionCards");
+    if (!container) return;
+
+    resetVersionCardsLoadingState(container);
+    container.innerHTML = `
+        <article class="panel-lite" style="padding:20px;text-align:center;">
+            <h3 style="margin:0 0 6px">${escapeHtml(title)}</h3>
+            <p class="muted">${escapeHtml(message)}</p>
+        </article>`;
 }
 
 /* ============================================================
@@ -803,6 +920,278 @@ function showModsPathMigrationProgressModal() {
     renderModsPathMigrationBackgroundNotice();
 }
 
+function getMergerProgressTitle(progress = state.merger.progress) {
+    switch (progress.operation) {
+        case "analyze":
+            return "Analyzing merger conflicts";
+        case "build":
+            return "Building merged mod";
+        case "export-report":
+            return "Exporting merge report";
+        default:
+            return "Merger in progress";
+    }
+}
+
+function getMergerProgressBusyMessage(progress = state.merger.progress) {
+    if (progress.message) {
+        return progress.message;
+    }
+
+    switch (progress.operation) {
+        case "analyze":
+            return "Scanning enabled mods and building the conflict plan.";
+        case "build":
+            return "Writing the merged output mod and its manifest files.";
+        case "export-report":
+            return "Writing a standalone merge report.";
+        default:
+            return "Working on the current merger task.";
+    }
+}
+
+function getMergerProgressCountLabel(progress = state.merger.progress) {
+    const processed = Math.max(0, Number(progress.processedItemCount || 0));
+    const total = Math.max(0, Number(progress.totalItemCount || 0));
+    if (total <= 0) {
+        return "Preparing work queue...";
+    }
+
+    return `${formatInteger(processed)} of ${formatInteger(total)} items complete`;
+}
+
+function getMergerProgressPercentLabel(progress = state.merger.progress) {
+    const percent = Math.max(0, Math.min(100, Math.round(Number(progress.progressPercent || 0))));
+    return `${percent}% complete`;
+}
+
+function syncMergerProgressPolling() {
+    if (state.merger.progress.active) {
+        if (state.mergerProgressPollingHandle) {
+            return;
+        }
+
+        state.mergerProgressPollingHandle = setInterval(() => void refreshMergerProgressStatus(), 500);
+        return;
+    }
+
+    if (state.mergerProgressPollingHandle) {
+        clearInterval(state.mergerProgressPollingHandle);
+        state.mergerProgressPollingHandle = null;
+    }
+}
+
+function renderMergerProgressModal() {
+    if (!state.merger.progress.modalVisible || !state.merger.progress.active) {
+        return;
+    }
+
+    const titleEl = byId("modalTitle");
+    const msgEl = byId("modalMessage");
+    const confirmBtn = byId("modalConfirm");
+    const phaseEl = byId("mergerProgressPhase");
+    const currentItemEl = byId("mergerProgressCurrentItem");
+    const countEl = byId("mergerProgressCount");
+    const percentEl = byId("mergerProgressPercent");
+    const progressBar = byId("mergerProgressBar");
+
+    if (titleEl) titleEl.textContent = getMergerProgressTitle();
+    if (msgEl) msgEl.textContent = getMergerProgressBusyMessage();
+    if (confirmBtn) {
+        confirmBtn.textContent = state.merger.progress.backgrounded ? "Hide" : "Run in background";
+    }
+    if (phaseEl) {
+        phaseEl.textContent = state.merger.progress.phase || "Preparing";
+    }
+    if (currentItemEl) {
+        currentItemEl.innerHTML = `<strong>Current item:</strong> ${escapeHtml(state.merger.progress.currentItemLabel || "Preparing work queue...")}`;
+    }
+    if (countEl) {
+        countEl.textContent = getMergerProgressCountLabel();
+    }
+    if (percentEl) {
+        percentEl.textContent = getMergerProgressPercentLabel();
+    }
+    if (progressBar) {
+        const percent = Math.max(0, Math.min(100, Math.round(Number(state.merger.progress.progressPercent || 0))));
+        const isDeterminate = state.merger.progress.totalItemCount > 0;
+        progressBar.setAttribute("data-progress-mode", isDeterminate ? "determinate" : "indeterminate");
+        progressBar.style.width = isDeterminate ? `${Math.max(percent, 4)}%` : "";
+    }
+}
+
+function renderMergerProgressNotice() {
+    const notice = byId("mergerProgressNotice");
+    const titleEl = byId("mergerProgressNoticeTitle");
+    const messageEl = byId("mergerProgressNoticeMessage");
+    const openBtn = byId("mergerProgressNoticeOpen");
+    if (!notice || !titleEl || !messageEl || !openBtn) {
+        return;
+    }
+
+    const shouldShow = state.merger.progress.active
+        && state.merger.progress.backgrounded
+        && !state.merger.progress.modalVisible;
+
+    notice.classList.toggle("hidden", !shouldShow);
+    if (!shouldShow) {
+        return;
+    }
+
+    titleEl.textContent = state.merger.progress.currentItemLabel || getMergerProgressTitle();
+    messageEl.textContent = `${state.merger.progress.phase || "Working"} | ${getMergerProgressPercentLabel()}`;
+    openBtn.textContent = "Open progress";
+}
+
+function hideMergerProgressModal() {
+    const overlay = byId("modalOverlay");
+    const extra = byId("modalExtra");
+    const confirmBtn = byId("modalConfirm");
+    const cancelBtn = byId("modalCancel");
+    const altBtn = byId("modalAlt");
+    const backdrop = byId("modalBackdrop");
+
+    state.merger.progress.modalVisible = false;
+    if (overlay) overlay.classList.add("hidden");
+    if (extra) extra.innerHTML = "";
+    if (confirmBtn) {
+        confirmBtn.onclick = null;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Confirm";
+    }
+    if (cancelBtn) {
+        cancelBtn.onclick = null;
+        cancelBtn.disabled = false;
+        cancelBtn.classList.remove("hidden");
+        cancelBtn.textContent = "Cancel";
+    }
+    if (altBtn) {
+        altBtn.onclick = null;
+        altBtn.classList.add("hidden");
+        altBtn.textContent = "Alternate";
+    }
+    if (backdrop) backdrop.onclick = null;
+    renderMergerProgressNotice();
+}
+
+function showMergerProgressModal() {
+    const overlay = byId("modalOverlay");
+    const titleEl = byId("modalTitle");
+    const msgEl = byId("modalMessage");
+    const extra = byId("modalExtra");
+    const confirmBtn = byId("modalConfirm");
+    const cancelBtn = byId("modalCancel");
+    const altBtn = byId("modalAlt");
+    const backdrop = byId("modalBackdrop");
+
+    state.merger.progress.modalVisible = true;
+    state.merger.progress.backgrounded = false;
+
+    if (titleEl) titleEl.textContent = getMergerProgressTitle();
+    if (msgEl) msgEl.textContent = getMergerProgressBusyMessage();
+    if (confirmBtn) {
+        confirmBtn.textContent = "Run in background";
+        confirmBtn.disabled = false;
+    }
+    if (cancelBtn) {
+        cancelBtn.classList.add("hidden");
+        cancelBtn.disabled = true;
+        cancelBtn.onclick = null;
+    }
+    if (altBtn) {
+        altBtn.classList.add("hidden");
+        altBtn.onclick = null;
+        altBtn.textContent = "Alternate";
+    }
+    if (extra) {
+        extra.innerHTML = [
+            '<div class="merger-progress-shell">',
+            '  <div class="merger-progress-copy">',
+            '    <p class="muted">Large profiles can take a while to analyze or build. You can background this task and keep working elsewhere in the app.</p>',
+            '    <p id="mergerProgressPhase" class="merger-progress-phase">Preparing</p>',
+            '    <p id="mergerProgressCurrentItem" class="merger-progress-current muted">Current item: Preparing work queue...</p>',
+            '    <div class="merger-progress-meta">',
+            '      <span id="mergerProgressCount" class="muted">Preparing work queue...</span>',
+            '      <strong id="mergerProgressPercent">0% complete</strong>',
+            '    </div>',
+            '  </div>',
+            '  <div class="merger-progress-track" aria-hidden="true"><span id="mergerProgressBar" data-progress-mode="indeterminate"></span></div>',
+            '</div>'
+        ].join("");
+    }
+    if (backdrop) backdrop.onclick = null;
+    if (overlay) overlay.classList.remove("hidden");
+
+    if (confirmBtn) {
+        confirmBtn.onclick = () => {
+            state.merger.progress.backgrounded = true;
+            hideMergerProgressModal();
+            setMergerStatus(`${getMergerProgressTitle()} running in background.`);
+        };
+    }
+
+    renderMergerProgressModal();
+    renderMergerProgressNotice();
+}
+
+function beginMergerProgress(operation, message) {
+    state.merger.progress = {
+        ...state.merger.progress,
+        active: true,
+        operation,
+        startedAtUtc: new Date().toISOString(),
+        completedAtUtc: null,
+        phase: "Preparing",
+        currentItemLabel: null,
+        processedItemCount: 0,
+        totalItemCount: 0,
+        progressPercent: 0,
+        message,
+        lastResultOk: null,
+        modalVisible: true,
+        backgrounded: false
+    };
+
+    showMergerProgressModal();
+    renderMergerProgressNotice();
+    syncMergerProgressPolling();
+    syncMergerButtons();
+}
+
+function applyMergerProgressStatus(status) {
+    const previousActive = state.merger.progress.active;
+    state.merger.progress = {
+        ...state.merger.progress,
+        ...(status || {})
+    };
+
+    if (state.merger.progress.active) {
+        if (state.merger.progress.modalVisible) {
+            renderMergerProgressModal();
+        }
+        renderMergerProgressNotice();
+        syncMergerProgressPolling();
+        syncMergerButtons();
+        return;
+    }
+
+    syncMergerProgressPolling();
+    renderMergerProgressNotice();
+    syncMergerButtons();
+    if (previousActive) {
+        hideMergerProgressModal();
+    }
+}
+
+async function refreshMergerProgressStatus() {
+    try {
+        const status = await window.spikeApi.getModMergerProgressStatus();
+        applyMergerProgressStatus(status);
+    } catch {
+        syncMergerProgressPolling();
+    }
+}
+
 /* ============================================================
    STELLARISYNC STATUS
    ============================================================ */
@@ -1071,6 +1460,9 @@ function renderCards(cards) {
     const container = byId("versionCards");
     if (!container) return;
 
+    clearVersionLoadingDelay();
+    resetVersionCardsLoadingState(container);
+
     if (!cards || cards.length === 0) {
         container.innerHTML = `
             <article class="panel-lite" style="padding:20px;text-align:center;">
@@ -1174,6 +1566,7 @@ async function refreshVersionResults() {
     state.versionRequestSeq = requestSeq;
 
     setLoadingState(true);
+    scheduleVersionLoadingSkeleton(requestSeq);
     try {
         const result = await window.spikeApi.queryVersionMods({
             selectedVersion: state.selectedVersion,
@@ -1198,9 +1591,13 @@ async function refreshVersionResults() {
         }
 
         const msg = error instanceof Error ? error.message : "Unknown error.";
+        renderVersionFeedbackCard("Version browser failed", msg);
+        setText("pageSummary", "Page 1 of 1");
+        setResultSummary(0, 1, 1);
         setVersionStatus(`Version browser failed: ${msg}`);
     } finally {
         if (requestSeq === state.versionRequestSeq) {
+            clearVersionLoadingDelay();
             setLoadingState(false);
         }
     }
@@ -2700,6 +3097,80 @@ function getLibraryModById(modId) {
     return s ? s.mods.find((m) => m.id === modId) || null : null;
 }
 
+function selectLibraryMod(modId) {
+    if (!Number.isFinite(modId) || modId <= 0 || state.library.selectedModId === modId) {
+        return false;
+    }
+
+    state.library.selectedModId = modId;
+    state.library.descriptorTagsExpanded = false;
+    restoreLibraryTagDraftForSelectedMod();
+    renderLibraryList();
+    return true;
+}
+
+function openLibraryModWorkshop(mod) {
+    if (!mod?.workshopId) {
+        return;
+    }
+
+    const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`;
+    state.workshopReturnContext = null;
+    activateTab("workshop");
+    const webview = byId("workshopWebview");
+    if (webview) webview.loadURL(url);
+    const urlInput = byId("workshopUrl");
+    if (urlInput) urlInput.value = url;
+}
+
+async function openLibraryModLocation(mod) {
+    if (!mod) {
+        return;
+    }
+
+    const ok = await window.spikeApi.openPathInFileExplorer(mod.installedPath || mod.descriptorPath);
+    setLibraryStatus(ok ? "Opened file location." : "Could not open file location.");
+}
+
+async function runLibraryModContextMenuCommand(command, modId) {
+    const mod = getLibraryModById(modId);
+    if (!mod) {
+        return;
+    }
+
+    if (state.selectedTab !== "library") {
+        await activateTabGuarded("library");
+    }
+    selectLibraryMod(modId);
+
+    if (command === "view-details") {
+        return;
+    }
+
+    if (command === "update-mod" || command === "reinstall-mod") {
+        await queueAction(mod.workshopId, "install", "library");
+        return;
+    }
+
+    if (command === "open-workshop") {
+        openLibraryModWorkshop(mod);
+        return;
+    }
+
+    if (command === "open-location") {
+        await openLibraryModLocation(mod);
+        return;
+    }
+
+    if (command === "remove-mod") {
+        const confirmed = await showModal("Remove Mod", `Remove '${mod.name}'?`, "Remove", "Cancel");
+        if (!confirmed) {
+            return;
+        }
+        await removeLibraryModWithFeedback(mod);
+    }
+}
+
 async function persistHideDisabledMods(hide) {
     if (!state.settingsModel) {
         state.settingsModel = getDefaultSettingsModel();
@@ -3108,9 +3579,6 @@ function renderLibraryDetail(mod) {
     if (mpSafe) mpSafe.classList.toggle("hidden", !mod.isMultiplayerSafe);
     if (hasUpdate) hasUpdate.classList.toggle("hidden", !mod.hasUpdate);
 
-    const updateBtn = byId("libraryActionUpdate");
-    if (updateBtn) updateBtn.disabled = !mod.hasUpdate;
-
     renderDescriptorTags(mod);
     renderCommunityConsensus(mod, getDescriptorTagKeySet(mod));
     renderLibraryReportTagList();
@@ -3321,14 +3789,10 @@ function hookLibraryListDelegation() {
         }
 
         const id = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
-        if (!Number.isFinite(id) || id <= 0 || state.library.selectedModId === id) {
+        if (!Number.isFinite(id) || id <= 0) {
             return;
         }
-
-        state.library.selectedModId = id;
-        state.library.descriptorTagsExpanded = false;
-        restoreLibraryTagDraftForSelectedMod();
-        renderLibraryList();
+        selectLibraryMod(id);
     });
 
     list.addEventListener("change", async (event) => {
@@ -3347,6 +3811,31 @@ function hookLibraryListDelegation() {
         const result = await window.spikeApi.setLibraryModEnabled({ modId: id, isEnabled: target.checked === true });
         setLibraryStatus(result.message);
         await refreshLibrarySnapshot();
+    });
+
+    list.addEventListener("contextmenu", async (event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) {
+            return;
+        }
+
+        const row = target.closest(".library-row");
+        if (!row || !list.contains(row)) {
+            return;
+        }
+
+        const modId = Number.parseInt(row.getAttribute("data-mod-id") || "0", 10);
+        if (!Number.isFinite(modId) || modId <= 0) {
+            return;
+        }
+
+        event.preventDefault();
+        selectLibraryMod(modId);
+        await window.spikeApi.showLibraryModContextMenu({
+            modId,
+            x: event.clientX,
+            y: event.clientY
+        });
     });
 
     list.addEventListener("dragstart", (event) => {
@@ -3870,6 +4359,463 @@ function initWorkshop() {
 }
 
 /* ============================================================
+   MERGER
+   ============================================================ */
+function buildMergerSummaryFromPlan(plan) {
+    if (!plan) {
+        return {
+            enabledModCount: 0,
+            scannedFileCount: 0,
+            conflictingFileCount: 0,
+            scriptConflictCount: 0,
+            scriptObjectConflictCount: 0,
+            localisationConflictCount: 0,
+            assetConflictCount: 0,
+            autoResolvedCount: 0,
+            unresolvedCount: 0
+        };
+    }
+
+    const summary = {
+        enabledModCount: Array.isArray(plan.sourceMods) ? plan.sourceMods.filter((sourceMod) => sourceMod.isEnabled !== false).length : 0,
+        scannedFileCount: 0,
+        conflictingFileCount: 0,
+        scriptConflictCount: 0,
+        scriptObjectConflictCount: 0,
+        localisationConflictCount: 0,
+        assetConflictCount: 0,
+        autoResolvedCount: 0,
+        unresolvedCount: 0
+    };
+
+    for (const filePlan of plan.filePlans || []) {
+        summary.scannedFileCount += (filePlan.entries || []).length;
+
+        const uniqueHashes = new Set((filePlan.entries || []).map((entry) => entry.sha256));
+        const hasConflict = (filePlan.entries || []).length > 1 && uniqueHashes.size > 1;
+        if (filePlan.resolutionState === "auto" && (filePlan.entries || []).length > 1) {
+            summary.autoResolvedCount += 1;
+        }
+        if (filePlan.resolutionState === "unresolved" && hasConflict) {
+            summary.unresolvedCount += 1;
+        }
+        if (!hasConflict) {
+            continue;
+        }
+
+        summary.conflictingFileCount += 1;
+        if (filePlan.fileType === "script" || filePlan.fileType === "event") {
+            summary.scriptConflictCount += 1;
+        } else if (filePlan.fileType === "localisation") {
+            summary.localisationConflictCount += 1;
+        } else if (filePlan.fileType === "asset" || filePlan.fileType === "interface") {
+            summary.assetConflictCount += 1;
+        }
+    }
+
+    return summary;
+}
+
+function getMergerSummary() {
+    return state.merger.summary || buildMergerSummaryFromPlan(state.merger.plan);
+}
+
+function getMergerConflictCandidates() {
+    const plan = state.merger.plan;
+    if (!plan || !Array.isArray(plan.filePlans)) {
+        return [];
+    }
+
+    return plan.filePlans.filter((filePlan) => (filePlan.entries || []).length > 1);
+}
+
+function getSelectedMergerFilePlan() {
+    const plan = state.merger.plan;
+    if (!plan || !Array.isArray(plan.filePlans)) {
+        return null;
+    }
+
+    return plan.filePlans.find((filePlan) => filePlan.virtualPath === state.merger.selectedVirtualPath) || null;
+}
+
+function ensureMergerSelection() {
+    const selected = getSelectedMergerFilePlan();
+    if (selected) {
+        return selected;
+    }
+
+    const [firstCandidate] = getMergerConflictCandidates();
+    state.merger.selectedVirtualPath = firstCandidate?.virtualPath || null;
+    return firstCandidate || null;
+}
+
+function formatMergerFileType(fileType) {
+    switch (fileType) {
+        case "script": return "Script";
+        case "event": return "Events";
+        case "localisation": return "Localisation";
+        case "asset": return "Assets";
+        case "interface": return "Interface";
+        default: return "Plain";
+    }
+}
+
+function formatMergerResolutionState(value) {
+    switch (value) {
+        case "auto": return "Auto";
+        case "manual": return "Manual";
+        case "ignored": return "Ignored";
+        default: return "Unresolved";
+    }
+}
+
+function formatMergerSeverity(value) {
+    switch (value) {
+        case "critical": return "Critical";
+        case "risky": return "Risky";
+        case "warning": return "Warning";
+        default: return "Info";
+    }
+}
+
+function formatMergerGroupLabel(key) {
+    switch (key) {
+        case "script": return "Script conflicts";
+        case "localisation": return "Localisation conflicts";
+        case "asset": return "Asset conflicts";
+        default: return "Plain file conflicts";
+    }
+}
+
+function getMergerGroupKey(filePlan) {
+    if (filePlan.fileType === "script" || filePlan.fileType === "event") return "script";
+    if (filePlan.fileType === "localisation") return "localisation";
+    if (filePlan.fileType === "asset" || filePlan.fileType === "interface") return "asset";
+    return "plain";
+}
+
+function setMergerMetric(id, value) {
+    setText(id, formatInteger(value || 0));
+}
+
+function syncMergerButtons() {
+    const hasPlan = !!state.merger.plan;
+    const hasOutputPath = !!(state.merger.lastBuildOutputPath || state.merger.plan?.outputModPath);
+    const isBusy = state.merger.progress.active === true;
+
+    const buildBtn = byId("mergerBuildBtn");
+    if (buildBtn) buildBtn.disabled = !hasPlan || isBusy;
+    const analyzeBtn = byId("mergerAnalyzeBtn");
+    if (analyzeBtn) analyzeBtn.disabled = isBusy;
+    const openBtn = byId("mergerOpenOutputBtn");
+    if (openBtn) openBtn.disabled = !hasOutputPath || isBusy;
+    const exportBtn = byId("mergerExportReportBtn");
+    if (exportBtn) exportBtn.disabled = !hasPlan || isBusy;
+}
+
+function renderMergerSummary() {
+    const plan = state.merger.plan;
+    const summary = getMergerSummary();
+    setMergerMetric("mergerMetricEnabledMods", summary.enabledModCount);
+    setMergerMetric("mergerMetricFilesScanned", summary.scannedFileCount);
+    setMergerMetric("mergerMetricFileConflicts", summary.conflictingFileCount);
+    setMergerMetric("mergerMetricScriptConflicts", summary.scriptConflictCount);
+    setMergerMetric("mergerMetricLocalisationConflicts", summary.localisationConflictCount);
+    setMergerMetric("mergerMetricAssetConflicts", summary.assetConflictCount);
+    setMergerMetric("mergerMetricAutoResolved", summary.autoResolvedCount);
+    setMergerMetric("mergerMetricUnresolved", summary.unresolvedCount);
+
+    const profileLabel = plan?.profileName ? `Profile: ${plan.profileName}` : "Profile: --";
+    const enabledModsLabel = `Enabled mods: ${formatInteger(summary.enabledModCount)}`;
+    const analysisLabel = plan?.createdAtUtc ? `Last analysis: ${formatUtc(plan.createdAtUtc)}` : "Last analysis: Never";
+    setText("mergerProfileChip", profileLabel);
+    setText("mergerEnabledChip", enabledModsLabel);
+    setText("mergerAnalysisChip", analysisLabel);
+    setText("mergerLastOutputPath", state.merger.lastBuildOutputPath || plan?.outputModPath || "Not built yet.");
+
+    syncMergerButtons();
+}
+
+function renderMergerConflictTree() {
+    const tree = byId("mergerConflictTree");
+    if (!tree) return;
+
+    const candidates = getMergerConflictCandidates();
+    const mergerBusy = state.merger.progress.active === true;
+    setText("mergerConflictTreeCount", `${formatInteger(candidates.length)} entries`);
+
+    if (candidates.length <= 0) {
+        tree.innerHTML = '<div class="merger-empty muted">Run an analysis to populate the merger tree.</div>';
+        return;
+    }
+
+    const groups = new Map();
+    for (const filePlan of candidates) {
+        const groupKey = getMergerGroupKey(filePlan);
+        const current = groups.get(groupKey) || [];
+        current.push(filePlan);
+        groups.set(groupKey, current);
+    }
+
+    const orderedGroupKeys = ["script", "localisation", "asset", "plain"].filter((key) => groups.has(key));
+    tree.innerHTML = orderedGroupKeys.map((groupKey) => {
+        const items = (groups.get(groupKey) || [])
+            .slice()
+            .sort((left, right) => left.virtualPath.localeCompare(right.virtualPath))
+            .map((filePlan) => {
+                const winnerLabel = filePlan.winner?.modName || "None";
+                const isSelected = filePlan.virtualPath === state.merger.selectedVirtualPath;
+                return `
+                    <button type="button" class="merger-tree-row${isSelected ? " is-selected" : ""}" data-virtual-path="${escapeHtml(filePlan.virtualPath)}"${mergerBusy ? " disabled" : ""}>
+                        <span class="merger-tree-row-main">
+                            <strong>${escapeHtml(filePlan.virtualPath)}</strong>
+                            <span class="muted">${escapeHtml(formatMergerFileType(filePlan.fileType))} • ${formatInteger((filePlan.entries || []).length)} mods</span>
+                        </span>
+                        <span class="merger-tree-row-meta">
+                            <span class="status-chip status-chip-muted">${escapeHtml(formatMergerResolutionState(filePlan.resolutionState))}</span>
+                            <span class="status-chip status-chip-muted">${escapeHtml(formatMergerSeverity(filePlan.severity))}</span>
+                            <span class="status-chip status-chip-muted">${escapeHtml(winnerLabel)}</span>
+                        </span>
+                    </button>
+                `;
+            }).join("");
+
+        return `
+            <section class="merger-tree-group">
+                <header class="merger-tree-group-header">
+                    <h4>${escapeHtml(formatMergerGroupLabel(groupKey))}</h4>
+                </header>
+                <div class="merger-tree-group-body">${items}</div>
+            </section>
+        `;
+    }).join("");
+
+    for (const button of tree.querySelectorAll("[data-virtual-path]")) {
+        button.addEventListener("click", () => {
+            state.merger.selectedVirtualPath = button.getAttribute("data-virtual-path");
+            renderMergerConflictTree();
+            renderMergerDetailPanel();
+        });
+    }
+}
+
+function renderMergerDetailPanel() {
+    const panel = byId("mergerDetailPanel");
+    if (!panel) return;
+
+    const filePlan = ensureMergerSelection();
+    const mergerBusy = state.merger.progress.active === true;
+    if (!filePlan) {
+        panel.innerHTML = '<div class="merger-empty muted">Select a merged file entry to inspect the winner, source mods, and resolution options.</div>';
+        return;
+    }
+
+    const entries = (filePlan.entries || [])
+        .slice()
+        .sort((left, right) => left.loadOrder - right.loadOrder || left.modId - right.modId);
+
+    panel.innerHTML = `
+        <header class="merger-detail-header">
+            <div>
+                <p class="eyebrow">Selected File</p>
+                <h3>${escapeHtml(filePlan.virtualPath)}</h3>
+            </div>
+            <div class="merger-detail-chips">
+                <span class="status-chip status-chip-muted">${escapeHtml(formatMergerFileType(filePlan.fileType))}</span>
+                <span class="status-chip status-chip-muted">${escapeHtml(formatMergerResolutionState(filePlan.resolutionState))}</span>
+                <span class="status-chip status-chip-muted">${escapeHtml(formatMergerSeverity(filePlan.severity))}</span>
+            </div>
+        </header>
+        <div class="merger-detail-grid">
+            <div class="merger-detail-card">
+                <p class="settings-key">Current winner</p>
+                <p class="settings-value">${escapeHtml(filePlan.winner?.modName || "No winner selected")}</p>
+                <p class="muted">Strategy: ${escapeHtml(filePlan.strategy)}</p>
+                <div class="merger-detail-actions">
+                    <button id="mergerUseLoadOrderWinner" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Use load-order winner</button>
+                    <button id="mergerIgnoreFile" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Ignore file</button>
+                </div>
+            </div>
+            <div class="merger-detail-card">
+                <p class="settings-key">Source mods</p>
+                <div class="merger-source-list">
+                    ${entries.map((entry) => `
+                        <button type="button" class="merger-source-row${filePlan.winner?.modId === entry.modId ? " is-current" : ""}" data-merger-mod-id="${entry.modId}"${mergerBusy ? " disabled" : ""}>
+                            <span class="merger-source-main">
+                                <strong>[${entry.loadOrder}] ${escapeHtml(entry.modName)}</strong>
+                                <span class="muted">${escapeHtml(entry.virtualPath)}</span>
+                            </span>
+                            <span class="merger-source-meta">
+                                <span class="status-chip status-chip-muted">${formatInteger(entry.sizeBytes)} bytes</span>
+                            </span>
+                        </button>
+                    `).join("")}
+                </div>
+            </div>
+        </div>
+        <div class="merger-detail-card">
+            <p class="settings-key">Warnings</p>
+            <p class="muted">This milestone keeps full-file winners deterministic. Script-object merging and manual text editing come later.</p>
+        </div>
+    `;
+
+    byId("mergerUseLoadOrderWinner")?.addEventListener("click", () => {
+        void runMergerSetResolution({
+            virtualPath: filePlan.virtualPath,
+            strategy: "copy-load-order-winner"
+        });
+    });
+    byId("mergerIgnoreFile")?.addEventListener("click", () => {
+        void runMergerSetResolution({
+            virtualPath: filePlan.virtualPath,
+            strategy: "ignore"
+        });
+    });
+
+    for (const button of panel.querySelectorAll("[data-merger-mod-id]")) {
+        button.addEventListener("click", () => {
+            const selectedModId = Number.parseInt(button.getAttribute("data-merger-mod-id") || "", 10);
+            if (!Number.isFinite(selectedModId)) return;
+            void runMergerSetResolution({
+                virtualPath: filePlan.virtualPath,
+                strategy: "copy-load-order-winner",
+                selectedModId
+            });
+        });
+    }
+}
+
+function renderMergerPage() {
+    renderMergerSummary();
+    renderMergerConflictTree();
+    renderMergerDetailPanel();
+}
+
+async function refreshMergerPlan() {
+    try {
+        const plan = await window.spikeApi.modMergerGetPlan();
+        state.merger.plan = plan;
+        state.merger.summary = buildMergerSummaryFromPlan(plan);
+        ensureMergerSelection();
+        renderMergerPage();
+    } catch {
+        state.merger.plan = null;
+        state.merger.summary = buildMergerSummaryFromPlan(null);
+        renderMergerPage();
+    }
+}
+
+async function runMergerAnalysis() {
+    beginMergerProgress("analyze", "Analyzing enabled mods...");
+    setMergerStatus("Analyzing enabled mods...");
+    try {
+        const result = await window.spikeApi.modMergerAnalyze();
+        await refreshMergerProgressStatus();
+        state.merger.plan = result.plan;
+        state.merger.summary = result.summary;
+        state.merger.selectedVirtualPath = null;
+        if (result.plan) {
+            state.merger.lastBuildOutputPath = state.merger.lastBuildOutputPath || result.plan.outputModPath;
+        }
+        ensureMergerSelection();
+        renderMergerPage();
+        setMergerStatus(result.message);
+    } catch (error) {
+        await refreshMergerProgressStatus();
+        const message = error instanceof Error ? error.message : String(error || "Unknown merger analysis error");
+        setMergerStatus(message);
+    }
+}
+
+async function runMergerSetResolution(request) {
+    const result = await window.spikeApi.modMergerSetResolution(request);
+    if (result.plan) {
+        state.merger.plan = result.plan;
+    }
+    state.merger.summary = result.summary;
+    renderMergerPage();
+    setMergerStatus(result.message);
+}
+
+async function runMergerBuild() {
+    if (!state.merger.plan) {
+        setMergerStatus("Analyze mods before building the merged output.");
+        return;
+    }
+
+    const summary = getMergerSummary();
+    if (summary.unresolvedCount > 0) {
+        const confirmed = await showModal(
+            "Build With Unresolved Conflicts",
+            "The merged mod currently includes unresolved conflicts. The build will still use the current winners for those files. Continue?",
+            "Build anyway",
+            "Cancel"
+        );
+        if (!confirmed) {
+            setMergerStatus("Build cancelled.");
+            return;
+        }
+    }
+
+    beginMergerProgress("build", "Building merged mod...");
+    setMergerStatus("Building merged mod...");
+    try {
+        const result = await window.spikeApi.modMergerBuild({ cleanOutputFolder: true });
+        await refreshMergerProgressStatus();
+        if (result.ok) {
+            state.merger.lastBuildOutputPath = result.outputModPath;
+            state.merger.lastReportPath = result.reportPath;
+        }
+        renderMergerPage();
+        setMergerStatus(result.message);
+    } catch (error) {
+        await refreshMergerProgressStatus();
+        const message = error instanceof Error ? error.message : String(error || "Unknown merger build error");
+        setMergerStatus(message);
+    }
+}
+
+async function runMergerExportReport() {
+    if (!state.merger.plan) {
+        setMergerStatus("Analyze mods before exporting a report.");
+        return;
+    }
+
+    beginMergerProgress("export-report", "Exporting merge report...");
+    setMergerStatus("Exporting merge report...");
+    try {
+        const result = await window.spikeApi.modMergerExportReport();
+        await refreshMergerProgressStatus();
+        if (result.ok) {
+            state.merger.lastReportPath = result.reportPath;
+        }
+        setMergerStatus(result.message);
+    } catch (error) {
+        await refreshMergerProgressStatus();
+        const message = error instanceof Error ? error.message : String(error || "Unknown merger export error");
+        setMergerStatus(message);
+    }
+}
+
+async function openMergerOutputFolder() {
+    const targetPath = state.merger.lastBuildOutputPath || state.merger.plan?.outputModPath;
+    if (!targetPath) {
+        setMergerStatus("No merger output path is available yet.");
+        return;
+    }
+
+    const opened = await window.spikeApi.openPathInFileExplorer(targetPath);
+    setMergerStatus(opened ? "Opened merger output folder." : "Could not open merger output folder.");
+}
+
+function hookMergerControls() {
+    byId("mergerAnalyzeBtn")?.addEventListener("click", () => void runMergerAnalysis());
+    byId("mergerBuildBtn")?.addEventListener("click", () => void runMergerBuild());
+    byId("mergerOpenOutputBtn")?.addEventListener("click", () => void openMergerOutputFolder());
+    byId("mergerExportReportBtn")?.addEventListener("click", () => void runMergerExportReport());
+}
+
+/* ============================================================
    TAB NAVIGATION
    ============================================================ */
 let suppressTabHistoryRecord = false;
@@ -3882,11 +4828,13 @@ function activateTab(name) {
         state.tabForwardStack.length = 0;
     }
     state.selectedTab = name;
+    document.body.dataset.activeTab = name;
 
     const tabs = {
         version: "tabVersion",
-        library: "tabLibrary",
         downloads: "tabDownloads",
+        library: "tabLibrary",
+        merger: "tabMerger",
         workshop: "tabWorkshop",
         settings: "tabSettings"
     };
@@ -3897,8 +4845,9 @@ function activateTab(name) {
 
     const pages = {
         version: "pageVersion",
-        library: "pageLibrary",
         downloads: "pageDownloads",
+        library: "pageLibrary",
+        merger: "pageMerger",
         workshop: "pageWorkshop",
         settings: "pageSettings"
     };
@@ -3909,8 +4858,9 @@ function activateTab(name) {
 
     const statusMap = {
         version: "Version browser ready.",
-        library: "Library view ready.",
         downloads: "Downloads queue ready.",
+        library: "Library view ready.",
+        merger: "Merger ready.",
         workshop: "Workshop browser ready.",
         settings: "Settings view ready."
     };
@@ -4414,39 +5364,14 @@ function hookLibraryControls() {
     });
 
     // Detail actions
-    byId("libraryActionUpdate")?.addEventListener("click", async () => {
-        const mod = getSelectedLibraryMod();
-        if (mod) await queueAction(mod.workshopId, "install", "library");
-    });
     byId("libraryActionReinstall")?.addEventListener("click", async () => {
         const mod = getSelectedLibraryMod();
         if (mod) await queueAction(mod.workshopId, "install", "library");
     });
     byId("libraryActionWorks")?.addEventListener("click", () => void runLibraryCompatibilityReport(true));
     byId("libraryActionBroken")?.addEventListener("click", () => void runLibraryCompatibilityReport(false));
-    byId("libraryActionWorkshop")?.addEventListener("click", () => {
-        const mod = getSelectedLibraryMod();
-        if (!mod) return;
-        const url = `https://steamcommunity.com/sharedfiles/filedetails/?id=${mod.workshopId}`;
-        state.workshopReturnContext = null;
-        activateTab("workshop");
-        const webview = byId("workshopWebview");
-        if (webview) webview.loadURL(url);
-        const urlInput = byId("workshopUrl");
-        if (urlInput) urlInput.value = url;
-    });
-    byId("libraryActionLocation")?.addEventListener("click", async () => {
-        const mod = getSelectedLibraryMod();
-        if (!mod) return;
-        const ok = await window.spikeApi.openPathInFileExplorer(mod.installedPath || mod.descriptorPath);
-        setLibraryStatus(ok ? "Opened file location." : "Could not open file location.");
-    });
-    byId("libraryActionRemove")?.addEventListener("click", async () => {
-        const mod = getSelectedLibraryMod();
-        if (!mod) return;
-        const confirmed = await showModal("Remove Mod", `Remove '${mod.name}'?`, "Remove", "Cancel");
-        if (!confirmed) return;
-        await removeLibraryModWithFeedback(mod);
+    window.spikeApi.onLibraryModContextMenuCommand((event) => {
+        void runLibraryModContextMenuCommand(event.command, event.modId);
     });
 }
 
@@ -4570,8 +5495,9 @@ function hookAppUpdateControls() {
 
 function hookGlobalControls() {
     byId("tabVersion")?.addEventListener("click", () => void activateTabGuarded("version"));
-    byId("tabLibrary")?.addEventListener("click", () => void activateTabGuarded("library"));
     byId("tabDownloads")?.addEventListener("click", () => void activateTabGuarded("downloads"));
+    byId("tabLibrary")?.addEventListener("click", () => void activateTabGuarded("library"));
+    byId("tabMerger")?.addEventListener("click", () => void activateTabGuarded("merger"));
     byId("tabWorkshop")?.addEventListener("click", () => {
         state.workshopReturnContext = null;
         void activateTabGuarded("workshop");
@@ -4593,9 +5519,25 @@ function hookGlobalControls() {
             return;
         }
 
-        reopenModsPathMigrationProgress();
+    reopenModsPathMigrationProgress();
     });
     byId("modsPathMigrationNoticeOpen")?.addEventListener("click", () => reopenModsPathMigrationProgress());
+    const reopenMergerProgress = () => {
+        if (!state.merger.progress.active) {
+            return;
+        }
+
+        showMergerProgressModal();
+    };
+    byId("mergerProgressNotice")?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.closest("button")) {
+            return;
+        }
+
+        reopenMergerProgress();
+    });
+    byId("mergerProgressNoticeOpen")?.addEventListener("click", () => reopenMergerProgress());
 
     byId("detailCloseBackdrop")?.addEventListener("click", () => showDetailDrawer(false));
     byId("detailCloseButton")?.addEventListener("click", () => showDetailDrawer(false));
@@ -4698,6 +5640,7 @@ async function init() {
     hookVersionControls();
     hookSettingsControls();
     hookLibraryControls();
+    hookMergerControls();
     hookGlobalControls();
     hookAppUpdateControls();
     initWorkshop();
@@ -4721,6 +5664,8 @@ async function init() {
             refreshVersionOptions(),
             refreshSettingsPage(),
             refreshLibrarySnapshot(),
+            refreshMergerPlan(),
+            refreshMergerProgressStatus(),
             refreshQueueSnapshot(),
             refreshStellarisyncStatus(),
             refreshModsPathMigrationStatus(),

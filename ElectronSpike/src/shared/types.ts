@@ -71,6 +71,22 @@ export interface ModsPathMigrationStatus {
     progressPercent: number;
 }
 
+export type ModMergerProgressOperation = "analyze" | "build" | "export-report";
+
+export interface ModMergerProgressStatus {
+    active: boolean;
+    operation: ModMergerProgressOperation | null;
+    startedAtUtc: string | null;
+    completedAtUtc: string | null;
+    phase: string | null;
+    currentItemLabel: string | null;
+    processedItemCount: number;
+    totalItemCount: number;
+    progressPercent: number;
+    message: string | null;
+    lastResultOk: boolean | null;
+}
+
 export interface DirectoryPickerRequest {
     title?: string;
     defaultPath?: string;
@@ -381,6 +397,25 @@ export interface LibrarySetSharedProfileIdRequest {
     sharedProfileId: string;
 }
 
+export interface ShowLibraryModContextMenuRequest {
+    modId: number;
+    x?: number;
+    y?: number;
+}
+
+export type LibraryModContextMenuCommand =
+    | "view-details"
+    | "update-mod"
+    | "reinstall-mod"
+    | "open-workshop"
+    | "open-location"
+    | "remove-mod";
+
+export interface LibraryModContextMenuCommandEvent {
+    modId: number;
+    command: LibraryModContextMenuCommand;
+}
+
 export interface LibraryPublishSharedProfileRequest {
     profileId: number;
 }
@@ -431,6 +466,147 @@ export interface ScanLocalModsResult {
     discovered: number;
     added: number;
     alreadyKnown: number;
+}
+
+export interface MergeSourceMod {
+    modId: number;
+    workshopId: string;
+    name: string;
+    loadOrder: number;
+    installedPath: string;
+    descriptorPath: string;
+    isEnabled: boolean;
+    gameVersion?: string | null;
+}
+
+export interface MergePlan {
+    id: string;
+    createdAtUtc: string;
+    profileId: number | null;
+    profileName: string | null;
+    sourceMods: MergeSourceMod[];
+    outputModName: string;
+    outputModPath: string;
+    descriptorPath: string;
+    filePlans: MergeFilePlan[];
+    unresolvedConflictCount: number;
+    warnings: string[];
+}
+
+export interface MergeFilePlan {
+    virtualPath: string;
+    fileType: MergeFileType;
+    strategy: MergeStrategy;
+    winner?: MergeConflictEntry;
+    entries: MergeConflictEntry[];
+    objectPlan?: unknown;
+    localisationPlan?: unknown;
+    outputPreview?: string | null;
+    severity: MergeSeverity;
+    resolutionState: MergeResolutionState;
+}
+
+export type MergeFileType =
+    | "script"
+    | "localisation"
+    | "asset"
+    | "interface"
+    | "event"
+    | "plain";
+
+export type MergeStrategy =
+    | "copy-load-order-winner"
+    | "script-object-merge"
+    | "localisation-key-merge"
+    | "manual-text-merge"
+    | "ignore";
+
+export type MergeSeverity =
+    | "info"
+    | "warning"
+    | "risky"
+    | "critical";
+
+export type MergeResolutionState =
+    | "auto"
+    | "manual"
+    | "unresolved"
+    | "ignored";
+
+export interface ModMergerAnalyzeRequest {
+    profileId?: number | null;
+    includeDisabled?: boolean;
+    outputModName?: string;
+}
+
+export interface ModMergerSummary {
+    enabledModCount: number;
+    scannedFileCount: number;
+    conflictingFileCount: number;
+    scriptConflictCount: number;
+    scriptObjectConflictCount: number;
+    localisationConflictCount: number;
+    assetConflictCount: number;
+    autoResolvedCount: number;
+    unresolvedCount: number;
+}
+
+export interface ModMergerAnalyzeResult {
+    ok: boolean;
+    message: string;
+    plan: MergePlan | null;
+    summary: ModMergerSummary;
+    warnings: string[];
+}
+
+export interface MergeConflictEntry {
+    modId: number;
+    workshopId: string;
+    modName: string;
+    loadOrder: number;
+    realPath: string;
+    virtualPath: string;
+    sha256: string;
+    sizeBytes: number;
+    modifiedTimeUtc: string | null;
+}
+
+export interface ModMergerSetResolutionRequest {
+    virtualPath: string;
+    strategy: MergeStrategy;
+    selectedModId?: number | null;
+    manualText?: string | null;
+}
+
+export interface ModMergerResolutionResult {
+    ok: boolean;
+    message: string;
+    plan: MergePlan | null;
+    summary: ModMergerSummary;
+}
+
+export interface ModMergerBuildRequest {
+    outputModName?: string;
+    cleanOutputFolder?: boolean;
+    disableSourceModsInGeneratedProfile?: boolean;
+}
+
+export interface ModMergerBuildResult {
+    ok: boolean;
+    message: string;
+    outputModPath: string | null;
+    descriptorPath: string | null;
+    reportPath: string | null;
+    manifestPath: string | null;
+    copiedFileCount: number;
+    generatedFileCount: number;
+    unresolvedConflictCount: number;
+}
+
+export interface ModMergerExportReportResult {
+    ok: boolean;
+    message: string;
+    reportPath: string | null;
 }
 
 export interface LaunchGameResult {
@@ -544,6 +720,8 @@ export interface SpikeApi {
     setLibraryModEnabled: (request: LibrarySetModEnabledRequest) => Promise<LibraryActionResult>;
     moveLibraryMod: (request: LibraryMoveDirectionRequest) => Promise<LibraryActionResult>;
     reorderLibraryMod: (request: LibraryReorderRequest) => Promise<LibraryActionResult>;
+    showLibraryModContextMenu: (request: ShowLibraryModContextMenuRequest) => Promise<void>;
+    onLibraryModContextMenuCommand: (handler: (event: LibraryModContextMenuCommandEvent) => void) => () => void;
     uninstallLibraryMod: (modId: number) => Promise<LibraryActionResult>;
     checkLibraryUpdates: () => Promise<LibraryActionResult>;
     exportLibraryMods: () => Promise<LibraryActionResult>;
@@ -551,6 +729,12 @@ export interface SpikeApi {
     getCompatibilityTags: () => Promise<CompatibilityTagCatalogResult>;
     reportLibraryCompatibility: (request: LibraryCompatibilityReportRequest) => Promise<LibraryActionResult>;
     scanLocalMods: () => Promise<ScanLocalModsResult>;
+    modMergerAnalyze: (request?: ModMergerAnalyzeRequest) => Promise<ModMergerAnalyzeResult>;
+    modMergerGetPlan: () => Promise<MergePlan | null>;
+    getModMergerProgressStatus: () => Promise<ModMergerProgressStatus>;
+    modMergerSetResolution: (request: ModMergerSetResolutionRequest) => Promise<ModMergerResolutionResult>;
+    modMergerBuild: (request?: ModMergerBuildRequest) => Promise<ModMergerBuildResult>;
+    modMergerExportReport: () => Promise<ModMergerExportReportResult>;
     getSteamDiscoverySummary: () => Promise<SteamDiscoverySummary>;
     startSteamCmdProbe: (request?: SteamCmdProbeRequest) => Promise<SteamCmdProbeStartResult>;
     stopSteamCmdProbe: () => Promise<SteamCmdProbeStartResult>;

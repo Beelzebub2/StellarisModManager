@@ -1,21 +1,28 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } from "electron";
+import type { MenuItemConstructorOptions } from "electron";
 import type {
     DirectoryPickerRequest,
     DownloadActionRequest,
     DownloadQueueSnapshot,
     LibraryCompatibilityReportRequest,
+    LibraryModContextMenuCommand,
     LibraryMoveDirectionRequest,
-    ModsPathMigrationRequest,
-    ModsPathMigrationStatus,
     LibraryPublishSharedProfileRequest,
     LibraryReorderRequest,
     LibraryRenameProfileRequest,
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
     LibrarySyncSharedProfileRequest,
+    ModMergerAnalyzeRequest,
+    ModMergerBuildRequest,
+    ModMergerProgressStatus,
+    ModMergerSetResolutionRequest,
+    ModsPathMigrationRequest,
+    ModsPathMigrationStatus,
     SettingsSnapshot,
+    ShowLibraryModContextMenuRequest,
     SteamCmdProbeRequest,
     SystemSummary,
     VersionBrowserQuery,
@@ -30,6 +37,7 @@ import {
     createLibraryProfile,
     deleteLibraryProfile,
     exportLibraryMods,
+    getLibraryModContextMenuModel,
     getLibrarySnapshot,
     importLibraryMods,
     migrateModsPath,
@@ -47,6 +55,14 @@ import {
 } from "./services/library";
 import { logError, logInfo } from "./services/logger";
 import { getModsPathMigrationStatus } from "./services/modsPathMigrationState";
+import { getModMergerProgressStatus } from "./services/modMergerProgressState";
+import {
+    modMergerAnalyze,
+    modMergerBuild,
+    modMergerExportReport,
+    modMergerGetPlan,
+    modMergerSetResolution
+} from "./services/modMerger";
 import { getLegacyPaths } from "./services/paths";
 import {
     autoConfigureSteamCmdSnapshot,
@@ -116,6 +132,8 @@ const CHANNELS = {
     librarySetModEnabled: "spike:setLibraryModEnabled",
     libraryMoveMod: "spike:moveLibraryMod",
     libraryReorderMod: "spike:reorderLibraryMod",
+    showLibraryModContextMenu: "spike:showLibraryModContextMenu",
+    libraryModContextMenuCommand: "spike:onLibraryModContextMenuCommand",
     libraryUninstallMod: "spike:uninstallLibraryMod",
     libraryCheckUpdates: "spike:checkLibraryUpdates",
     libraryExport: "spike:exportLibraryMods",
@@ -123,6 +141,12 @@ const CHANNELS = {
     libraryGetCompatibilityTags: "spike:getCompatibilityTags",
     libraryReportCompatibility: "spike:reportLibraryCompatibility",
     libraryScanLocal: "spike:scanLocalMods",
+    modMergerAnalyze: "spike:modMergerAnalyze",
+    modMergerGetPlan: "spike:modMergerGetPlan",
+    modMergerProgressStatus: "spike:getModMergerProgressStatus",
+    modMergerSetResolution: "spike:modMergerSetResolution",
+    modMergerBuild: "spike:modMergerBuild",
+    modMergerExportReport: "spike:modMergerExportReport",
     steamDiscovery: "spike:getSteamDiscoverySummary",
     steamCmdStart: "spike:startSteamCmdProbe",
     steamCmdStop: "spike:stopSteamCmdProbe",
@@ -246,6 +270,91 @@ function toImageMimeType(filePath: string): string {
     return "image/jpeg";
 }
 
+function sendLibraryModContextMenuCommand(
+    window: BrowserWindow | null | undefined,
+    modId: number,
+    command: LibraryModContextMenuCommand
+): void {
+    if (!window || window.isDestroyed()) {
+        return;
+    }
+
+    window.webContents.send(CHANNELS.libraryModContextMenuCommand, { modId, command });
+}
+
+function popupLibraryModContextMenu(
+    window: BrowserWindow | null | undefined,
+    request: ShowLibraryModContextMenuRequest
+): void {
+    const mod = getLibraryModContextMenuModel(request.modId);
+    if (!mod) {
+        return;
+    }
+
+    const revealPath = (mod.installedPath || mod.descriptorPath || "").trim();
+    const workshopUrl = mod.workshopUrl?.trim() || "";
+    const template: MenuItemConstructorOptions[] = [
+        { label: mod.name || `Mod ${mod.modId}`, enabled: false },
+        { type: "separator" },
+        {
+            label: "View details",
+            click: () => sendLibraryModContextMenuCommand(window, mod.modId, "view-details")
+        },
+        ...(workshopUrl
+            ? [{
+                label: "Workshop",
+                click: () => sendLibraryModContextMenuCommand(window, mod.modId, "open-workshop")
+            }]
+            : []),
+        ...(mod.hasUpdate
+            ? [{
+                label: "Update",
+                click: () => sendLibraryModContextMenuCommand(window, mod.modId, "update-mod")
+            }]
+            : []),
+        ...(mod.workshopId
+            ? [{
+                label: "Reinstall",
+                click: () => sendLibraryModContextMenuCommand(window, mod.modId, "reinstall-mod")
+            }]
+            : []),
+        ...(revealPath
+            ? [{
+                label: "File location",
+                click: () => sendLibraryModContextMenuCommand(window, mod.modId, "open-location")
+            }]
+            : []),
+        ...((workshopUrl || revealPath)
+            ? [{ type: "separator" as const }]
+            : []),
+        ...(workshopUrl
+            ? [{
+                label: "Copy Workshop URL",
+                click: () => {
+                    clipboard.writeText(workshopUrl);
+                }
+            }]
+            : []),
+        ...(revealPath
+            ? [{
+                label: "Copy folder path",
+                click: () => {
+                    clipboard.writeText(revealPath);
+                }
+            }]
+            : []),
+        { type: "separator" },
+        {
+            label: "Remove mod",
+            click: () => sendLibraryModContextMenuCommand(window, mod.modId, "remove-mod")
+        }
+    ];
+
+    Menu.buildFromTemplate(template).popup({
+        window: window && !window.isDestroyed() ? window : undefined
+    });
+}
+
 export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.ping);
     ipcMain.removeHandler(CHANNELS.systemSummary);
@@ -271,6 +380,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.librarySetModEnabled);
     ipcMain.removeHandler(CHANNELS.libraryMoveMod);
     ipcMain.removeHandler(CHANNELS.libraryReorderMod);
+    ipcMain.removeHandler(CHANNELS.showLibraryModContextMenu);
     ipcMain.removeHandler(CHANNELS.libraryUninstallMod);
     ipcMain.removeHandler(CHANNELS.libraryCheckUpdates);
     ipcMain.removeHandler(CHANNELS.libraryExport);
@@ -278,6 +388,12 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.libraryGetCompatibilityTags);
     ipcMain.removeHandler(CHANNELS.libraryReportCompatibility);
     ipcMain.removeHandler(CHANNELS.libraryScanLocal);
+    ipcMain.removeHandler(CHANNELS.modMergerAnalyze);
+    ipcMain.removeHandler(CHANNELS.modMergerGetPlan);
+    ipcMain.removeHandler(CHANNELS.modMergerProgressStatus);
+    ipcMain.removeHandler(CHANNELS.modMergerSetResolution);
+    ipcMain.removeHandler(CHANNELS.modMergerBuild);
+    ipcMain.removeHandler(CHANNELS.modMergerExportReport);
     ipcMain.removeHandler(CHANNELS.steamDiscovery);
     ipcMain.removeHandler(CHANNELS.steamCmdStart);
     ipcMain.removeHandler(CHANNELS.steamCmdStop);
@@ -443,6 +559,10 @@ export function registerIpcHandlers(): void {
         return reorderLibraryMod(request);
     });
 
+    ipcMain.handle(CHANNELS.showLibraryModContextMenu, async (event, request: ShowLibraryModContextMenuRequest) => {
+        popupLibraryModContextMenu(BrowserWindow.fromWebContents(event.sender), request);
+    });
+
     ipcMain.handle(CHANNELS.libraryUninstallMod, async (_event, modId: number) => {
         return uninstallLibraryMod(modId);
     });
@@ -507,6 +627,30 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.libraryScanLocal, async () => {
         return scanLocalMods();
+    });
+
+    ipcMain.handle(CHANNELS.modMergerAnalyze, async (_event, request?: ModMergerAnalyzeRequest) => {
+        return modMergerAnalyze(request);
+    });
+
+    ipcMain.handle(CHANNELS.modMergerGetPlan, async () => {
+        return modMergerGetPlan();
+    });
+
+    ipcMain.handle(CHANNELS.modMergerProgressStatus, async (): Promise<ModMergerProgressStatus> => {
+        return getModMergerProgressStatus();
+    });
+
+    ipcMain.handle(CHANNELS.modMergerSetResolution, async (_event, request: ModMergerSetResolutionRequest) => {
+        return modMergerSetResolution(request);
+    });
+
+    ipcMain.handle(CHANNELS.modMergerBuild, async (_event, request?: ModMergerBuildRequest) => {
+        return modMergerBuild(request);
+    });
+
+    ipcMain.handle(CHANNELS.modMergerExportReport, async () => {
+        return modMergerExportReport();
     });
 
     ipcMain.handle(CHANNELS.steamDiscovery, async () => {

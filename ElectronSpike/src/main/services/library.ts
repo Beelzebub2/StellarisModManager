@@ -115,6 +115,16 @@ interface RemoteCommunityTagsResponse {
     tags?: CompatibilityTagDefinition[];
 }
 
+export interface LibraryModContextMenuModel {
+    modId: number;
+    name: string;
+    workshopId: string;
+    workshopUrl: string | null;
+    installedPath: string;
+    descriptorPath: string;
+    hasUpdate: boolean;
+}
+
 interface RemoteSharedProfilePayload {
     id?: string;
     name?: string;
@@ -218,6 +228,15 @@ function sanitizeWorkshopId(value: string): string {
 
     const fallbackDigitsMatch = raw.match(/\b(\d{6,})\b/);
     return fallbackDigitsMatch ? fallbackDigitsMatch[1] : raw;
+}
+
+function buildWorkshopUrl(workshopId: string): string | null {
+    const normalizedId = sanitizeWorkshopId(workshopId);
+    if (!isValidWorkshopId(normalizedId)) {
+        return null;
+    }
+
+    return `https://steamcommunity.com/sharedfiles/filedetails/?id=${normalizedId}`;
 }
 
 function isValidWorkshopId(value: string): boolean {
@@ -1223,6 +1242,33 @@ export async function getLibrarySnapshot(): Promise<LibrarySnapshot> {
 
     try {
         return readLibrarySnapshot(db);
+    } finally {
+        db.close();
+    }
+}
+
+export function getLibraryModContextMenuModel(modId: number): LibraryModContextMenuModel | null {
+    const db = openLibraryDb();
+    if (!db) {
+        return null;
+    }
+
+    try {
+        const snapshot = readLibrarySnapshot(db);
+        const mod = snapshot.mods.find((candidate) => candidate.id === modId);
+        if (!mod) {
+            return null;
+        }
+
+        return {
+            modId: mod.id,
+            name: mod.name,
+            workshopId: mod.workshopId,
+            workshopUrl: buildWorkshopUrl(mod.workshopId),
+            installedPath: mod.installedPath,
+            descriptorPath: mod.descriptorPath,
+            hasUpdate: mod.hasUpdate
+        };
     } finally {
         db.close();
     }
