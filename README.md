@@ -1,6 +1,12 @@
 
+
 <p align="center">
-	<img src="ElectronSpike/assets/splash-art.png" alt="Stellaris Mod Manager Banner" width="600"/>
+		<img src="ElectronSpike/assets/splash-art.png" alt="Stellaris Mod Manager Banner" width="600"/>
+</p>
+
+<p align="center">
+	<strong>⚠️ This project is a work in progress! ⚠️</strong><br>
+	<em>Many advanced features, such as suggested load order and mod merger, are still under development and may not be fully functional yet.</em>
 </p>
 
 # Stellaris Mod Manager

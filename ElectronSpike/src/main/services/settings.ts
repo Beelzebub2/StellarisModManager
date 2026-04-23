@@ -22,7 +22,7 @@ const THEME_PALETTE_OPTIONS = [
     "Ivory White",
     "Frost White"
 ];
-const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "Steamworks", "SteamCmd"];
+const DOWNLOAD_RUNTIME_OPTIONS = ["Auto", "Steamworks", "SteamCMD"];
 const WINDOWS_USER_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders";
 const WINDOWS_SHELL_FOLDERS_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders";
 const WINDOWS_DOCUMENTS_VALUE = "Personal";
@@ -119,7 +119,7 @@ function normalizeRuntime(value: string | undefined): string {
     }
 
     if (normalized === "steamcmd") {
-        return "SteamCmd";
+        return "SteamCMD";
     }
 
     return "Auto";
@@ -479,7 +479,7 @@ function resolveSteamCmdAutoConfig(
 
     const currentRuntime = normalizeRuntime(coerceString(current.workshopDownloadRuntime));
     const detectedRuntime = currentRuntime === "Auto"
-        ? (detectedSteamCmdPath && detectedSteamCmdDownloadPath ? "SteamCmd" : "Steamworks")
+        ? (detectedSteamCmdPath && detectedSteamCmdDownloadPath ? "SteamCMD" : "Steamworks")
         : currentRuntime;
 
     return {

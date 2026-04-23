@@ -34,7 +34,7 @@ const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
 const STEAMCMD_STALL_MS = 2 * 60 * 1000;
 const STEAMCMD_PROGRESS_POLL_MS = 1000;
 const WORKSHOP_TITLE_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
-type DownloadRuntime = "Auto" | "SteamKit2" | "SteamCmd";
+type DownloadRuntime = "Auto" | "SteamKit2" | "SteamCMD";
 type QueueProgressMode = NonNullable<DownloadQueueItem["progressMode"]>;
 type SteamCmdPhase = "launching" | "preallocating" | "downloading" | "committing" | "verifying" | "deploying";
 
@@ -409,7 +409,7 @@ function resolveDownloadBasePath(): string {
 function normalizeDownloadRuntime(value: string | undefined): DownloadRuntime {
     const normalized = value?.trim().toLowerCase() ?? "";
     if (normalized === "steamkit2" || normalized === "steamworks") return "SteamKit2";
-    if (normalized === "steamcmd") return "SteamCmd";
+    if (normalized === "steamcmd") return "SteamCMD";
     return "Auto";
 }
 
@@ -422,7 +422,7 @@ function resolveEffectiveRuntime(): DownloadRuntime {
 
     const steamCmdPath = settings?.steamCmdPath?.trim() ?? "";
     if (steamCmdPath && fs.existsSync(steamCmdPath)) {
-        return "SteamCmd";
+        return "SteamCMD";
     }
 
     return "SteamKit2";
@@ -481,7 +481,7 @@ function resolveInstallQueueMode(
     runtime: DownloadRuntime,
     metrics?: Partial<MachineMetrics>
 ): { mode: "default" | "isolated-workers"; concurrency: number } {
-    if (runtime === "SteamCmd") {
+    if (runtime === "SteamCMD") {
         return {
             mode: "isolated-workers",
             concurrency: getRecommendedSteamCmdConcurrency(metrics)
@@ -1282,7 +1282,7 @@ async function runJob(entry: QueueEntry): Promise<void> {
             actionStates.set(entry.workshopId, "installing");
             upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", 3, "Preparing download...");
 
-            let installResult = runtime === "SteamCmd"
+            let installResult = runtime === "SteamCMD"
                 ? await runSteamCmdDownload(entry.workshopId, job, (progress, message, progressMode) => {
                     upsertQueueItem(entry.workshopId, entry.modName, entry.action, "running", progress, message, progressMode);
                 })
@@ -1372,7 +1372,7 @@ async function processQueue(): Promise<void> {
                 const next = queuePending[0];
                 if (!next) break;
 
-                const runtime = next.action === "install" ? resolveEffectiveRuntime() : "SteamCmd";
+                const runtime = next.action === "install" ? resolveEffectiveRuntime() : "SteamCMD";
                 const queueMode = next.action === "install"
                     ? resolveInstallQueueMode(runtime)
                     : { mode: "default" as const, concurrency: MAX_CONCURRENT_DOWNLOADS };

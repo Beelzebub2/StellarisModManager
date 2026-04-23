@@ -67,7 +67,7 @@ test("queue worker keeps processing items queued while another job is still runn
     downloadManager.clearDownloadHistory();
 
     const saved = settings.saveSettingsSnapshot({
-        workshopDownloadRuntime: "SteamCmd",
+        workshopDownloadRuntime: "SteamCMD",
         modsPath: modsRoot,
         autoDetectGame: true,
         warnBeforeRestartGame: true,

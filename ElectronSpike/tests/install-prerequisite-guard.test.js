@@ -23,7 +23,7 @@ test("blocks install when SteamCmd runtime is selected without a SteamCMD path",
     const result = getInstallPrerequisiteState({
         modsPath: "C:/Users/test/Documents/Paradox Interactive/Stellaris/mod",
         steamCmdPath: "",
-        workshopDownloadRuntime: "SteamCmd"
+        workshopDownloadRuntime: "SteamCMD"
     });
 
     assert.equal(result.canInstall, false);
