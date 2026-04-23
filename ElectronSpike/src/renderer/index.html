@@ -57,6 +57,14 @@
             </section>
         </div>
 
+        <aside id="modsPathMigrationNotice" class="migration-notice hidden" aria-live="polite">
+            <div class="migration-notice-copy">
+                <strong id="modsPathMigrationNoticeTitle" class="migration-notice-title">Moving managed mods</strong>
+                <span id="modsPathMigrationNoticeMessage" class="migration-notice-message">Working • 0% complete</span>
+            </div>
+            <button id="modsPathMigrationNoticeOpen" type="button" class="button-secondary">Open progress</button>
+        </aside>
+
         <!-- ==================== WORKSPACE ==================== -->
         <section class="workspace">
             <!-- ---- SIDEBAR ---- -->
@@ -553,8 +561,8 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>Game Setup</h3>
-                                            <p class="muted settings-card-lead">Point the app at Stellaris and your local mods
-                                                folder.</p>
+                                            <p class="muted settings-card-lead">Point the app at Stellaris, the Paradox descriptor
+                                                folder, and the managed mods folder.</p>
                                         </div>
                                         <span id="settingsGameVersionChip" class="status-chip status-chip-muted">Version not
                                             detected</span>
@@ -571,18 +579,30 @@
                                             path.</p>
                                     </div>
                                     <div class="field-col">
-                                        <label class="field-label" for="settingsModsPathInput">Mods path</label>
+                                        <label class="field-label" for="settingsModsPathInput">Descriptor folder</label>
                                         <div class="path-picker-row">
                                             <input id="settingsModsPathInput" class="field-input mono" type="text"
-                                                placeholder="Path to Paradox mods folder" />
+                                                placeholder="Path to Documents\\Paradox Interactive\\Stellaris\\mod" />
                                             <button id="settingsModsPathBrowse" type="button"
                                                 class="button-secondary">Browse...</button>
                                             <button id="settingsDetectModsPath" type="button"
                                                 class="button-secondary">Detect</button>
                                         </div>
-                                        <p class="muted settings-inline-help">This folder stores the managed `.mod` files and
-                                            local mod installs. Saving a new location rewrites descriptor paths and can also move
-                                            the existing mod folders for you.</p>
+                                        <p class="muted settings-inline-help">Keep the local <code>.mod</code> descriptor files in
+                                            the Paradox Stellaris <code>mod</code> folder under Documents so
+                                            <code>dlc_load.json</code> keeps pointing at the expected location.</p>
+                                    </div>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsManagedModsPathInput">Managed mods folder</label>
+                                        <div class="path-picker-row">
+                                            <input id="settingsManagedModsPathInput" class="field-input mono" type="text"
+                                                placeholder="Optional separate folder for managed mod contents" />
+                                            <button id="settingsManagedModsPathBrowse" type="button"
+                                                class="button-secondary">Browse...</button>
+                                        </div>
+                                        <p class="muted settings-inline-help">This is where the actual managed mod folders live.
+                                            Descriptor <code>path=</code> lines will be rewritten to point here and use
+                                            <code>/</code> separators when needed.</p>
                                     </div>
                                     <div class="settings-inline-actions">
                                         <label class="toggle-row" for="settingsWarnBeforeRestartInput">

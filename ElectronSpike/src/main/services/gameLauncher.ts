@@ -1,56 +1,21 @@
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { LaunchGameResult } from "../../shared/types";
+import { isModsPathMigrationActive } from "./modsPathMigrationState";
 import { loadSettingsSnapshot } from "./settings";
 import { logError, logInfo } from "./logger";
-
-function isGameRunning(): boolean {
-    try {
-        if (process.platform === "win32") {
-            const output = execSync("tasklist /FI \"IMAGENAME eq stellaris.exe\" /NH", {
-                encoding: "utf-8",
-                timeout: 5000,
-                windowsHide: true
-            });
-            return output.toLowerCase().includes("stellaris.exe");
-        }
-
-        const output = execSync("pgrep -f stellaris", {
-            encoding: "utf-8",
-            timeout: 5000
-        });
-        return output.trim().length > 0;
-    } catch {
-        return false;
-    }
-}
-
-function killGame(): boolean {
-    try {
-        if (process.platform === "win32") {
-            execSync("taskkill /IM stellaris.exe /F", {
-                encoding: "utf-8",
-                timeout: 10000,
-                windowsHide: true
-            });
-        } else {
-            execSync("pkill -f stellaris", {
-                encoding: "utf-8",
-                timeout: 10000
-            });
-        }
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-export function getGameRunningStatus(): boolean {
-    return isGameRunning();
-}
+import { getGameRunningStatus, killStellaris } from "./stellarisProcess";
 
 export function launchGame(): LaunchGameResult {
+    if (isModsPathMigrationActive()) {
+        return {
+            ok: false,
+            message: "Cannot launch Stellaris while the mods folder move is still running.",
+            wasRunning: false
+        };
+    }
+
     const settings = loadSettingsSnapshot();
     const gamePath = settings?.gamePath?.trim() || "";
 
@@ -58,10 +23,10 @@ export function launchGame(): LaunchGameResult {
         return { ok: false, message: "Game path not configured. Set it in Settings.", wasRunning: false };
     }
 
-    const wasRunning = isGameRunning();
+    const wasRunning = getGameRunningStatus();
 
     if (wasRunning) {
-        const killed = killGame();
+        const killed = killStellaris();
         if (!killed) {
             return { ok: false, message: "Failed to stop Stellaris. Close it manually.", wasRunning: true };
         }

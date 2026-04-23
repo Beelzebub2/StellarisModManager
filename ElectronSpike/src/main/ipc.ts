@@ -8,6 +8,7 @@ import type {
     LibraryCompatibilityReportRequest,
     LibraryMoveDirectionRequest,
     ModsPathMigrationRequest,
+    ModsPathMigrationStatus,
     LibraryPublishSharedProfileRequest,
     LibraryReorderRequest,
     LibraryRenameProfileRequest,
@@ -21,7 +22,7 @@ import type {
     WorkshopBrowserQuery
 } from "../shared/types";
 import { loadDbSummary } from "./services/database";
-import { getGameRunningStatus, launchGame } from "./services/gameLauncher";
+import { launchGame } from "./services/gameLauncher";
 import { checkStellarisyncStatus } from "./services/stellarisync";
 import {
     activateLibraryProfile,
@@ -45,6 +46,7 @@ import {
     uninstallLibraryMod
 } from "./services/library";
 import { logError, logInfo } from "./services/logger";
+import { getModsPathMigrationStatus } from "./services/modsPathMigrationState";
 import { getLegacyPaths } from "./services/paths";
 import {
     autoConfigureSteamCmdSnapshot,
@@ -86,6 +88,7 @@ import {
     checkAppUpdate,
     startAppUpdate
 } from "./services/appUpdater";
+import { getGameRunningStatus } from "./services/stellarisProcess";
 import { applyTitleBarOverlayForTheme } from "./windowChrome";
 
 const CHANNELS = {
@@ -149,6 +152,7 @@ const CHANNELS = {
     appUpdateCheck: "spike:checkAppUpdate",
     appUpdateStart: "spike:startAppUpdate",
     appUpdateSkip: "spike:skipAppVersion",
+    modsPathMigrationStatus: "spike:getModsPathMigrationStatus",
     settingsDetectGameVersion: "spike:detectGameVersion"
 } as const;
 
@@ -301,6 +305,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.appUpdateCheck);
     ipcMain.removeHandler(CHANNELS.appUpdateStart);
     ipcMain.removeHandler(CHANNELS.appUpdateSkip);
+    ipcMain.removeHandler(CHANNELS.modsPathMigrationStatus);
     ipcMain.removeHandler(CHANNELS.settingsDetectGameVersion);
 
     setDownloadEventEmitter((downloadEvent) => {
@@ -336,6 +341,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.settingsMigrateModsPath, async (_event, request: ModsPathMigrationRequest) => {
         return migrateModsPath(request);
+    });
+
+    ipcMain.handle(CHANNELS.modsPathMigrationStatus, async (): Promise<ModsPathMigrationStatus> => {
+        return getModsPathMigrationStatus();
     });
 
     ipcMain.handle(CHANNELS.settingsAutoDetect, async (_event, settings?: SettingsSnapshot) => {

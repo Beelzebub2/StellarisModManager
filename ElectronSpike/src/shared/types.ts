@@ -9,6 +9,7 @@ export interface AppPaths {
 export interface SettingsSnapshot {
     gamePath?: string;
     modsPath?: string;
+    managedModsPath?: string;
     steamCmdPath?: string;
     steamCmdDownloadPath?: string;
     workshopDownloadRuntime?: string;
@@ -53,6 +54,21 @@ export interface ModsPathMigrationRequest {
 export interface ModsPathMigrationResult extends SettingsSaveResult {
     movedModCount: number;
     rewrittenDescriptorCount: number;
+}
+
+export interface ModsPathMigrationStatus {
+    active: boolean;
+    sourceModsPath: string | null;
+    targetModsPath: string | null;
+    moveExistingMods: boolean;
+    startedAtUtc: string | null;
+    completedAtUtc: string | null;
+    lastMessage: string | null;
+    currentModName: string | null;
+    currentPhase: string | null;
+    processedModCount: number;
+    totalModCount: number;
+    progressPercent: number;
 }
 
 export interface DirectoryPickerRequest {
@@ -508,6 +524,7 @@ export interface SpikeApi {
     getSettings: () => Promise<SettingsSnapshot | null>;
     saveSettings: (settings: SettingsSnapshot) => Promise<SettingsSaveResult>;
     migrateModsPath: (request: ModsPathMigrationRequest) => Promise<ModsPathMigrationResult>;
+    getModsPathMigrationStatus: () => Promise<ModsPathMigrationStatus>;
     autoDetectSettings: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     autoConfigureSteamCmd: (settings?: SettingsSnapshot) => Promise<SettingsAutoDetectResult>;
     validateSettings: (settings: SettingsSnapshot) => Promise<SettingsValidationResult>;

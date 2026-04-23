@@ -35,3 +35,25 @@ test("dlc_load descriptor references track the configured mods directory instead
 
     assert.equal(descriptorReference, "mods-alt/2104538771.mod");
 });
+
+test("descriptor path becomes absolute when descriptors stay in Documents but managed mods move elsewhere", () => {
+    assert.equal(typeof downloadManager.buildManagedDescriptorPathForTest, "function");
+
+    const descriptorPath = downloadManager.buildManagedDescriptorPathForTest({
+        modsRoot: "C:\\Users\\Test\\Documents\\Paradox Interactive\\Stellaris\\mod",
+        installedPath: "D:\\games\\stellaris\\mod\\2104538771"
+    });
+
+    assert.equal(descriptorPath, "D:/games/stellaris/mod/2104538771");
+});
+
+test("dlc_load descriptor references still point at the Documents mod folder when managed mods live elsewhere", () => {
+    assert.equal(typeof downloadManager.buildManagedDescriptorReferenceForTest, "function");
+
+    const descriptorReference = downloadManager.buildManagedDescriptorReferenceForTest({
+        modsRoot: "C:\\Users\\Test\\Documents\\Paradox Interactive\\Stellaris\\mod",
+        descriptorPath: "C:\\Users\\Test\\Documents\\Paradox Interactive\\Stellaris\\mod\\2104538771.mod"
+    });
+
+    assert.equal(descriptorReference, "mod/2104538771.mod");
+});

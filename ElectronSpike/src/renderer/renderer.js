@@ -24,6 +24,24 @@ const state = {
     gameRunning: false,
     gamePollingHandle: null,
     stellarisyncPollingHandle: null,
+    modsPathMigrationPollingHandle: null,
+    modsPathMigration: {
+        active: false,
+        sourceModsPath: null,
+        targetModsPath: null,
+        moveExistingMods: false,
+        startedAtUtc: null,
+        completedAtUtc: null,
+        lastMessage: null,
+        currentModName: null,
+        currentPhase: null,
+        processedModCount: 0,
+        totalModCount: 0,
+        progressPercent: 0,
+        modalVisible: false,
+        backgrounded: false,
+        pendingPromise: null
+    },
     workshopMouseNavHooked: false,
     workshopReturnContext: null,
     tabHistory: [],
@@ -375,7 +393,12 @@ function showModal(title, message, confirmLabel = "Confirm", cancelLabel = "Canc
         if (titleEl) titleEl.textContent = title;
         if (msgEl) msgEl.textContent = message;
         if (confirmBtn) confirmBtn.textContent = confirmLabel;
-        if (cancelBtn) cancelBtn.textContent = cancelLabel;
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (cancelBtn) {
+            cancelBtn.textContent = cancelLabel;
+            cancelBtn.disabled = false;
+            cancelBtn.classList.remove("hidden");
+        }
         if (extra) extra.innerHTML = "";
         if (altBtn) {
             altBtn.classList.add("hidden");
@@ -419,7 +442,12 @@ function showChoiceModal(title, message, options = {}) {
         if (titleEl) titleEl.textContent = title;
         if (msgEl) msgEl.textContent = message;
         if (confirmBtn) confirmBtn.textContent = options.confirmLabel || "Confirm";
-        if (cancelBtn) cancelBtn.textContent = options.cancelLabel || "Cancel";
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (cancelBtn) {
+            cancelBtn.textContent = options.cancelLabel || "Cancel";
+            cancelBtn.disabled = false;
+            cancelBtn.classList.remove("hidden");
+        }
         if (altBtn) {
             altBtn.textContent = options.alternateLabel || "Alternate";
             altBtn.classList.remove("hidden");
@@ -480,7 +508,12 @@ function showPrompt(title, message, defaultValue = "") {
         if (titleEl) titleEl.textContent = title;
         if (msgEl) msgEl.textContent = message;
         if (confirmBtn) confirmBtn.textContent = "OK";
-        if (cancelBtn) cancelBtn.textContent = "Cancel";
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (cancelBtn) {
+            cancelBtn.textContent = "Cancel";
+            cancelBtn.disabled = false;
+            cancelBtn.classList.remove("hidden");
+        }
         if (altBtn) {
             altBtn.classList.add("hidden");
             altBtn.onclick = null;
@@ -564,6 +597,212 @@ function showPrompt(title, message, defaultValue = "") {
     });
 }
 
+function getModsPathMigrationBusyMessage(migration = state.modsPathMigration) {
+    return migration.moveExistingMods === true
+        ? "Moving managed mods to the new managed mods folder..."
+        : "Updating managed descriptor paths for the new managed mods folder...";
+}
+
+function getModsPathMigrationTitle(migration = state.modsPathMigration) {
+    return migration.moveExistingMods === true
+        ? "Moving managed mods"
+        : "Updating managed mod paths";
+}
+
+function getModsPathMigrationCurrentActionLabel(migration = state.modsPathMigration) {
+    return migration.moveExistingMods === true
+        ? "Currently moving"
+        : "Currently updating";
+}
+
+function getModsPathMigrationCountLabel(migration = state.modsPathMigration) {
+    const processed = Math.max(0, Number(migration.processedModCount || 0));
+    const total = Math.max(0, Number(migration.totalModCount || 0));
+    if (total <= 0) {
+        return "Preparing mod list...";
+    }
+
+    return `${processed} of ${total} mods complete`;
+}
+
+function getModsPathMigrationPercentLabel(migration = state.modsPathMigration) {
+    const percent = Math.max(0, Math.min(100, Math.round(Number(migration.progressPercent || 0))));
+    return `${percent}% complete`;
+}
+
+function syncModsPathMigrationPolling() {
+    if (state.modsPathMigration.active) {
+        if (state.modsPathMigrationPollingHandle) {
+            return;
+        }
+
+        state.modsPathMigrationPollingHandle = setInterval(() => void refreshModsPathMigrationStatus(), 750);
+        return;
+    }
+
+    if (state.modsPathMigrationPollingHandle) {
+        clearInterval(state.modsPathMigrationPollingHandle);
+        state.modsPathMigrationPollingHandle = null;
+    }
+}
+
+function renderModsPathMigrationProgress() {
+    if (!state.modsPathMigration.modalVisible || !state.modsPathMigration.active) {
+        return;
+    }
+
+    const titleEl = byId("modalTitle");
+    const msgEl = byId("modalMessage");
+    const confirmBtn = byId("modalConfirm");
+    const phaseEl = byId("modsPathMigrationPhase");
+    const currentModEl = byId("modsPathMigrationCurrentMod");
+    const countEl = byId("modsPathMigrationCount");
+    const percentEl = byId("modsPathMigrationPercent");
+    const progressBar = byId("modsPathMigrationBar");
+
+    if (titleEl) titleEl.textContent = getModsPathMigrationTitle();
+    if (msgEl) msgEl.textContent = getModsPathMigrationBusyMessage();
+    if (confirmBtn) {
+        confirmBtn.textContent = state.modsPathMigration.backgrounded ? "Hide" : "Run in background";
+    }
+    if (phaseEl) {
+        phaseEl.textContent = state.modsPathMigration.currentPhase || "Preparing";
+    }
+    if (currentModEl) {
+        const modName = state.modsPathMigration.currentModName || "Preparing mod list...";
+        currentModEl.innerHTML = `<strong>${escapeHtml(getModsPathMigrationCurrentActionLabel())}:</strong> ${escapeHtml(modName)}`;
+    }
+    if (countEl) {
+        countEl.textContent = getModsPathMigrationCountLabel();
+    }
+    if (percentEl) {
+        percentEl.textContent = getModsPathMigrationPercentLabel();
+    }
+    if (progressBar) {
+        const percent = Math.max(0, Math.min(100, Math.round(Number(state.modsPathMigration.progressPercent || 0))));
+        progressBar.setAttribute("data-progress-mode", state.modsPathMigration.totalModCount > 0 ? "determinate" : "indeterminate");
+        progressBar.style.width = state.modsPathMigration.totalModCount > 0 ? `${Math.max(percent, 4)}%` : "";
+    }
+}
+
+function renderModsPathMigrationBackgroundNotice() {
+    const notice = byId("modsPathMigrationNotice");
+    const titleEl = byId("modsPathMigrationNoticeTitle");
+    const messageEl = byId("modsPathMigrationNoticeMessage");
+    const openBtn = byId("modsPathMigrationNoticeOpen");
+    if (!notice || !titleEl || !messageEl || !openBtn) {
+        return;
+    }
+
+    const shouldShow = state.modsPathMigration.active
+        && state.modsPathMigration.backgrounded
+        && !state.modsPathMigration.modalVisible;
+
+    notice.classList.toggle("hidden", !shouldShow);
+    if (!shouldShow) {
+        return;
+    }
+
+    titleEl.textContent = state.modsPathMigration.currentModName || getModsPathMigrationTitle();
+    messageEl.textContent = `${state.modsPathMigration.currentPhase || "Working"} • ${getModsPathMigrationPercentLabel()}`;
+    openBtn.textContent = "Open progress";
+}
+
+function hideModsPathMigrationModal() {
+    const overlay = byId("modalOverlay");
+    const extra = byId("modalExtra");
+    const confirmBtn = byId("modalConfirm");
+    const cancelBtn = byId("modalCancel");
+    const altBtn = byId("modalAlt");
+    const backdrop = byId("modalBackdrop");
+
+    state.modsPathMigration.modalVisible = false;
+    if (overlay) overlay.classList.add("hidden");
+    if (extra) extra.innerHTML = "";
+    if (confirmBtn) {
+        confirmBtn.onclick = null;
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Confirm";
+    }
+    if (cancelBtn) {
+        cancelBtn.onclick = null;
+        cancelBtn.disabled = false;
+        cancelBtn.classList.remove("hidden");
+        cancelBtn.textContent = "Cancel";
+    }
+    if (altBtn) {
+        altBtn.onclick = null;
+        altBtn.classList.add("hidden");
+        altBtn.textContent = "Alternate";
+    }
+    if (backdrop) backdrop.onclick = null;
+    renderModsPathMigrationBackgroundNotice();
+}
+
+function showModsPathMigrationProgressModal() {
+    const overlay = byId("modalOverlay");
+    const titleEl = byId("modalTitle");
+    const msgEl = byId("modalMessage");
+    const extra = byId("modalExtra");
+    const confirmBtn = byId("modalConfirm");
+    const cancelBtn = byId("modalCancel");
+    const altBtn = byId("modalAlt");
+    const backdrop = byId("modalBackdrop");
+
+    state.modsPathMigration.modalVisible = true;
+
+    if (titleEl) titleEl.textContent = getModsPathMigrationTitle();
+    if (msgEl) msgEl.textContent = getModsPathMigrationBusyMessage();
+    if (confirmBtn) {
+        confirmBtn.textContent = state.modsPathMigration.backgrounded ? "Hide" : "Run in background";
+        confirmBtn.disabled = false;
+    }
+    if (cancelBtn) {
+        cancelBtn.classList.add("hidden");
+        cancelBtn.disabled = true;
+        cancelBtn.onclick = null;
+    }
+    if (altBtn) {
+        altBtn.classList.add("hidden");
+        altBtn.onclick = null;
+        altBtn.textContent = "Alternate";
+    }
+    if (extra) {
+        extra.innerHTML = [
+            '<div class="migration-progress-shell">',
+            '  <div class="migration-progress-copy">',
+            '    <p class="muted">This can take a while for large mod folders. Descriptor files stay in the Paradox Documents folder while the managed mod contents are updated here.</p>',
+            `    <p class="muted"><strong>Target managed folder:</strong> <code>${escapeHtml(state.modsPathMigration.targetModsPath || "Not set")}</code></p>`,
+            state.modsPathMigration.sourceModsPath
+                ? `    <p class="muted"><strong>Current managed folder:</strong> <code>${escapeHtml(state.modsPathMigration.sourceModsPath)}</code></p>`
+                : "",
+            '    <p id="modsPathMigrationPhase" class="migration-progress-phase">Preparing</p>',
+            '    <p id="modsPathMigrationCurrentMod" class="migration-progress-current muted">Currently moving: Preparing mod list...</p>',
+            '    <div class="migration-progress-meta">',
+            '      <span id="modsPathMigrationCount" class="muted">Preparing mod list...</span>',
+            '      <strong id="modsPathMigrationPercent">0% complete</strong>',
+            '    </div>',
+            '  </div>',
+            '  <div class="migration-progress-track" aria-hidden="true"><span id="modsPathMigrationBar" data-progress-mode="indeterminate"></span></div>',
+            '</div>'
+        ].filter(Boolean).join("");
+    }
+    if (backdrop) backdrop.onclick = null;
+    if (overlay) overlay.classList.remove("hidden");
+
+    if (confirmBtn) {
+        confirmBtn.onclick = () => {
+            state.modsPathMigration.backgrounded = true;
+            hideModsPathMigrationModal();
+            setSettingsStatus(`${getModsPathMigrationBusyMessage()} Running in background.`);
+            setGlobalStatus(`${getModsPathMigrationBusyMessage()} Running in background.`);
+        };
+    }
+
+    renderModsPathMigrationProgress();
+    renderModsPathMigrationBackgroundNotice();
+}
+
 /* ============================================================
    STELLARISYNC STATUS
    ============================================================ */
@@ -590,27 +829,71 @@ async function refreshStellarisyncStatus() {
 /* ============================================================
    GAME LAUNCH
    ============================================================ */
+function syncLaunchGameAvailability() {
+    const btn = byId("launchGameBtn");
+    const text = byId("launchGameText");
+    if (!btn || !text) {
+        return;
+    }
+
+    const iconHolder = btn.querySelector(".nav-icon[data-icon]");
+    if (state.modsPathMigration.active) {
+        btn.disabled = true;
+        btn.title = "Wait for the mods folder change to finish before launching Stellaris.";
+        text.textContent = "Moving Mods...";
+        setDataIcon(iconHolder, "queue");
+        return;
+    }
+
+    btn.disabled = false;
+    btn.title = "";
+    if (state.gameRunning) {
+        text.textContent = "Restart Game";
+        setDataIcon(iconHolder, "restart");
+        return;
+    }
+
+    text.textContent = "Launch Game";
+    setDataIcon(iconHolder, "launch");
+}
+
+function applyModsPathMigrationStatus(status) {
+    state.modsPathMigration = {
+        ...state.modsPathMigration,
+        ...(status || {})
+    };
+    syncLaunchGameAvailability();
+    renderModsPathMigrationProgress();
+    renderModsPathMigrationBackgroundNotice();
+    syncModsPathMigrationPolling();
+}
+
+async function refreshModsPathMigrationStatus() {
+    try {
+        const status = await window.spikeApi.getModsPathMigrationStatus();
+        applyModsPathMigrationStatus(status);
+    } catch {
+        // ignore
+    }
+}
+
 async function refreshGameRunningStatus() {
     try {
         state.gameRunning = await window.spikeApi.getGameRunningStatus();
-        const btn = byId("launchGameBtn");
-        const text = byId("launchGameText");
-        if (btn && text) {
-            const iconHolder = btn.querySelector(".nav-icon[data-icon]");
-            if (state.gameRunning) {
-                text.textContent = "Restart Game";
-                setDataIcon(iconHolder, "restart");
-            } else {
-                text.textContent = "Launch Game";
-                setDataIcon(iconHolder, "launch");
-            }
-        }
+        syncLaunchGameAvailability();
     } catch {
         // ignore
     }
 }
 
 async function handleLaunchGame() {
+    if (state.modsPathMigration.active) {
+        const message = state.modsPathMigration.lastMessage
+            || "Wait for the mods folder change to finish before launching Stellaris.";
+        setGlobalStatus(message);
+        return;
+    }
+
     if (state.gameRunning) {
         const confirmed = await showModal(
             "Stellaris is running",
@@ -1031,12 +1314,12 @@ function buildQueueMessageForDisplay(item, developerModeEnabled) {
         if (/steamworks unavailable|steam not running/i.test(rawMessage) || /steamcmd|SteamCMD/i.test(rawMessage)) {
             if (/preparing|preparing batch/i.test(rawMessage)) return "Starting download via SteamCMD...";
             if (/verifying downloaded files/i.test(rawMessage)) return "Verifying downloaded files...";
-            if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
+            if (/deploying|installed to (?:mods path|managed mods folder)/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
             if (/batch/i.test(rawMessage)) return "Downloading via SteamCMD batch...";
             return "Downloading via SteamCMD...";
         }
         if (/verifying downloaded files/i.test(rawMessage)) return "Verifying downloaded files...";
-        if (/deploying|installed to mods path/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
+        if (/deploying|installed to (?:mods path|managed mods folder)/i.test(rawMessage)) return "Deploying to Stellaris mods folder...";
         if (/already in steam workshop cache|already downloaded/i.test(rawMessage)) return "Deploying cached mod files...";
         return action === "uninstall" ? "Removing installed files..." : "Downloading via Steam...";
     }
@@ -1091,7 +1374,7 @@ function buildQueueDetailMessage(rawMessage) {
         return "Steam download failed. Retry later or verify SteamCMD in Settings.";
     }
 
-    if (/installed to mods path/i.test(raw)) {
+    if (/installed to (?:mods path|managed mods folder)/i.test(raw)) {
         return "Install completed.";
     }
 
@@ -1894,7 +2177,7 @@ async function openDetailDrawer(workshopId) {
    ============================================================ */
 function getDefaultSettingsModel() {
     return {
-        gamePath: "", modsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
+        gamePath: "", modsPath: "", managedModsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
         workshopDownloadRuntime: "Auto", lastDetectedGameVersion: "",
         autoDetectGame: true, developerMode: false, warnBeforeRestartGame: true,
         themePalette: "Obsidian Ember", autoCheckAppUpdates: true,
@@ -1919,30 +2202,107 @@ function normalizeSettingsPathKey(value) {
 }
 
 function didModsPathChange(nextSettings) {
-    return normalizeSettingsPathKey(state.settingsModel?.modsPath)
-        !== normalizeSettingsPathKey(nextSettings?.modsPath);
+    return normalizeSettingsPathKey(state.settingsModel?.managedModsPath)
+        !== normalizeSettingsPathKey(nextSettings?.managedModsPath);
 }
 
 async function promptForModsPathMigration(nextSettings) {
-    const currentModsPath = String(state.settingsModel?.modsPath || "").trim();
-    const nextModsPath = String(nextSettings?.modsPath || "").trim();
+    const currentModsPath = String(state.settingsModel?.managedModsPath || "").trim();
+    const nextModsPath = String(nextSettings?.managedModsPath || "").trim();
 
     return showChoiceModal(
-        "Change mod folder",
-        "You changed the Mods path. Do you want to move the existing managed mods into the new folder too?",
+        "Change managed mods folder",
+        "You changed the managed mods folder. Do you want to move the existing managed mod folders into the new location too?",
         {
-            confirmLabel: "Yes, move mods",
-            alternateLabel: "No, only update paths",
+            confirmLabel: "Yes, move folders",
+            alternateLabel: "No, only rewrite paths",
             cancelLabel: "Cancel",
             detailHtml: [
-                "<p>This folder stores managed mod folders and their <code>.mod</code> descriptor files.</p>",
-                "<p><strong>Yes, move mods</strong> copies the existing managed mods into the new folder and rewrites each descriptor path for you.</p>",
-                "<p><strong>No, only update paths</strong> rewrites the descriptor files only. Use that if you plan to move the folders yourself.</p>",
+                "<p><code>.mod</code> descriptor files stay in the Paradox Documents <code>mod</code> folder.</p>",
+                "<p><strong>Yes, move folders</strong> copies the existing managed mod folders into the new location and rewrites each descriptor <code>path=</code> line for you.</p>",
+                "<p><strong>No, only rewrite paths</strong> keeps the folders where they are and only rewrites descriptor paths. Use that if you plan to move the folders yourself.</p>",
                 currentModsPath ? `<p><strong>Current folder:</strong> <code>${escapeHtml(currentModsPath)}</code></p>` : "",
                 nextModsPath ? `<p><strong>New folder:</strong> <code>${escapeHtml(nextModsPath)}</code></p>` : ""
             ].filter(Boolean).join("")
         }
     );
+}
+
+async function finalizeModsPathMigration(result) {
+    state.modsPathMigration.pendingPromise = null;
+    state.modsPathMigration.modalVisible = false;
+    state.modsPathMigration.backgrounded = false;
+    hideModsPathMigrationModal();
+    await refreshModsPathMigrationStatus();
+
+    if (!result?.ok) {
+        const message = String(result?.message || "Failed to change managed mods folder.");
+        setSettingsStatus(message);
+        setGlobalStatus(message);
+        await refreshSettingsPage();
+        return;
+    }
+
+    applySettingsToForm(result.settings);
+    setSettingsStatus(result.message);
+    setGlobalStatus(result.message);
+    await refreshLibrarySnapshot();
+}
+
+async function beginModsPathMigrationSave(nextSettings, moveExistingMods) {
+    if (state.modsPathMigration.active) {
+        setSettingsStatus("A managed mods folder change is already running.");
+        return false;
+    }
+
+    const gameRunning = await window.spikeApi.getGameRunningStatus();
+    state.gameRunning = gameRunning;
+    syncLaunchGameAvailability();
+    if (gameRunning) {
+        setSettingsStatus("Close Stellaris before changing the managed mods folder.");
+        return false;
+    }
+
+    const initialStatus = {
+        active: true,
+        sourceModsPath: String(state.settingsModel?.managedModsPath || "").trim() || null,
+        targetModsPath: String(nextSettings?.managedModsPath || "").trim() || null,
+        moveExistingMods: moveExistingMods === true,
+        startedAtUtc: new Date().toISOString(),
+        completedAtUtc: null,
+        lastMessage: getModsPathMigrationBusyMessage({ moveExistingMods }),
+        currentModName: null,
+        currentPhase: null,
+        processedModCount: 0,
+        totalModCount: 0,
+        progressPercent: 0
+    };
+
+    applySettingsToForm(nextSettings);
+    applyModsPathMigrationStatus(initialStatus);
+    showModsPathMigrationProgressModal();
+
+    const busyMessage = getModsPathMigrationBusyMessage(initialStatus);
+    setSettingsStatus(busyMessage);
+    setGlobalStatus(busyMessage);
+
+    const migrationPromise = window.spikeApi.migrateModsPath({
+        settings: nextSettings,
+        moveExistingMods
+    });
+    state.modsPathMigration.pendingPromise = migrationPromise;
+
+    void migrationPromise
+        .then((result) => finalizeModsPathMigration(result))
+        .catch((error) => finalizeModsPathMigration({
+            ok: false,
+            message: error instanceof Error ? error.message : String(error || "Unknown mods-path migration error"),
+            settings: nextSettings,
+            movedModCount: 0,
+            rewrittenDescriptorCount: 0
+        }));
+
+    return true;
 }
 
 async function resolveUnsavedSettingsBeforeLeave() {
@@ -1986,6 +2346,7 @@ function buildSettingsFromForm() {
     return {
         gamePath: getInputValue("settingsGamePathInput"),
         modsPath: getInputValue("settingsModsPathInput"),
+        managedModsPath: getInputValue("settingsManagedModsPathInput"),
         steamCmdPath: getInputValue("settingsSteamCmdPathInput"),
         steamCmdDownloadPath: getInputValue("settingsSteamCmdDownloadPathInput"),
         workshopDownloadRuntime: getInputValue("settingsWorkshopRuntimeInput") || "Auto",
@@ -2050,6 +2411,7 @@ function applySettingsToForm(settings) {
     setInputValue("settingsPublicProfileInput", m.publicProfileUsername);
     setInputValue("settingsGamePathInput", m.gamePath);
     setInputValue("settingsModsPathInput", m.modsPath);
+    setInputValue("settingsManagedModsPathInput", m.managedModsPath);
     setInputValue("settingsSteamCmdPathInput", m.steamCmdPath);
     setInputValue("settingsSteamCmdDownloadPathInput", m.steamCmdDownloadPath);
     setInputValue("settingsThemeInput", m.themePalette || "Obsidian Ember");
@@ -2155,29 +2517,11 @@ async function saveSettingsPage() {
         if (didModsPathChange(current)) {
             const choice = await promptForModsPathMigration(current);
             if (choice === "cancel") {
-                setSettingsStatus("Mods path change cancelled.");
+                setSettingsStatus("Managed mods folder change cancelled.");
                 return false;
             }
 
-            setSettingsStatus(
-                choice === "confirm"
-                    ? "Changing mods path and moving managed mods..."
-                    : "Changing mods path and rewriting managed descriptor paths..."
-            );
-
-            const result = await window.spikeApi.migrateModsPath({
-                settings: current,
-                moveExistingMods: choice === "confirm"
-            });
-            if (!result.ok) {
-                setSettingsStatus(result.message);
-                return false;
-            }
-
-            applySettingsToForm(result.settings);
-            setSettingsStatus(result.message);
-            await refreshLibrarySnapshot();
-            return true;
+            return beginModsPathMigrationSave(current, choice === "confirm");
         }
 
         const result = await window.spikeApi.saveSettings(current);
@@ -2239,13 +2583,16 @@ async function detectModsPathSettings() {
     const result = await window.spikeApi.autoDetectSettings(buildSettingsFromForm());
     const detectedModsPath = String(result?.settings?.modsPath || "").trim();
     if (!detectedModsPath) {
-        setSettingsStatus("Could not detect a Stellaris mods path.");
+        setSettingsStatus("Could not detect the Stellaris descriptor folder.");
         return;
     }
 
     setInputValue("settingsModsPathInput", detectedModsPath);
+    if (!getInputValue("settingsManagedModsPathInput")) {
+        setInputValue("settingsManagedModsPathInput", detectedModsPath);
+    }
     markSettingsDirty(true);
-    setSettingsStatus(`Detected mods path: ${detectedModsPath}`);
+    setSettingsStatus(`Detected descriptor folder: ${detectedModsPath}`);
 }
 
 async function detectWorkshopRuntimeSettings() {
@@ -3698,7 +4045,7 @@ function hookSettingsControls() {
     }
 
     const dirtyInputs = [
-        "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput",
+        "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput", "settingsManagedModsPathInput",
         "settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput",
         "settingsWorkshopRuntimeInput", "settingsThemeInput"
     ];
@@ -3759,6 +4106,20 @@ function hookSettingsControls() {
         }
 
         setInputValue("settingsModsPathInput", selectedPath);
+        markSettingsDirty(true);
+    });
+
+    byId("settingsManagedModsPathBrowse")?.addEventListener("click", async () => {
+        const selectedPath = await window.spikeApi.pickDirectory({
+            title: "Select managed mods folder",
+            defaultPath: getInputValue("settingsManagedModsPathInput")
+        });
+
+        if (!selectedPath) {
+            return;
+        }
+
+        setInputValue("settingsManagedModsPathInput", selectedPath);
         markSettingsDirty(true);
     });
 
@@ -4219,6 +4580,22 @@ function hookGlobalControls() {
     byId("launchGameBtn")?.addEventListener("click", () => void handleLaunchGame());
     byId("queueCancelAll")?.addEventListener("click", () => void cancelAllQueueActions());
     byId("queueClearFinished")?.addEventListener("click", () => void clearQueueHistory());
+    const reopenModsPathMigrationProgress = () => {
+        if (!state.modsPathMigration.active) {
+            return;
+        }
+
+        showModsPathMigrationProgressModal();
+    };
+    byId("modsPathMigrationNotice")?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.closest("button")) {
+            return;
+        }
+
+        reopenModsPathMigrationProgress();
+    });
+    byId("modsPathMigrationNoticeOpen")?.addEventListener("click", () => reopenModsPathMigrationProgress());
 
     byId("detailCloseBackdrop")?.addEventListener("click", () => showDetailDrawer(false));
     byId("detailCloseButton")?.addEventListener("click", () => showDetailDrawer(false));
@@ -4253,6 +4630,9 @@ function hookGlobalControls() {
             showDetailDrawer(false);
             const overlay = byId("modalOverlay");
             if (overlay && !overlay.classList.contains("hidden")) {
+                if (state.modsPathMigration.modalVisible) {
+                    return;
+                }
                 overlay.classList.add("hidden");
             } else {
                 const updatePopup = byId("updateBanner");
@@ -4337,14 +4717,15 @@ async function init() {
     await bootstrapSelectedVersionFromSettings();
 
     // Load all data in parallel
-    await Promise.all([
-        refreshVersionOptions(),
-        refreshSettingsPage(),
-        refreshLibrarySnapshot(),
-        refreshQueueSnapshot(),
-        refreshStellarisyncStatus(),
-        refreshGameRunningStatus()
-    ]);
+        await Promise.all([
+            refreshVersionOptions(),
+            refreshSettingsPage(),
+            refreshLibrarySnapshot(),
+            refreshQueueSnapshot(),
+            refreshStellarisyncStatus(),
+            refreshModsPathMigrationStatus(),
+            refreshGameRunningStatus()
+        ]);
 
     await ensurePublicUsernameConfigured();
 
@@ -4379,8 +4760,11 @@ async function init() {
         if (event.snapshot) applyQueueSnapshot(event.snapshot);
     });
 
-    if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
-    state.gamePollingHandle = setInterval(() => void refreshGameRunningStatus(), 3000);
+        if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
+        state.gamePollingHandle = setInterval(() => {
+            void refreshGameRunningStatus();
+            void refreshModsPathMigrationStatus();
+        }, 3000);
 
     if (state.stellarisyncPollingHandle) clearInterval(state.stellarisyncPollingHandle);
     state.stellarisyncPollingHandle = setInterval(() => void refreshStellarisyncStatus(), 120000);

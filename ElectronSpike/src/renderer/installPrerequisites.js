@@ -10,9 +10,9 @@
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const INSTALL_PREREQUISITE_MESSAGES = Object.freeze({
-        modsPath: "Set your Mods path in Settings before installing mods.",
+        modsPath: "Set your descriptor folder in Settings before installing mods.",
         steamCmd: "Configure SteamCMD in Settings before installing mods.",
-        combined: "Set your Mods path and configure SteamCMD in Settings before installing mods."
+        combined: "Set your descriptor folder and configure SteamCMD in Settings before installing mods."
     });
 
     function normalizeRuntime(value) {

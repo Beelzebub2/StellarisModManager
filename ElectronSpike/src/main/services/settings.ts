@@ -257,10 +257,12 @@ export function detectGameVersionFromPath(gamePath: string): string | null {
 function normalizeSettings(rawValue: unknown): SettingsSnapshot {
     const raw = asRecord(rawValue);
     const defaults = defaultSettings();
+    const legacyModsPath = getString(raw, "modsPath", "ModsPath");
 
     return {
         gamePath: getString(raw, "gamePath", "GamePath"),
-        modsPath: getString(raw, "modsPath", "ModsPath"),
+        modsPath: legacyModsPath,
+        managedModsPath: getString(raw, "managedModsPath", "ManagedModsPath") ?? legacyModsPath,
         steamCmdPath: getString(raw, "steamCmdPath", "SteamCmdPath"),
         steamCmdDownloadPath: getString(raw, "steamCmdDownloadPath", "SteamCmdDownloadPath"),
         workshopDownloadRuntime: normalizeRuntime(
@@ -295,6 +297,7 @@ function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown
     return {
         GamePath: coerceString(settings.gamePath) ?? null,
         ModsPath: coerceString(settings.modsPath) ?? null,
+        ManagedModsPath: coerceString(settings.managedModsPath) ?? null,
         SteamCmdPath: coerceString(settings.steamCmdPath) ?? null,
         SteamCmdDownloadPath: coerceString(settings.steamCmdDownloadPath) ?? null,
         WorkshopDownloadRuntime: normalizeRuntime(coerceString(settings.workshopDownloadRuntime)),
@@ -342,6 +345,22 @@ export function getDefaultModsPath(): string {
 
 export function getDefaultModsPathForTest(input: DefaultModsPathResolverInput): string {
     return resolveDefaultModsPath(input);
+}
+
+export function resolveDescriptorModsPath(settings?: Pick<SettingsSnapshot, "modsPath"> | null): string {
+    const configured = coerceString(settings?.modsPath);
+    return configured ?? getDefaultModsPath();
+}
+
+export function resolveManagedModsPath(
+    settings?: Pick<SettingsSnapshot, "managedModsPath" | "modsPath"> | null
+): string {
+    const configured = coerceString(settings?.managedModsPath);
+    if (configured) {
+        return configured;
+    }
+
+    return resolveDescriptorModsPath(settings);
 }
 
 function dedupePaths(paths: Array<string | undefined>): string[] {
@@ -685,6 +704,7 @@ async function autoConfigureSteamCmdSnapshotInternal(
     if (!coerceString(current.modsPath)) {
         current.modsPath = getDefaultModsPath();
     }
+    current.managedModsPath = resolveManagedModsPath(current);
 
     let steamCmdAutoConfig = resolveSteamCmdAutoConfig(current, discovery, {
         allowExecutableDiscovery: options.allowExecutableDiscovery !== false
@@ -796,13 +816,20 @@ function readSettingsRaw(): unknown | null {
 function loadSettingsOrDefault(): SettingsSnapshot {
     const raw = readSettingsRaw();
     if (raw === null) {
-        return defaultSettings();
+        return {
+            ...defaultSettings(),
+            modsPath: getDefaultModsPath(),
+            managedModsPath: getDefaultModsPath()
+        };
     }
 
-    return {
+    const snapshot = {
         ...defaultSettings(),
         ...normalizeSettings(raw)
     };
+    snapshot.modsPath = resolveDescriptorModsPath(snapshot);
+    snapshot.managedModsPath = resolveManagedModsPath(snapshot);
+    return snapshot;
 }
 
 export function getThemePaletteOptions(): string[] {
@@ -831,6 +858,9 @@ export function loadSettingsSnapshot(): SettingsSnapshot | null {
         }
     }
 
+    snapshot.modsPath = resolveDescriptorModsPath(snapshot);
+    snapshot.managedModsPath = resolveManagedModsPath(snapshot);
+
     return snapshot;
 }
 
@@ -841,6 +871,8 @@ export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult
         workshopDownloadRuntime: normalizeRuntime(coerceString(next.workshopDownloadRuntime)),
         themePalette: coerceString(next.themePalette) ?? "Obsidian Ember"
     };
+    merged.modsPath = resolveDescriptorModsPath(merged);
+    merged.managedModsPath = resolveManagedModsPath(merged);
 
     const detected = detectGameVersion(merged.gamePath);
     if (detected) {
@@ -884,6 +916,7 @@ export function autoDetectSettingsSnapshot(baseSettings?: SettingsSnapshot): Set
     if (!coerceString(current.modsPath)) {
         current.modsPath = getDefaultModsPath();
     }
+    current.managedModsPath = resolveManagedModsPath(current);
 
     const steamCmdAutoConfig = resolveSteamCmdAutoConfig(current, discovery);
     current.steamCmdPath = steamCmdAutoConfig.steamCmdPath;
@@ -907,7 +940,8 @@ export function validateSettingsSnapshot(settings: SettingsSnapshot): SettingsVa
     const warnings: string[] = [];
 
     const gamePath = coerceString(settings.gamePath);
-    const modsPath = coerceString(settings.modsPath);
+    const modsPath = coerceString(resolveDescriptorModsPath(settings));
+    const managedModsPath = coerceString(resolveManagedModsPath(settings));
     const steamCmdPath = coerceString(settings.steamCmdPath);
     const runtime = normalizeRuntime(coerceString(settings.workshopDownloadRuntime));
 
@@ -918,9 +952,15 @@ export function validateSettingsSnapshot(settings: SettingsSnapshot): SettingsVa
     }
 
     if (!modsPath) {
-        warnings.push("Mods path is not set.");
+        warnings.push("Descriptor folder is not set.");
     } else if (!fs.existsSync(modsPath)) {
-        warnings.push("Mods path does not exist yet and will be created on demand.");
+        warnings.push("Descriptor folder does not exist yet and will be created on demand.");
+    }
+
+    if (!managedModsPath) {
+        warnings.push("Managed mods folder is not set.");
+    } else if (!fs.existsSync(managedModsPath)) {
+        warnings.push("Managed mods folder does not exist yet and will be created on demand.");
     }
 
     if (runtime !== "Steamworks") {

@@ -14,7 +14,11 @@ import type {
     ModActionState
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
-import { getDefaultModsPath as getSettingsDefaultModsPath, loadSettingsSnapshot } from "./settings";
+import {
+    loadSettingsSnapshot,
+    resolveDescriptorModsPath,
+    resolveManagedModsPath
+} from "./settings";
 import { discoverSteamLibraries } from "./steamDiscovery";
 import { logError, logInfo } from "./logger";
 import {
@@ -388,14 +392,12 @@ function getInstalledWorkshopIdsFromDb(): Set<string> {
 
 // --- Path resolution ---
 
-function getDefaultModsPath(): string {
-    return getSettingsDefaultModsPath();
+function resolveModsInstallRoot(): string {
+    return resolveManagedModsPath(loadSettingsSnapshot());
 }
 
-function resolveModsInstallRoot(): string {
-    const settings = loadSettingsSnapshot();
-    const configured = settings?.modsPath?.trim();
-    return configured && configured.length > 0 ? configured : getDefaultModsPath();
+function resolveDescriptorModsRoot(): string {
+    return resolveDescriptorModsPath(loadSettingsSnapshot());
 }
 
 function resolveDownloadBasePath(): string {
@@ -686,17 +688,25 @@ async function deployDownloadedModToModsPath(
     reportProgress: (progress: number, message: string, progressMode?: QueueProgressMode) => void,
     keepSource = false
 ): Promise<{ ok: boolean; installPath: string; message: string }> {
-    const modsRoot = resolveModsInstallRoot();
-    const finalInstallPath = path.join(modsRoot, workshopId);
-    const finalDescriptorPath = path.join(modsRoot, `${workshopId}.mod`);
+    const installRoot = resolveModsInstallRoot();
+    const descriptorRoot = resolveDescriptorModsRoot();
+    const finalInstallPath = path.join(installRoot, workshopId);
+    const finalDescriptorPath = path.join(descriptorRoot, `${workshopId}.mod`);
 
     try {
-        await fsp.mkdir(modsRoot, { recursive: true });
+        await Promise.all([
+            fsp.mkdir(installRoot, { recursive: true }),
+            fsp.mkdir(descriptorRoot, { recursive: true })
+        ]);
     } catch {
-        return { ok: false, installPath: finalInstallPath, message: `Could not create mods path: ${modsRoot}` };
+        return {
+            ok: false,
+            installPath: finalInstallPath,
+            message: `Could not create the configured managed mods folders.`
+        };
     }
 
-    reportProgress(96, `Deploying ${workshopId} to mods path...`);
+    reportProgress(96, `Deploying ${workshopId} to managed mods folder...`);
 
     try {
         await removePathIfExists(finalInstallPath);
@@ -721,7 +731,7 @@ async function deployDownloadedModToModsPath(
         descriptorContent,
         "path",
         buildManagedDescriptorPath({
-            modsRoot,
+            modsRoot: descriptorRoot,
             installedPath: finalInstallPath
         })
     );
@@ -737,7 +747,7 @@ async function deployDownloadedModToModsPath(
         await removePathIfExists(downloadedInstallPath);
     }
 
-    return { ok: true, installPath: finalInstallPath, message: `Installed to mods path: ${finalInstallPath}` };
+    return { ok: true, installPath: finalInstallPath, message: `Installed to managed mods folder: ${finalInstallPath}` };
 }
 
 // --- Steamworks download (primary) ---
@@ -752,7 +762,7 @@ async function runSteamworksInstall(
 
     // Deploy from Steam's workshop cache to the Stellaris mods folder.
     // keepSource=true because the source is Steam's workshop cache — we must not delete it.
-    reportProgress(90, `Deploying ${entry.workshopId} to mods path...`, "determinate");
+    reportProgress(90, `Deploying ${entry.workshopId} to managed mods folder...`, "determinate");
     const deployed = await deployDownloadedModToModsPath(entry.workshopId, downloadResult.installPath, reportProgress, true);
     if (!deployed.ok) return deployed;
 
@@ -1226,12 +1236,13 @@ async function runUninstall(workshopId: string): Promise<{ ok: boolean; message:
     const knownPath = installPathById.get(workshopId);
     if (knownPath) {
         await removeStrict(knownPath);
-        const descriptorPath = path.join(path.dirname(knownPath), `${workshopId}.mod`);
+        const descriptorPath = path.join(resolveDescriptorModsRoot(), `${workshopId}.mod`);
         await removeStrict(descriptorPath);
     } else {
         const modsRoot = resolveModsInstallRoot();
+        const descriptorRoot = resolveDescriptorModsRoot();
         await removeStrict(path.join(modsRoot, workshopId));
-        await removeStrict(path.join(modsRoot, `${workshopId}.mod`));
+        await removeStrict(path.join(descriptorRoot, `${workshopId}.mod`));
 
         const discovery = discoverSteamLibraries();
         for (const library of discovery.libraries) {

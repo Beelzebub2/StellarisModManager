@@ -23,11 +23,12 @@ test("moving the mods folder rewrites descriptors and relocates the installed mo
     assert.equal(typeof library.migrateManagedModsForTest, "function");
 
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "smm-mod-path-migrate-"));
-    const stellarisDir = path.join(tempRoot, "Stellaris");
-    const currentModsPath = path.join(stellarisDir, "mod");
-    const nextModsPath = path.join(stellarisDir, "mods-alt");
-    const installedPath = path.join(currentModsPath, "2104538771");
-    const descriptorPath = path.join(currentModsPath, "2104538771.mod");
+    const documentsStellarisDir = path.join(tempRoot, "Documents", "Paradox Interactive", "Stellaris");
+    const descriptorModsPath = path.join(documentsStellarisDir, "mod");
+    const currentManagedModsPath = descriptorModsPath;
+    const nextManagedModsPath = path.join(tempRoot, "D-drive", "games", "stellaris", "mod");
+    const installedPath = path.join(currentManagedModsPath, "2104538771");
+    const descriptorPath = path.join(descriptorModsPath, "2104538771.mod");
 
     fs.mkdirSync(installedPath, { recursive: true });
     fs.writeFileSync(path.join(installedPath, "contents.txt"), "installed", "utf8");
@@ -35,8 +36,9 @@ test("moving the mods folder rewrites descriptors and relocates the installed mo
 
     try {
         const result = await library.migrateManagedModsForTest({
-            currentModsPath,
-            nextModsPath,
+            descriptorModsPath,
+            currentManagedModsPath,
+            nextManagedModsPath,
             moveExistingMods: true,
             mods: [
                 {
@@ -50,14 +52,14 @@ test("moving the mods folder rewrites descriptors and relocates the installed mo
 
         assert.equal(result.movedModCount, 1);
         assert.equal(result.rewrittenDescriptorCount, 1);
-        assert.equal(result.mods[0].installedPath, path.join(nextModsPath, "2104538771"));
-        assert.equal(result.mods[0].descriptorPath, path.join(nextModsPath, "2104538771.mod"));
+        assert.equal(result.mods[0].installedPath, path.join(nextManagedModsPath, "2104538771"));
+        assert.equal(result.mods[0].descriptorPath, descriptorPath);
         assert.equal(fs.existsSync(installedPath), false);
-        assert.equal(fs.existsSync(descriptorPath), false);
-        assert.equal(fs.existsSync(path.join(nextModsPath, "2104538771", "contents.txt")), true);
+        assert.equal(fs.existsSync(descriptorPath), true);
+        assert.equal(fs.existsSync(path.join(nextManagedModsPath, "2104538771", "contents.txt")), true);
 
-        const rewrittenDescriptor = fs.readFileSync(path.join(nextModsPath, "2104538771.mod"), "utf8");
-        assert.match(rewrittenDescriptor, /path="mods-alt\/2104538771"/);
+        const rewrittenDescriptor = fs.readFileSync(descriptorPath, "utf8");
+        assert.match(rewrittenDescriptor, /path=".*D-drive\/games\/stellaris\/mod\/2104538771"/);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -67,11 +69,12 @@ test("rewriting descriptors without moving files points them at the new absolute
     assert.equal(typeof library.migrateManagedModsForTest, "function");
 
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "smm-mod-path-migrate-"));
-    const stellarisDir = path.join(tempRoot, "Stellaris");
-    const currentModsPath = path.join(stellarisDir, "mod");
-    const nextModsPath = path.join(tempRoot, "Managed Mods");
-    const installedPath = path.join(currentModsPath, "2104538771");
-    const descriptorPath = path.join(currentModsPath, "2104538771.mod");
+    const documentsStellarisDir = path.join(tempRoot, "Documents", "Paradox Interactive", "Stellaris");
+    const descriptorModsPath = path.join(documentsStellarisDir, "mod");
+    const currentManagedModsPath = descriptorModsPath;
+    const nextManagedModsPath = path.join(tempRoot, "Managed Mods");
+    const installedPath = path.join(currentManagedModsPath, "2104538771");
+    const descriptorPath = path.join(descriptorModsPath, "2104538771.mod");
 
     fs.mkdirSync(installedPath, { recursive: true });
     fs.writeFileSync(path.join(installedPath, "contents.txt"), "installed", "utf8");
@@ -79,8 +82,9 @@ test("rewriting descriptors without moving files points them at the new absolute
 
     try {
         const result = await library.migrateManagedModsForTest({
-            currentModsPath,
-            nextModsPath,
+            descriptorModsPath,
+            currentManagedModsPath,
+            nextManagedModsPath,
             moveExistingMods: false,
             mods: [
                 {
@@ -94,14 +98,15 @@ test("rewriting descriptors without moving files points them at the new absolute
 
         assert.equal(result.movedModCount, 0);
         assert.equal(result.rewrittenDescriptorCount, 1);
-        assert.equal(result.mods[0].installedPath, path.join(nextModsPath, "2104538771"));
+        assert.equal(result.mods[0].installedPath, path.join(nextManagedModsPath, "2104538771"));
+        assert.equal(result.mods[0].descriptorPath, descriptorPath);
         assert.equal(fs.existsSync(installedPath), true);
-        assert.equal(fs.existsSync(descriptorPath), false);
+        assert.equal(fs.existsSync(descriptorPath), true);
 
-        const rewrittenDescriptor = fs.readFileSync(path.join(nextModsPath, "2104538771.mod"), "utf8");
+        const rewrittenDescriptor = fs.readFileSync(descriptorPath, "utf8");
         assert.match(
             rewrittenDescriptor,
-            new RegExp(`path="${escapeRegExp(path.join(nextModsPath, "2104538771").replace(/\\/g, "/"))}"`)
+            new RegExp(`path="${escapeRegExp(path.join(nextManagedModsPath, "2104538771").replace(/\\/g, "/"))}"`)
         );
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });

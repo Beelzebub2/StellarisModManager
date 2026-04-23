@@ -15,6 +15,7 @@ import type {
     LibraryMoveDirectionRequest,
     ModsPathMigrationRequest,
     ModsPathMigrationResult,
+    ModsPathMigrationStatus,
     LibraryReorderRequest,
     ScanLocalModsResult,
     LibraryRenameProfileRequest,
@@ -56,6 +57,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:saveSettings", settings) as Promise<SettingsSaveResult>,
     migrateModsPath: (request: ModsPathMigrationRequest) =>
         ipcRenderer.invoke("spike:migrateModsPath", request) as Promise<ModsPathMigrationResult>,
+    getModsPathMigrationStatus: () =>
+        ipcRenderer.invoke("spike:getModsPathMigrationStatus") as Promise<ModsPathMigrationStatus>,
     autoDetectSettings: (settings?: SettingsSnapshot) =>
         ipcRenderer.invoke("spike:autoDetectSettings", settings) as Promise<SettingsAutoDetectResult>,
     autoConfigureSteamCmd: (settings?: SettingsSnapshot) =>
