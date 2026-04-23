@@ -68,7 +68,8 @@
         <aside id="mergerProgressNotice" class="merger-progress-notice hidden" aria-live="polite">
             <div class="merger-progress-notice-copy">
                 <strong id="mergerProgressNoticeTitle" class="merger-progress-notice-title">Merger working</strong>
-                <span id="mergerProgressNoticeMessage" class="merger-progress-notice-message">Preparing • 0% complete</span>
+                <span id="mergerProgressNoticeMessage" class="merger-progress-notice-message">Preparing • 0%
+                    complete</span>
             </div>
             <button id="mergerProgressNoticeOpen" type="button" class="button-secondary">Open progress</button>
         </aside>
@@ -450,12 +451,14 @@
                         <div>
                             <p class="eyebrow">Merger</p>
                             <h2>Analyze and Build a Deterministic Merge</h2>
-                            <p class="muted merger-header-copy">Scan the active profile, inspect file-level conflicts, and build a merged local mod without modifying the original sources.</p>
+                            <p class="muted merger-header-copy">Scan the active profile, inspect file-level conflicts,
+                                and build a merged local mod without modifying the original sources.</p>
                         </div>
                         <div class="merger-header-meta">
                             <span id="mergerProfileChip" class="status-chip status-chip-muted">Profile: --</span>
                             <span id="mergerEnabledChip" class="status-chip status-chip-muted">Enabled mods: 0</span>
-                            <span id="mergerAnalysisChip" class="status-chip status-chip-muted">Last analysis: Never</span>
+                            <span id="mergerAnalysisChip" class="status-chip status-chip-muted">Last analysis:
+                                Never</span>
                         </div>
                     </header>
 
@@ -522,7 +525,8 @@
                                     <h3>Conflict Tree</h3>
                                     <p class="muted">Grouped by file type using the current profile load order.</p>
                                 </div>
-                                <span id="mergerConflictTreeCount" class="status-chip status-chip-muted">0 entries</span>
+                                <span id="mergerConflictTreeCount" class="status-chip status-chip-muted">0
+                                    entries</span>
                             </header>
                             <div id="mergerConflictTree" class="merger-conflict-tree">
                                 <div class="merger-empty muted">Run an analysis to populate the merger tree.</div>
@@ -533,7 +537,8 @@
                         </article>
 
                         <article id="mergerDetailPanel" class="merger-detail-shell">
-                            <div class="merger-empty muted">Select a merged file entry to inspect the winner, source mods, and resolution options.</div>
+                            <div class="merger-empty muted">Select a merged file entry to inspect the winner, source
+                                mods, and resolution options.</div>
                         </article>
                     </section>
                 </section>
@@ -654,7 +659,8 @@
 
                     <section class="settings-shell">
                         <div class="settings-subtabs">
-                            <button type="button" class="settings-subtab is-active" data-settings-tab="general">General</button>
+                            <button type="button" class="settings-subtab is-active"
+                                data-settings-tab="general">General</button>
                             <button type="button" class="settings-subtab" data-settings-tab="workshop">Workshop</button>
                             <button type="button" class="settings-subtab" data-settings-tab="updates">Updates</button>
                             <button type="button" class="settings-subtab" data-settings-tab="advanced">Advanced</button>
@@ -666,10 +672,12 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>Game Setup</h3>
-                                            <p class="muted settings-card-lead">Point the app at Stellaris, the Paradox descriptor
+                                            <p class="muted settings-card-lead">Point the app at Stellaris, the Paradox
+                                                descriptor
                                                 folder, and the managed mods folder.</p>
                                         </div>
-                                        <span id="settingsGameVersionChip" class="status-chip status-chip-muted">Version not
+                                        <span id="settingsGameVersionChip" class="status-chip status-chip-muted">Version
+                                            not
                                             detected</span>
                                     </div>
                                     <div class="field-col">
@@ -680,8 +688,8 @@
                                             <button id="settingsGamePathBrowse" type="button"
                                                 class="button-secondary">Browse...</button>
                                         </div>
-                                        <p class="muted settings-inline-help">Used to detect the installed game version and launch
-                                            path.</p>
+                                        <p class="muted settings-inline-help">You need to define this so the manager can
+                                            open the game. ...\Stellaris </p>
                                     </div>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsModsPathInput">Descriptor folder</label>
@@ -693,21 +701,25 @@
                                             <button id="settingsDetectModsPath" type="button"
                                                 class="button-secondary">Detect</button>
                                         </div>
-                                        <p class="muted settings-inline-help">Keep the local <code>.mod</code> descriptor files in
-                                            the Paradox Stellaris <code>mod</code> folder under Documents so
-                                            <code>dlc_load.json</code> keeps pointing at the expected location.</p>
+                                        <p class="muted settings-inline-help">This folder should be in the documents
+                                            where stellaris keeps save games etc... ...\Documents\Paradox
+                                            Interactive\Stellaris\mod
+                                        </p>
                                     </div>
                                     <div class="field-col">
-                                        <label class="field-label" for="settingsManagedModsPathInput">Managed mods folder</label>
+                                        <label class="field-label" for="settingsManagedModsPathInput">Managed mods
+                                            folder</label>
                                         <div class="path-picker-row">
-                                            <input id="settingsManagedModsPathInput" class="field-input mono" type="text"
+                                            <input id="settingsManagedModsPathInput" class="field-input mono"
+                                                type="text"
                                                 placeholder="Optional separate folder for managed mod contents" />
                                             <button id="settingsManagedModsPathBrowse" type="button"
                                                 class="button-secondary">Browse...</button>
                                         </div>
-                                        <p class="muted settings-inline-help">This is where the actual managed mod folders live.
-                                            Descriptor <code>path=</code> lines will be rewritten to point here and use
-                                            <code>/</code> separators when needed.</p>
+                                        <p class="muted settings-inline-help">If you want to keep the actual mod files
+                                            in a different drive/folder this is where you define it, after saving
+                                            settings the mod manager will move them for you
+                                        </p>
                                     </div>
                                     <div class="settings-inline-actions">
                                         <label class="toggle-row" for="settingsWarnBeforeRestartInput">
@@ -723,21 +735,25 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>Profile &amp; Sharing</h3>
-                                            <p class="muted settings-card-lead">Used when publishing shared profiles and community
+                                            <p class="muted settings-card-lead">Used when publishing shared profiles and
+                                                community
                                                 compatibility feedback.</p>
                                         </div>
                                     </div>
                                     <div class="field-col">
-                                        <label class="field-label" for="settingsPublicProfileInput">Public username</label>
-                                        <input id="settingsPublicProfileInput" class="field-input" type="text" maxlength="40"
-                                            placeholder="Example: StarAdmiral" />
-                                        <p class="muted settings-inline-help">Keep this stable so shared profiles are easy to
+                                        <label class="field-label" for="settingsPublicProfileInput">Public
+                                            username</label>
+                                        <input id="settingsPublicProfileInput" class="field-input" type="text"
+                                            maxlength="40" placeholder="Example: StarAdmiral" />
+                                        <p class="muted settings-inline-help">Keep this stable so shared profiles are
+                                            easy to
                                             recognize.</p>
                                     </div>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsThemeInput">Theme palette</label>
                                         <select id="settingsThemeInput" class="field-input"></select>
-                                        <p class="muted settings-inline-help">Preview updates immediately. Save to keep the new
+                                        <p class="muted settings-inline-help">Preview updates immediately. Save to keep
+                                            the new
                                             palette.</p>
                                     </div>
                                 </article>
@@ -749,7 +765,8 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>Workshop Downloads</h3>
-                                            <p class="muted settings-card-lead">Choose the runtime and keep the fallback path
+                                            <p class="muted settings-card-lead">Choose the runtime and keep the fallback
+                                                path
                                                 ready.</p>
                                         </div>
                                         <span id="settingsWorkshopRuntimeChip"
@@ -765,7 +782,8 @@
                                         <label class="field-label" for="settingsWorkshopRuntimeInput">Runtime</label>
                                         <select id="settingsWorkshopRuntimeInput" class="field-input"></select>
                                     </div>
-                                    <p id="settingsRuntimeHint" class="muted settings-inline-help">Auto will prefer the best
+                                    <p id="settingsRuntimeHint" class="muted settings-inline-help">Auto will prefer the
+                                        best
                                         configured runtime for this machine.</p>
                                     <div class="field-col">
                                         <label class="field-label" for="settingsSteamCmdPathInput">SteamCMD path</label>
@@ -773,10 +791,11 @@
                                             placeholder="Path to steamcmd.exe" />
                                     </div>
                                     <div class="field-col">
-                                        <label class="field-label" for="settingsSteamCmdDownloadPathInput">SteamCMD download
+                                        <label class="field-label" for="settingsSteamCmdDownloadPathInput">SteamCMD
+                                            download
                                             path</label>
-                                        <input id="settingsSteamCmdDownloadPathInput" class="field-input mono" type="text"
-                                            placeholder="SteamCMD download and workshop cache path" />
+                                        <input id="settingsSteamCmdDownloadPathInput" class="field-input mono"
+                                            type="text" placeholder="SteamCMD download and workshop cache path" />
                                     </div>
                                     <div class="settings-status-row">
                                         <span class="settings-key">SteamCMD status</span>
@@ -792,7 +811,8 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>App Updates</h3>
-                                            <p class="muted settings-card-lead">Control update checks and see recent versions.</p>
+                                            <p class="muted settings-card-lead">Control update checks and see recent
+                                                versions.</p>
                                         </div>
                                     </div>
                                     <div class="settings-inline-actions">
@@ -842,7 +862,8 @@
                                     <div class="settings-card-heading">
                                         <div>
                                             <h3>Diagnostics &amp; Developer</h3>
-                                            <p class="muted settings-card-lead">Enable Developer mode to view runtime diagnostics.</p>
+                                            <p class="muted settings-card-lead">Enable Developer mode to view runtime
+                                                diagnostics.</p>
                                         </div>
                                     </div>
                                     <label class="toggle-row" for="settingsDeveloperModeInput">
