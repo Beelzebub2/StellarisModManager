@@ -786,6 +786,23 @@
                                         best
                                         configured runtime for this machine.</p>
                                     <div class="field-col">
+                                        <label class="field-label" for="settingsSteamworksConcurrencyInput">Steamworks
+                                            max simultaneous downloads</label>
+                                        <input id="settingsSteamworksConcurrencyInput" class="field-input" type="number"
+                                            min="1" max="5" step="1" inputmode="numeric" />
+                                        <p class="muted settings-inline-help">Used when Runtime is Steamworks or when
+                                            Auto resolves to Steamworks. Max 5.</p>
+                                    </div>
+                                    <div class="field-col">
+                                        <label class="field-label" for="settingsSteamCmdConcurrencyInput">SteamCMD max
+                                            simultaneous downloads</label>
+                                        <input id="settingsSteamCmdConcurrencyInput" class="field-input" type="number"
+                                            min="1" max="5" step="1" inputmode="numeric" />
+                                        <p class="muted settings-inline-help">Used when Runtime is SteamCMD or when
+                                            Auto resolves to SteamCMD. Higher values can make per-mod progress less
+                                            precise. Max 5.</p>
+                                    </div>
+                                    <div class="field-col">
                                         <label class="field-label" for="settingsSteamCmdPathInput">SteamCMD path</label>
                                         <input id="settingsSteamCmdPathInput" class="field-input mono" type="text"
                                             placeholder="Path to steamcmd.exe" />

@@ -29,6 +29,10 @@ const WINDOWS_DOCUMENTS_VALUE = "Personal";
 const STEAMCMD_BOOTSTRAP_TIMEOUT_MS = 45000;
 const STEAMCMD_BOOTSTRAP_REDIRECT_LIMIT = 5;
 const STEAMCMD_BOOTSTRAP_DIR_NAME = "steamcmd";
+export const MIN_DOWNLOAD_CONCURRENCY = 1;
+export const MAX_DOWNLOAD_CONCURRENCY = 5;
+export const DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS = 3;
+export const DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS = 1;
 
 interface WindowsDocumentsResolverInput {
     homeDir?: string;
@@ -79,6 +83,24 @@ function coerceBoolean(value: unknown, fallback: boolean): boolean {
     return fallback;
 }
 
+function coerceInteger(value: unknown): number | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return Math.trunc(value);
+    }
+
+    if (typeof value !== "string") {
+        return undefined;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+
+    const parsed = Number.parseInt(trimmed, 10);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== "object") {
         return {};
@@ -102,6 +124,25 @@ function getBoolean(raw: Record<string, unknown>, fallback: boolean, ...keys: st
     for (const key of keys) {
         if (typeof raw[key] === "boolean") {
             return raw[key] as boolean;
+        }
+    }
+
+    return fallback;
+}
+
+function normalizeDownloadConcurrencyLimit(value: unknown, fallback: number): number {
+    const parsed = coerceInteger(value);
+    if (parsed === undefined) {
+        return fallback;
+    }
+
+    return Math.min(MAX_DOWNLOAD_CONCURRENCY, Math.max(MIN_DOWNLOAD_CONCURRENCY, parsed));
+}
+
+function getDownloadConcurrencyLimit(raw: Record<string, unknown>, fallback: number, ...keys: string[]): number {
+    for (const key of keys) {
+        if (raw[key] !== undefined) {
+            return normalizeDownloadConcurrencyLimit(raw[key], fallback);
         }
     }
 
@@ -199,6 +240,8 @@ function resolveWindowsDocumentsDirectory(input?: WindowsDocumentsResolverInput)
 function defaultSettings(): SettingsSnapshot {
     return {
         workshopDownloadRuntime: "Auto",
+        steamworksMaxConcurrentDownloads: DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS,
+        steamCmdMaxConcurrentDownloads: DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS,
         autoDetectGame: true,
         warnBeforeRestartGame: true,
         themePalette: "Obsidian Ember",
@@ -268,6 +311,18 @@ function normalizeSettings(rawValue: unknown): SettingsSnapshot {
         workshopDownloadRuntime: normalizeRuntime(
             getString(raw, "workshopDownloadRuntime", "WorkshopDownloadRuntime")
         ),
+        steamworksMaxConcurrentDownloads: getDownloadConcurrencyLimit(
+            raw,
+            defaults.steamworksMaxConcurrentDownloads ?? DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS,
+            "steamworksMaxConcurrentDownloads",
+            "SteamworksMaxConcurrentDownloads"
+        ),
+        steamCmdMaxConcurrentDownloads: getDownloadConcurrencyLimit(
+            raw,
+            defaults.steamCmdMaxConcurrentDownloads ?? DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS,
+            "steamCmdMaxConcurrentDownloads",
+            "SteamCmdMaxConcurrentDownloads"
+        ),
         lastDetectedGameVersion: getString(raw, "lastDetectedGameVersion", "LastDetectedGameVersion"),
         autoDetectGame: getBoolean(raw, defaults.autoDetectGame ?? true, "autoDetectGame", "AutoDetectGame"),
         developerMode: getBoolean(raw, defaults.developerMode ?? false, "developerMode", "DeveloperMode"),
@@ -301,6 +356,14 @@ function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown
         SteamCmdPath: coerceString(settings.steamCmdPath) ?? null,
         SteamCmdDownloadPath: coerceString(settings.steamCmdDownloadPath) ?? null,
         WorkshopDownloadRuntime: normalizeRuntime(coerceString(settings.workshopDownloadRuntime)),
+        SteamworksMaxConcurrentDownloads: normalizeDownloadConcurrencyLimit(
+            settings.steamworksMaxConcurrentDownloads,
+            DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS
+        ),
+        SteamCmdMaxConcurrentDownloads: normalizeDownloadConcurrencyLimit(
+            settings.steamCmdMaxConcurrentDownloads,
+            DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS
+        ),
         LastDetectedGameVersion: coerceString(settings.lastDetectedGameVersion) ?? null,
         AutoDetectGame: coerceBoolean(settings.autoDetectGame, true),
         DeveloperMode: coerceBoolean(settings.developerMode, false),
@@ -869,6 +932,14 @@ export function saveSettingsSnapshot(next: SettingsSnapshot): SettingsSaveResult
         ...defaultSettings(),
         ...next,
         workshopDownloadRuntime: normalizeRuntime(coerceString(next.workshopDownloadRuntime)),
+        steamworksMaxConcurrentDownloads: normalizeDownloadConcurrencyLimit(
+            next.steamworksMaxConcurrentDownloads,
+            DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS
+        ),
+        steamCmdMaxConcurrentDownloads: normalizeDownloadConcurrencyLimit(
+            next.steamCmdMaxConcurrentDownloads,
+            DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS
+        ),
         themePalette: coerceString(next.themePalette) ?? "Obsidian Ember"
     };
     merged.modsPath = resolveDescriptorModsPath(merged);

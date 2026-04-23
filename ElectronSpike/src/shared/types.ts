@@ -13,6 +13,8 @@ export interface SettingsSnapshot {
     steamCmdPath?: string;
     steamCmdDownloadPath?: string;
     workshopDownloadRuntime?: string;
+    steamworksMaxConcurrentDownloads?: number;
+    steamCmdMaxConcurrentDownloads?: number;
     lastDetectedGameVersion?: string;
     autoDetectGame?: boolean;
     developerMode?: boolean;

@@ -97,6 +97,10 @@ const downloadQueueState = globalThis.downloadQueueState || {};
 
 const VERSION_SKELETON_DELAY_MS = 220;
 const VERSION_SKELETON_CARD_COUNT = 6;
+const SETTINGS_DOWNLOAD_CONCURRENCY_MIN = 1;
+const SETTINGS_DOWNLOAD_CONCURRENCY_MAX = 5;
+const DEFAULT_STEAMWORKS_CONCURRENCY = 3;
+const DEFAULT_STEAMCMD_CONCURRENCY = 1;
 
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
@@ -2576,7 +2580,10 @@ async function openDetailDrawer(workshopId) {
 function getDefaultSettingsModel() {
     return {
         gamePath: "", modsPath: "", managedModsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
-        workshopDownloadRuntime: "Auto", lastDetectedGameVersion: "",
+        workshopDownloadRuntime: "Auto",
+        steamworksMaxConcurrentDownloads: DEFAULT_STEAMWORKS_CONCURRENCY,
+        steamCmdMaxConcurrentDownloads: DEFAULT_STEAMCMD_CONCURRENCY,
+        lastDetectedGameVersion: "",
         autoDetectGame: true, developerMode: false, warnBeforeRestartGame: true,
         themePalette: "Obsidian Ember", autoCheckAppUpdates: true,
         compatibilityReporterId: "", lastAppUpdateCheckUtc: "",
@@ -2733,6 +2740,14 @@ function setInputValue(id, v) { const el = byId(id); if (el && "value" in el) el
 function setCheckboxValue(id, v) { const el = byId(id); if (el && "checked" in el) el.checked = v === true; }
 function getInputValue(id) { const el = byId(id); return (!el || !("value" in el)) ? "" : String(el.value || "").trim(); }
 function getCheckboxValue(id) { const el = byId(id); return (!el || !("checked" in el)) ? false : el.checked === true; }
+function clampSettingsConcurrency(value, fallback) {
+    const parsed = Number.parseInt(String(value ?? "").trim(), 10);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(SETTINGS_DOWNLOAD_CONCURRENCY_MAX, Math.max(SETTINGS_DOWNLOAD_CONCURRENCY_MIN, parsed));
+}
+function getConcurrencyInputValue(id, fallback) {
+    return clampSettingsConcurrency(getInputValue(id), fallback);
+}
 
 function markSettingsDirty(isDirty) {
     state.settingsDirty = isDirty;
@@ -2748,6 +2763,14 @@ function buildSettingsFromForm() {
         steamCmdPath: getInputValue("settingsSteamCmdPathInput"),
         steamCmdDownloadPath: getInputValue("settingsSteamCmdDownloadPathInput"),
         workshopDownloadRuntime: getInputValue("settingsWorkshopRuntimeInput") || "Auto",
+        steamworksMaxConcurrentDownloads: getConcurrencyInputValue(
+            "settingsSteamworksConcurrencyInput",
+            state.settingsModel?.steamworksMaxConcurrentDownloads ?? DEFAULT_STEAMWORKS_CONCURRENCY
+        ),
+        steamCmdMaxConcurrentDownloads: getConcurrencyInputValue(
+            "settingsSteamCmdConcurrencyInput",
+            state.settingsModel?.steamCmdMaxConcurrentDownloads ?? DEFAULT_STEAMCMD_CONCURRENCY
+        ),
         lastDetectedGameVersion: state.settingsModel?.lastDetectedGameVersion || "",
         // Keep persisted value because the startup auto-detect toggle is intentionally hidden from UI.
         autoDetectGame: state.settingsModel?.autoDetectGame === true,
@@ -2814,6 +2837,14 @@ function applySettingsToForm(settings) {
     setInputValue("settingsSteamCmdDownloadPathInput", m.steamCmdDownloadPath);
     setInputValue("settingsThemeInput", m.themePalette || "Obsidian Ember");
     setInputValue("settingsWorkshopRuntimeInput", m.workshopDownloadRuntime || "Auto");
+    setInputValue(
+        "settingsSteamworksConcurrencyInput",
+        clampSettingsConcurrency(m.steamworksMaxConcurrentDownloads, DEFAULT_STEAMWORKS_CONCURRENCY)
+    );
+    setInputValue(
+        "settingsSteamCmdConcurrencyInput",
+        clampSettingsConcurrency(m.steamCmdMaxConcurrentDownloads, DEFAULT_STEAMCMD_CONCURRENCY)
+    );
 
     setCheckboxValue("settingsWarnBeforeRestartInput", m.warnBeforeRestartGame === true);
     setCheckboxValue("settingsDeveloperModeInput", m.developerMode === true);
@@ -5265,7 +5296,8 @@ function hookSettingsControls() {
     const dirtyInputs = [
         "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput", "settingsManagedModsPathInput",
         "settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput",
-        "settingsWorkshopRuntimeInput", "settingsThemeInput"
+        "settingsWorkshopRuntimeInput", "settingsSteamworksConcurrencyInput",
+        "settingsSteamCmdConcurrencyInput", "settingsThemeInput"
     ];
     for (const id of dirtyInputs) {
         byId(id)?.addEventListener("input", () => {

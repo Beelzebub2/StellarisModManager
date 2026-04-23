@@ -15,7 +15,11 @@ import type {
 } from "../../shared/types";
 import { getLegacyPaths } from "./paths";
 import {
+    DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS,
+    DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS,
     loadSettingsSnapshot,
+    MAX_DOWNLOAD_CONCURRENCY,
+    MIN_DOWNLOAD_CONCURRENCY,
     resolveDescriptorModsPath,
     resolveManagedModsPath
 } from "./settings";
@@ -29,7 +33,7 @@ import {
 
 const STELLARIS_APP_ID = "281990";
 const STEAM_PUBLISHED_DETAILS_URL = "https://api.steampowered.com/ISteamRemoteStorage/GetPublishedFileDetails/v1/";
-const MAX_CONCURRENT_DOWNLOADS = 3;
+const MAX_CONCURRENT_UNINSTALLS = 3;
 const STEAMCMD_TIMEOUT_MS = 12 * 60 * 1000;
 const STEAMCMD_STALL_MS = 2 * 60 * 1000;
 const STEAMCMD_PROGRESS_POLL_MS = 1000;
@@ -70,6 +74,11 @@ interface QueueEntry {
 interface MachineMetrics {
     cpuCount: number;
     totalMemoryGb: number;
+}
+
+interface QueueConcurrencyOverrides {
+    steamworksMaxConcurrentDownloads?: number;
+    steamCmdMaxConcurrentDownloads?: number;
 }
 
 interface SteamFileDetailsResponse {
@@ -470,27 +479,50 @@ function getRecommendedSteamCmdConcurrency(metrics?: Partial<MachineMetrics>): n
     void metrics;
     // SteamCMD writes progress into global logs relative to its install root.
     // Restrict it to a single worker so progress stays attributable to one mod.
-    return 1;
+    return DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS;
 }
 
 export function getRecommendedSteamCmdConcurrencyForTest(metrics?: Partial<MachineMetrics>): number {
     return getRecommendedSteamCmdConcurrency(metrics);
 }
 
+function getRecommendedSteamworksConcurrency(metrics?: Partial<MachineMetrics>): number {
+    void metrics;
+    return DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS;
+}
+
+function normalizeConfiguredConcurrency(value: unknown, fallback: number): number {
+    const parsed = typeof value === "number" && Number.isFinite(value)
+        ? Math.trunc(value)
+        : Number.parseInt(String(value ?? "").trim(), 10);
+
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+
+    return Math.min(MAX_DOWNLOAD_CONCURRENCY, Math.max(MIN_DOWNLOAD_CONCURRENCY, parsed));
+}
+
 function resolveInstallQueueMode(
     runtime: DownloadRuntime,
-    metrics?: Partial<MachineMetrics>
+    options?: Partial<MachineMetrics> & QueueConcurrencyOverrides
 ): { mode: "default" | "isolated-workers"; concurrency: number } {
     if (runtime === "SteamCMD") {
         return {
             mode: "isolated-workers",
-            concurrency: getRecommendedSteamCmdConcurrency(metrics)
+            concurrency: normalizeConfiguredConcurrency(
+                options?.steamCmdMaxConcurrentDownloads,
+                getRecommendedSteamCmdConcurrency(options)
+            )
         };
     }
 
     return {
         mode: "default",
-        concurrency: MAX_CONCURRENT_DOWNLOADS
+        concurrency: normalizeConfiguredConcurrency(
+            options?.steamworksMaxConcurrentDownloads,
+            getRecommendedSteamworksConcurrency(options)
+        )
     };
 }
 
@@ -498,10 +530,14 @@ export function resolveInstallQueueModeForTest(input: {
     runtime: DownloadRuntime;
     cpuCount?: number;
     totalMemoryGb?: number;
+    steamworksMaxConcurrentDownloads?: number;
+    steamCmdMaxConcurrentDownloads?: number;
 }): { mode: "default" | "isolated-workers"; concurrency: number } {
     return resolveInstallQueueMode(input.runtime, {
         cpuCount: input.cpuCount,
-        totalMemoryGb: input.totalMemoryGb
+        totalMemoryGb: input.totalMemoryGb,
+        steamworksMaxConcurrentDownloads: input.steamworksMaxConcurrentDownloads,
+        steamCmdMaxConcurrentDownloads: input.steamCmdMaxConcurrentDownloads
     });
 }
 
@@ -1373,9 +1409,13 @@ async function processQueue(): Promise<void> {
                 if (!next) break;
 
                 const runtime = next.action === "install" ? resolveEffectiveRuntime() : "SteamCMD";
+                const settings = loadSettingsSnapshot();
                 const queueMode = next.action === "install"
-                    ? resolveInstallQueueMode(runtime)
-                    : { mode: "default" as const, concurrency: MAX_CONCURRENT_DOWNLOADS };
+                    ? resolveInstallQueueMode(runtime, {
+                        steamworksMaxConcurrentDownloads: settings?.steamworksMaxConcurrentDownloads,
+                        steamCmdMaxConcurrentDownloads: settings?.steamCmdMaxConcurrentDownloads
+                    })
+                    : { mode: "default" as const, concurrency: MAX_CONCURRENT_UNINSTALLS };
                 if (runningJobs.size >= queueMode.concurrency) {
                     break;
                 }
