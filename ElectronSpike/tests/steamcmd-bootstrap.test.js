@@ -48,7 +48,7 @@ test("steamcmd bootstrap installs into the app folder when auto-config cannot de
         assert.equal(result.ok, true);
         assert.equal(result.settings.steamCmdPath, path.join(steamCmdRoot, "steamcmd.exe"));
         assert.equal(result.settings.steamCmdDownloadPath, steamCmdRoot);
-        assert.equal(result.settings.workshopDownloadRuntime, "SteamCmd");
+        assert.equal(result.settings.workshopDownloadRuntime, "SteamCMD");
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -88,7 +88,7 @@ test("steamcmd bootstrap ignores a stale Steam root and falls back to the app-ow
         assert.equal(result.ok, true);
         assert.equal(result.settings.steamCmdPath, path.join(expectedInstallRoot, "steamcmd.exe"));
         assert.equal(result.settings.steamCmdDownloadPath, expectedInstallRoot);
-        assert.equal(result.settings.workshopDownloadRuntime, "SteamCmd");
+        assert.equal(result.settings.workshopDownloadRuntime, "SteamCMD");
     } finally {
         if (originalAppData === undefined) {
             delete process.env.APPDATA;

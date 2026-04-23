@@ -44,7 +44,7 @@ test("SteamCMD installs still use isolated workers, but only one at a time", () 
 
     assert.deepEqual(
         downloadManager.resolveInstallQueueModeForTest({
-            runtime: "SteamCmd",
+            runtime: "SteamCMD",
             cpuCount: 12,
             totalMemoryGb: 24
         }),

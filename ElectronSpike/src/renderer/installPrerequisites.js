@@ -22,7 +22,7 @@
         }
 
         if (normalized === "steamcmd") {
-            return "SteamCmd";
+            return "SteamCMD";
         }
 
         return "Auto";

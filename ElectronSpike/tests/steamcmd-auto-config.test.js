@@ -42,7 +42,7 @@ test("auto-detect replaces a stale SteamCMD download path with the executable di
 
         assert.equal(result.steamCmdPath, steamCmdPath);
         assert.equal(result.steamCmdDownloadPath, steamCmdDir);
-        assert.equal(result.workshopDownloadRuntime, "SteamCmd");
+        assert.equal(result.workshopDownloadRuntime, "SteamCMD");
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -95,7 +95,7 @@ test("auto-detect can derive the SteamCMD download path from the current unsaved
 
         assert.equal(result.steamCmdPath, steamCmdPath);
         assert.equal(result.steamCmdDownloadPath, customDir);
-        assert.equal(result.workshopDownloadRuntime, "SteamCmd");
+        assert.equal(result.workshopDownloadRuntime, "SteamCMD");
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

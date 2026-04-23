@@ -2153,7 +2153,7 @@ function syncQueueSection(container, sectionItems, emptyLabel, emptyIconName) {
 
         const previousParent = view.root.parentElement;
         updateQueueRow(view, item);
-        
+
         if (currentChild === view.root) {
             currentChild = currentChild.nextElementSibling;
         } else {
@@ -2787,7 +2787,7 @@ function getWorkshopRuntimeHint(runtime, steamCmdPath, steamCmdDownloadPath) {
         return "Steamworks is preferred when a valid Stellaris Steam session is available. SteamCMD stays ready as the fallback path.";
     }
 
-    if (normalizedRuntime === "SteamCmd") {
+    if (normalizedRuntime === "SteamCMD") {
         return hasSteamCmdPath && hasSteamCmdDownloadPath
             ? "SteamCMD is configured and ready for standalone downloads, including larger profile imports."
             : "SteamCMD is selected. Set both the executable and download path for reliable installs.";
@@ -5851,7 +5851,7 @@ function hookGlobalControls() {
             return;
         }
 
-    reopenModsPathMigrationProgress();
+        reopenModsPathMigrationProgress();
     });
     byId("modsPathMigrationNoticeOpen")?.addEventListener("click", () => reopenModsPathMigrationProgress());
     const reopenMergerProgress = () => {
@@ -5992,17 +5992,17 @@ async function init() {
     await bootstrapSelectedVersionFromSettings();
 
     // Load all data in parallel
-        await Promise.all([
-            refreshVersionOptions(),
-            refreshSettingsPage(),
-            refreshLibrarySnapshot(),
-            refreshMergerPlan(),
-            refreshMergerProgressStatus(),
-            refreshQueueSnapshot(),
-            refreshStellarisyncStatus(),
-            refreshModsPathMigrationStatus(),
-            refreshGameRunningStatus()
-        ]);
+    await Promise.all([
+        refreshVersionOptions(),
+        refreshSettingsPage(),
+        refreshLibrarySnapshot(),
+        refreshMergerPlan(),
+        refreshMergerProgressStatus(),
+        refreshQueueSnapshot(),
+        refreshStellarisyncStatus(),
+        refreshModsPathMigrationStatus(),
+        refreshGameRunningStatus()
+    ]);
 
     await ensurePublicUsernameConfigured();
 
@@ -6037,11 +6037,11 @@ async function init() {
         if (event.snapshot) applyQueueSnapshot(event.snapshot);
     });
 
-        if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
-        state.gamePollingHandle = setInterval(() => {
-            void refreshGameRunningStatus();
-            void refreshModsPathMigrationStatus();
-        }, 3000);
+    if (state.gamePollingHandle) clearInterval(state.gamePollingHandle);
+    state.gamePollingHandle = setInterval(() => {
+        void refreshGameRunningStatus();
+        void refreshModsPathMigrationStatus();
+    }, 3000);
 
     if (state.stellarisyncPollingHandle) clearInterval(state.stellarisyncPollingHandle);
     state.stellarisyncPollingHandle = setInterval(() => void refreshStellarisyncStatus(), 120000);
