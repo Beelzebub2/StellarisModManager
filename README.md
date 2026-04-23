@@ -49,14 +49,6 @@ npm run pack
 
 Output is written to `ElectronSpike/release/`.
 
-### Run the Stellarisync API (optional)
-
-```bash
-cd Stellarisync
-npm install
-npm start
-```
-
 ## Settings — game version detection
 
 Set the **Game path** in Settings and the app will read `launcher-settings.json` from the game directory to detect your installed version. The detected version is shown in the Settings page and automatically pre-selects the correct version in the Version Browser tab. Detection runs when you:
