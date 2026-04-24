@@ -3013,6 +3013,35 @@ button:disabled {
     min-height: 20px;
 }
 
+.library-achievement-indicator {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    border: 1px solid var(--accent-border);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-soft);
+}
+
+.library-achievement-indicator .icon {
+    width: 12px;
+    height: 12px;
+}
+
+.library-achievement-compatible {
+    color: var(--success-text);
+    border-color: color-mix(in srgb, var(--success-text) 45%, var(--accent-border) 55%);
+    background: color-mix(in srgb, var(--success-text) 12%, transparent);
+}
+
+.library-achievement-not-compatible {
+    color: var(--danger, #ff6b6b);
+    border-color: color-mix(in srgb, var(--danger, #ff6b6b) 45%, var(--accent-border) 55%);
+    background: color-mix(in srgb, var(--danger, #ff6b6b) 12%, transparent);
+}
+
 .library-order {
     display: grid;
     justify-content: center;
@@ -4295,6 +4324,33 @@ pre {
     min-height: 34px;
 }
 
+.app-tooltip {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 120;
+    max-width: min(280px, calc(100vw - 16px));
+    padding: 9px 11px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--accent-border) 72%, rgba(255, 255, 255, 0.2) 28%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 88%, rgba(8, 10, 16, 0.72) 12%), color-mix(in srgb, var(--panel-alt) 90%, rgba(8, 10, 16, 0.78) 10%));
+    color: var(--text);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+    backdrop-filter: blur(14px);
+    pointer-events: none;
+    opacity: 0;
+    line-height: 1.35;
+    font-size: 12px;
+    transform: translate3d(var(--tooltip-x, 0), var(--tooltip-y, 0), 0) scale(0.96);
+    transform-origin: top center;
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.app-tooltip.is-visible {
+    opacity: 1;
+    transform: translate3d(var(--tooltip-x, 0), var(--tooltip-y, 0), 0) scale(1);
+}
+
 /* ============================================================
    MODAL SYSTEM
    ============================================================ */
@@ -4612,7 +4668,8 @@ pre {
 }
 
 .migration-notice,
-.merger-progress-notice {
+.merger-progress-notice,
+.download-failure-notice {
     position: fixed;
     right: 18px;
     z-index: 95;
@@ -4638,12 +4695,27 @@ pre {
     top: calc(env(titlebar-area-height, 54px) + 16px);
 }
 
+.download-failure-notice {
+    top: calc(env(titlebar-area-height, 54px) + 16px);
+    border-color: color-mix(in srgb, var(--danger, #ff6b6b) 55%, var(--accent-border) 45%);
+}
+
 #modsPathMigrationNotice:not(.hidden) ~ #mergerProgressNotice:not(.hidden) {
     top: calc(env(titlebar-area-height, 54px) + 88px);
 }
 
+#modsPathMigrationNotice:not(.hidden) ~ #downloadFailureNotice:not(.hidden),
+#mergerProgressNotice:not(.hidden) ~ #downloadFailureNotice:not(.hidden) {
+    top: calc(env(titlebar-area-height, 54px) + 88px);
+}
+
+#modsPathMigrationNotice:not(.hidden) ~ #mergerProgressNotice:not(.hidden) ~ #downloadFailureNotice:not(.hidden) {
+    top: calc(env(titlebar-area-height, 54px) + 160px);
+}
+
 .migration-notice-copy,
-.merger-progress-notice-copy {
+.merger-progress-notice-copy,
+.download-failure-notice-copy {
     min-width: 0;
     flex: 1 1 auto;
     display: grid;
@@ -4653,27 +4725,32 @@ pre {
 .migration-notice-title,
 .migration-notice-message,
 .merger-progress-notice-title,
-.merger-progress-notice-message {
+.merger-progress-notice-message,
+.download-failure-notice-title,
+.download-failure-notice-message {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 .migration-notice-title,
-.merger-progress-notice-title {
+.merger-progress-notice-title,
+.download-failure-notice-title {
     font-size: 12.5px;
     line-height: 1.3;
 }
 
 .migration-notice-message,
-.merger-progress-notice-message {
+.merger-progress-notice-message,
+.download-failure-notice-message {
     font-size: 11px;
     line-height: 1.35;
     color: var(--text-2);
 }
 
 .migration-notice button,
-.merger-progress-notice button {
+.merger-progress-notice button,
+.download-failure-notice button {
     flex: 0 0 auto;
     white-space: nowrap;
 }
@@ -4683,7 +4760,10 @@ body[data-theme="ivory-white"] .migration-notice,
 body[data-theme="frost-white"] .migration-notice,
 body[data-theme="starlight-white"] .merger-progress-notice,
 body[data-theme="ivory-white"] .merger-progress-notice,
-body[data-theme="frost-white"] .merger-progress-notice {
+body[data-theme="frost-white"] .merger-progress-notice,
+body[data-theme="starlight-white"] .download-failure-notice,
+body[data-theme="ivory-white"] .download-failure-notice,
+body[data-theme="frost-white"] .download-failure-notice {
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(236, 241, 248, 0.94));
 }
 

@@ -7,6 +7,70 @@ import { loadSettingsSnapshot } from "./settings";
 import { logError, logInfo } from "./logger";
 import { getGameRunningStatus, killStellaris } from "./stellarisProcess";
 
+function parseLaunchOptions(rawValue: string | null | undefined): string[] {
+    const input = String(rawValue ?? "").trim();
+    if (!input) {
+        return [];
+    }
+
+    const args: string[] = [];
+    let current = "";
+    let quote: '"' | "'" | null = null;
+    let escaping = false;
+
+    for (const char of input) {
+        if (escaping) {
+            current += char;
+            escaping = false;
+            continue;
+        }
+
+        if (quote) {
+            if (char === "\\") {
+                escaping = true;
+                continue;
+            }
+
+            if (char === quote) {
+                quote = null;
+                continue;
+            }
+
+            current += char;
+            continue;
+        }
+
+        if (char === '"' || char === "'") {
+            quote = char;
+            continue;
+        }
+
+        if (/\s/.test(char)) {
+            if (current) {
+                args.push(current);
+                current = "";
+            }
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (escaping) {
+        current += "\\";
+    }
+
+    if (current) {
+        args.push(current);
+    }
+
+    return args;
+}
+
+export function parseLaunchOptionsForTest(rawValue: string): string[] {
+    return parseLaunchOptions(rawValue);
+}
+
 export function launchGame(): LaunchGameResult {
     if (isModsPathMigrationActive()) {
         return {
@@ -18,6 +82,7 @@ export function launchGame(): LaunchGameResult {
 
     const settings = loadSettingsSnapshot();
     const gamePath = settings?.gamePath?.trim() || "";
+    const launchArgs = parseLaunchOptions(settings?.launchOptions);
 
     if (!gamePath) {
         return { ok: false, message: "Game path not configured. Set it in Settings.", wasRunning: false };
@@ -37,6 +102,9 @@ export function launchGame(): LaunchGameResult {
     if (!fs.existsSync(exePath)) {
         // Try Steam launch as fallback
         try {
+            if (launchArgs.length > 0) {
+                logInfo("Launch options are ignored when falling back to the Steam protocol launch.");
+            }
             if (process.platform === "win32") {
                 spawn("cmd", ["/c", "start", "steam://run/281990"], {
                     detached: true,
@@ -63,7 +131,7 @@ export function launchGame(): LaunchGameResult {
     }
 
     try {
-        const child = spawn(exePath, [], {
+        const child = spawn(exePath, launchArgs, {
             detached: true,
             stdio: "ignore",
             cwd: gamePath

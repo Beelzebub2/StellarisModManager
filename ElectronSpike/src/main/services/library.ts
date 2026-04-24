@@ -10,6 +10,7 @@ import type {
     CompatibilityTagGroupConsensus,
     ConsensusState,
     LibraryActionResult,
+    LibraryAchievementStatus,
     LibraryApplyLoadOrderRequest,
     LibraryCompatibilityReportRequest,
     LibraryImportResult,
@@ -187,6 +188,7 @@ const communityCompatByMod = new Map<string, Record<string, LibraryCompatibility
 let communityTagsCache: CompatibilityTagDefinition[] = [];
 let communityFetchedAt = 0;
 let communityRefreshInFlight: Promise<void> | null = null;
+const STELLARIS_CHECKSUM_FOLDERS = new Set(["common", "events", "map", "localisation_synced"]);
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -338,6 +340,120 @@ function normalizePatch(value: string | null | undefined): string | null {
 function normalizeMajorMinor(value: string | null | undefined): string | null {
     const token = normalizePatch(value)?.match(/(\d+\.\d+)/);
     return token ? token[1] : null;
+}
+
+function normalizeLibraryAchievementPath(value: string | null | undefined): string {
+    return String(value ?? "")
+        .replace(/\\/g, "/")
+        .replace(/^\.?\//, "")
+        .trim()
+        .toLowerCase();
+}
+
+function directoryContainsLibraryFiles(directoryPath: string): boolean | null {
+    const stack = [directoryPath];
+
+    try {
+        while (stack.length > 0) {
+            const current = stack.pop();
+            if (!current) {
+                continue;
+            }
+
+            const entries = fs.readdirSync(current, { withFileTypes: true });
+            for (const entry of entries) {
+                if (entry.isSymbolicLink()) {
+                    continue;
+                }
+
+                const fullPath = path.join(current, entry.name);
+                if (entry.isFile()) {
+                    return true;
+                }
+
+                if (entry.isDirectory()) {
+                    stack.push(fullPath);
+                }
+            }
+        }
+    } catch {
+        return null;
+    }
+
+    return false;
+}
+
+function resolveLibraryAchievementStatus(
+    installedPath: string | null | undefined,
+    checksumFolders: ReadonlySet<string> = STELLARIS_CHECKSUM_FOLDERS
+): LibraryAchievementStatus {
+    const root = String(installedPath ?? "").trim();
+    if (!root) {
+        return "unknown";
+    }
+
+    try {
+        const stats = fs.statSync(root);
+        if (!stats.isDirectory()) {
+            return "unknown";
+        }
+    } catch {
+        return "unknown";
+    }
+
+    let sawAnyFile = false;
+
+    try {
+        const entries = fs.readdirSync(root, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isSymbolicLink()) {
+                continue;
+            }
+
+            if (entry.isFile()) {
+                sawAnyFile = true;
+                continue;
+            }
+
+            if (!entry.isDirectory()) {
+                continue;
+            }
+
+            const containsFiles = directoryContainsLibraryFiles(path.join(root, entry.name));
+            if (containsFiles === null) {
+                return "unknown";
+            }
+
+            if (!containsFiles) {
+                continue;
+            }
+
+            sawAnyFile = true;
+
+            if (checksumFolders.has(normalizeLibraryAchievementPath(entry.name))) {
+                return "not-compatible";
+            }
+        }
+    } catch {
+        return "unknown";
+    }
+
+    return sawAnyFile ? "compatible" : "unknown";
+}
+
+export function resolveLibraryAchievementStatusForTest(
+    installedPath: string,
+    checksumFolders?: string[]
+): LibraryAchievementStatus {
+    const normalizedChecksumFolders = Array.isArray(checksumFolders)
+        ? new Set(
+            checksumFolders
+                .map((entry) => normalizeLibraryAchievementPath(entry))
+                .filter((entry) => entry.length > 0)
+        )
+        : STELLARIS_CHECKSUM_FOLDERS;
+
+    return resolveLibraryAchievementStatus(installedPath, normalizedChecksumFolders);
 }
 
 function toLibraryCompatibilitySummary(entry: RemoteCommunityCompatEntry | null | undefined): LibraryCompatibilitySummary {
@@ -793,6 +909,7 @@ function mapModRow(row: DbModRow, defaultGameVersion: string | null): LibraryMod
     const gameVersion = row.GameVersion?.trim() || defaultGameVersion || null;
     const byVersion = communityCompatByMod.get(workshopId);
     const communityCompatibility = getCompatibilitySummaryForVersion(byVersion, gameVersion);
+    const achievementStatus = resolveLibraryAchievementStatus(row.InstalledPath);
 
     return {
         id: row.Id,
@@ -812,6 +929,7 @@ function mapModRow(row: DbModRow, defaultGameVersion: string | null): LibraryMod
         description: row.Description?.trim() || null,
         thumbnailUrl: row.ThumbnailUrl?.trim() || null,
         hasUpdate: updateFlagsByWorkshopId.get(workshopId) === true,
+        achievementStatus,
         communityCompatibility
     };
 }

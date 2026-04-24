@@ -8,6 +8,7 @@ export interface AppPaths {
 
 export interface SettingsSnapshot {
     gamePath?: string;
+    launchOptions?: string;
     modsPath?: string;
     managedModsPath?: string;
     steamCmdPath?: string;
@@ -327,6 +328,8 @@ export interface LibraryCompatibilitySummary {
     lastReportedUtc: string | null;
 }
 
+export type LibraryAchievementStatus = "compatible" | "not-compatible" | "unknown";
+
 export interface LibraryProfile {
     id: number;
     name: string;
@@ -355,6 +358,7 @@ export interface LibraryModItem {
     description: string | null;
     thumbnailUrl: string | null;
     hasUpdate: boolean;
+    achievementStatus: LibraryAchievementStatus;
     communityCompatibility: LibraryCompatibilitySummary | null;
 }
 
