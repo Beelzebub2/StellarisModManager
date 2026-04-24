@@ -54,6 +54,14 @@ const state = {
     queueSnapshot: null,
     queueLibrarySyncKey: "",
     queueLibrarySyncInFlight: false,
+    downloadFailureNotice: {
+        latestFailureKey: "",
+        dismissedFailureKey: "",
+        workshopId: null,
+        modName: null,
+        message: "",
+        updatedAtUtc: null
+    },
     library: {
         snapshot: null,
         searchText: "",
@@ -101,6 +109,15 @@ const SETTINGS_DOWNLOAD_CONCURRENCY_MIN = 1;
 const SETTINGS_DOWNLOAD_CONCURRENCY_MAX = 5;
 const DEFAULT_STEAMWORKS_CONCURRENCY = 3;
 const DEFAULT_STEAMCMD_CONCURRENCY = 1;
+const TOOLTIP_SHOW_DELAY_MS = 90;
+const TOOLTIP_OFFSET_PX = 14;
+
+const tooltipState = {
+    activeTarget: null,
+    pendingTarget: null,
+    showTimer: null,
+    observer: null
+};
 
 const THEME_PALETTE_TO_KEY = Object.freeze({
     "Obsidian Ember": "obsidian-ember",
@@ -123,6 +140,8 @@ const ICON_PATHS = Object.freeze({
     workshop: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 9.36l-6.9 6.9a2.12 2.12 0 0 1-3-3l6.9-6.9a6 6 0 0 1 9.36-7.94l-3.79 3.79z"/>',
     launch: '<polygon points="5 3 19 12 5 21 5 3"/>',
     restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    achievement: '<path d="M8 21h8"/><path d="M12 17v4"/><path d="M8 4h8v4a4 4 0 0 1-4 4 4 4 0 0 1-4-4V4z"/><path d="M16 6h2a2 2 0 0 1 0 4h-2"/><path d="M8 6H6a2 2 0 0 0 0 4h2"/>',
+    achievementBroken: '<path d="M8 21h8"/><path d="M12 17v4"/><path d="M8 4h8v4a4 4 0 0 1-4 4 4 4 0 0 1-4-4V4z"/><path d="M16 6h2a2 2 0 0 1 0 4h-2"/><path d="M8 6H6a2 2 0 0 0 0 4h2"/><path d="m10 5 2 3-2 3 2 3"/>',
     settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
     queue: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
     check: '<polyline points="20 6 9 17 4 12"/>',
@@ -169,6 +188,237 @@ function setDataIcon(el, iconName) {
 
 /* ---- Helpers ---- */
 function byId(id) { return document.getElementById(id); }
+
+function clearTooltipShowTimer() {
+    if (tooltipState.showTimer) {
+        clearTimeout(tooltipState.showTimer);
+        tooltipState.showTimer = null;
+    }
+}
+
+function getTooltipHost() {
+    return byId("appTooltip");
+}
+
+function getTooltipText(target) {
+    if (!(target instanceof HTMLElement)) {
+        return "";
+    }
+
+    return String(target.dataset.tooltip || "").trim();
+}
+
+function findTooltipTarget(value) {
+    if (!(value instanceof Element)) {
+        return null;
+    }
+
+    const target = value.closest("[data-tooltip]");
+    return target instanceof HTMLElement ? target : null;
+}
+
+function upgradeNativeTitlesToTooltips(root = document) {
+    if (!root || typeof root.querySelectorAll !== "function") {
+        return;
+    }
+
+    if (root instanceof HTMLElement && root.hasAttribute("title")) {
+        const title = String(root.getAttribute("title") || "").trim();
+        if (title) {
+            if (!root.dataset.tooltip) {
+                root.dataset.tooltip = title;
+            }
+            if (!root.getAttribute("aria-label") && !String(root.textContent || "").trim()) {
+                root.setAttribute("aria-label", title);
+            }
+            root.removeAttribute("title");
+        }
+    }
+
+    for (const el of root.querySelectorAll("[title]")) {
+        if (!(el instanceof HTMLElement)) {
+            continue;
+        }
+
+        const title = String(el.getAttribute("title") || "").trim();
+        if (!title) {
+            continue;
+        }
+
+        if (!el.dataset.tooltip) {
+            el.dataset.tooltip = title;
+        }
+
+        if (!el.getAttribute("aria-label") && !String(el.textContent || "").trim()) {
+            el.setAttribute("aria-label", title);
+        }
+
+        el.removeAttribute("title");
+    }
+}
+
+function positionTooltip(target) {
+    const host = getTooltipHost();
+    if (!host || !(target instanceof HTMLElement)) {
+        return;
+    }
+
+    const targetRect = target.getBoundingClientRect();
+    const hostRect = host.getBoundingClientRect();
+    const maxX = Math.max(8, window.innerWidth - hostRect.width - 8);
+    let x = Math.round(targetRect.left + (targetRect.width / 2) - (hostRect.width / 2));
+    x = Math.min(maxX, Math.max(8, x));
+
+    let y = Math.round(targetRect.bottom + TOOLTIP_OFFSET_PX);
+    if (y + hostRect.height > window.innerHeight - 8) {
+        y = Math.max(8, Math.round(targetRect.top - hostRect.height - TOOLTIP_OFFSET_PX));
+    }
+
+    host.style.setProperty("--tooltip-x", `${x}px`);
+    host.style.setProperty("--tooltip-y", `${y}px`);
+}
+
+function hideTooltip() {
+    clearTooltipShowTimer();
+    tooltipState.pendingTarget = null;
+    tooltipState.activeTarget = null;
+
+    const host = getTooltipHost();
+    if (!host) {
+        return;
+    }
+
+    host.classList.remove("is-visible");
+    host.setAttribute("aria-hidden", "true");
+}
+
+function showTooltip(target) {
+    const host = getTooltipHost();
+    const text = getTooltipText(target);
+    if (!host || !text || !(target instanceof HTMLElement)) {
+        hideTooltip();
+        return;
+    }
+
+    tooltipState.pendingTarget = null;
+    tooltipState.activeTarget = target;
+    host.textContent = text;
+    host.setAttribute("aria-hidden", "false");
+    host.classList.add("is-visible");
+    positionTooltip(target);
+}
+
+function scheduleTooltipShow(target) {
+    const text = getTooltipText(target);
+    if (!text || !(target instanceof HTMLElement)) {
+        hideTooltip();
+        return;
+    }
+
+    clearTooltipShowTimer();
+    tooltipState.pendingTarget = target;
+    tooltipState.showTimer = setTimeout(() => {
+        if (tooltipState.pendingTarget === target) {
+            showTooltip(target);
+        }
+    }, TOOLTIP_SHOW_DELAY_MS);
+}
+
+function hookCustomTooltips() {
+    if (tooltipState.observer) {
+        return;
+    }
+
+    upgradeNativeTitlesToTooltips(document);
+
+    const handleTooltipExit = (target, relatedTarget) => {
+        if (!(target instanceof HTMLElement)) {
+            hideTooltip();
+            return;
+        }
+
+        if (relatedTarget instanceof Node && target.contains(relatedTarget)) {
+            return;
+        }
+
+        if (tooltipState.activeTarget === target || tooltipState.pendingTarget === target) {
+            hideTooltip();
+        }
+    };
+
+    document.addEventListener("mouseover", (event) => {
+        const target = findTooltipTarget(event.target);
+        if (!target) {
+            return;
+        }
+
+        if (tooltipState.activeTarget === target) {
+            positionTooltip(target);
+            return;
+        }
+
+        scheduleTooltipShow(target);
+    });
+
+    document.addEventListener("mouseout", (event) => {
+        handleTooltipExit(findTooltipTarget(event.target), event.relatedTarget);
+    });
+
+    document.addEventListener("focusin", (event) => {
+        const target = findTooltipTarget(event.target);
+        if (target) {
+            scheduleTooltipShow(target);
+        }
+    });
+
+    document.addEventListener("focusout", (event) => {
+        handleTooltipExit(findTooltipTarget(event.target), event.relatedTarget);
+    });
+
+    document.addEventListener("mousemove", () => {
+        if (tooltipState.activeTarget) {
+            positionTooltip(tooltipState.activeTarget);
+        }
+    }, { passive: true });
+
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+            hideTooltip();
+        }
+    });
+
+    window.addEventListener("scroll", () => hideTooltip(), true);
+    window.addEventListener("blur", () => hideTooltip());
+    window.addEventListener("resize", () => {
+        if (tooltipState.activeTarget) {
+            positionTooltip(tooltipState.activeTarget);
+        } else {
+            hideTooltip();
+        }
+    });
+
+    tooltipState.observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            if (mutation.type === "attributes" && mutation.target instanceof HTMLElement) {
+                upgradeNativeTitlesToTooltips(mutation.target);
+                continue;
+            }
+
+            for (const node of mutation.addedNodes) {
+                if (node instanceof HTMLElement) {
+                    upgradeNativeTitlesToTooltips(node);
+                }
+            }
+        }
+    });
+
+    tooltipState.observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["title"]
+    });
+}
 
 function setText(id, value) {
     const el = byId(id);
@@ -1048,6 +1298,86 @@ function renderMergerProgressNotice() {
     openBtn.textContent = "Open progress";
 }
 
+function getLatestFailedQueueItem(snapshot) {
+    const failedItems = Array.isArray(snapshot?.items)
+        ? snapshot.items.filter((item) => item?.status === "failed")
+        : [];
+    if (failedItems.length <= 0) {
+        return null;
+    }
+
+    return failedItems
+        .slice()
+        .sort((left, right) => {
+            const leftTime = Date.parse(String(left?.updatedAtUtc || ""));
+            const rightTime = Date.parse(String(right?.updatedAtUtc || ""));
+            return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+        })[0] || null;
+}
+
+function getDownloadFailureNoticeKey(item) {
+    if (!item) {
+        return "";
+    }
+
+    return `${String(item.workshopId || "").trim()}:${String(item.updatedAtUtc || "").trim()}`;
+}
+
+function dismissDownloadFailureNotice() {
+    const latestFailureKey = String(state.downloadFailureNotice.latestFailureKey || "").trim();
+    if (latestFailureKey) {
+        state.downloadFailureNotice.dismissedFailureKey = latestFailureKey;
+    }
+    renderDownloadFailureNotice();
+}
+
+function renderDownloadFailureNotice() {
+    const notice = byId("downloadFailureNotice");
+    const titleEl = byId("downloadFailureNoticeTitle");
+    const messageEl = byId("downloadFailureNoticeMessage");
+    const openBtn = byId("downloadFailureNoticeOpen");
+    if (!notice || !titleEl || !messageEl || !openBtn) {
+        return;
+    }
+
+    const latestFailureKey = String(state.downloadFailureNotice.latestFailureKey || "").trim();
+    const dismissedFailureKey = String(state.downloadFailureNotice.dismissedFailureKey || "").trim();
+    const shouldShow = latestFailureKey
+        && latestFailureKey !== dismissedFailureKey
+        && state.selectedTab !== "downloads";
+
+    notice.classList.toggle("hidden", !shouldShow);
+    if (!shouldShow) {
+        return;
+    }
+
+    const modName = String(state.downloadFailureNotice.modName || "").trim();
+    titleEl.textContent = modName ? `${modName} failed` : "Download failed";
+    messageEl.textContent = state.downloadFailureNotice.message || "Open Downloads for details and retry options.";
+    openBtn.textContent = "Open downloads";
+}
+
+function syncDownloadFailureNotice(snapshot) {
+    const latestFailedItem = getLatestFailedQueueItem(snapshot);
+    if (!latestFailedItem) {
+        state.downloadFailureNotice.latestFailureKey = "";
+        state.downloadFailureNotice.workshopId = null;
+        state.downloadFailureNotice.modName = null;
+        state.downloadFailureNotice.message = "";
+        state.downloadFailureNotice.updatedAtUtc = null;
+        renderDownloadFailureNotice();
+        return;
+    }
+
+    // Use the failed item's updatedAtUtc as the dismissal boundary so only newer failures re-open the notice.
+    state.downloadFailureNotice.latestFailureKey = getDownloadFailureNoticeKey(latestFailedItem);
+    state.downloadFailureNotice.workshopId = String(latestFailedItem.workshopId || "").trim() || null;
+    state.downloadFailureNotice.modName = String(latestFailedItem.modName || "").trim() || null;
+    state.downloadFailureNotice.message = buildQueueMessageForDisplay(latestFailedItem, isDeveloperModeEnabled());
+    state.downloadFailureNotice.updatedAtUtc = String(latestFailedItem.updatedAtUtc || "").trim() || null;
+    renderDownloadFailureNotice();
+}
+
 function hideMergerProgressModal() {
     const overlay = byId("modalOverlay");
     const extra = byId("modalExtra");
@@ -1288,7 +1618,7 @@ async function handleLaunchGame() {
         return;
     }
 
-    if (state.gameRunning) {
+    if (state.gameRunning && state.settingsModel?.warnBeforeRestartGame !== false) {
         const confirmed = await showModal(
             "Stellaris is running",
             "Restarting will close the running game. Did you save your current game?",
@@ -2363,6 +2693,7 @@ function applyQueueSnapshot(snapshot) {
     state.queueSnapshot = snapshot;
     renderQueueList(snapshot);
     syncVisibleVersionCardActionStates();
+    syncDownloadFailureNotice(snapshot);
 
     const completedOps = (snapshot.items || [])
         .filter((item) => item.status === "completed" && (item.action === "install" || item.action === "uninstall"))
@@ -2579,7 +2910,7 @@ async function openDetailDrawer(workshopId) {
    ============================================================ */
 function getDefaultSettingsModel() {
     return {
-        gamePath: "", modsPath: "", managedModsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
+        gamePath: "", launchOptions: "", modsPath: "", managedModsPath: "", steamCmdPath: "", steamCmdDownloadPath: "",
         workshopDownloadRuntime: "Auto",
         steamworksMaxConcurrentDownloads: DEFAULT_STEAMWORKS_CONCURRENCY,
         steamCmdMaxConcurrentDownloads: DEFAULT_STEAMCMD_CONCURRENCY,
@@ -2758,6 +3089,7 @@ function markSettingsDirty(isDirty) {
 function buildSettingsFromForm() {
     return {
         gamePath: getInputValue("settingsGamePathInput"),
+        launchOptions: getInputValue("settingsLaunchOptionsInput"),
         modsPath: getInputValue("settingsModsPathInput"),
         managedModsPath: getInputValue("settingsManagedModsPathInput"),
         steamCmdPath: getInputValue("settingsSteamCmdPathInput"),
@@ -2831,6 +3163,7 @@ function applySettingsToForm(settings) {
 
     setInputValue("settingsPublicProfileInput", m.publicProfileUsername);
     setInputValue("settingsGamePathInput", m.gamePath);
+    setInputValue("settingsLaunchOptionsInput", m.launchOptions);
     setInputValue("settingsModsPathInput", m.modsPath);
     setInputValue("settingsManagedModsPathInput", m.managedModsPath);
     setInputValue("settingsSteamCmdPathInput", m.steamCmdPath);
@@ -3868,13 +4201,30 @@ function renderLibraryList() {
         state.library.descriptorTagsExpanded = false;
     }
 
+    function renderLibraryAchievementIndicator(mod) {
+        if (!mod || mod.achievementStatus === "unknown") {
+            return "";
+        }
+
+        const isCompatible = mod.achievementStatus === "compatible";
+        const title = isCompatible ? "Achievement compatible" : "Disables achievements";
+        const indicatorClass = isCompatible
+            ? "library-achievement-indicator library-achievement-compatible"
+            : "library-achievement-indicator library-achievement-not-compatible";
+        const iconName = isCompatible ? "achievement" : "achievementBroken";
+
+        return `<span class="${indicatorClass}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${iconSvg(iconName)}</span>`;
+    }
+
     list.innerHTML = mods.map((mod) => {
         const sel = mod.id === state.library.selectedModId ? " is-selected" : "";
         const isRemoving = state.library.removingModIds.has(mod.id);
         const updateBadge = mod.hasUpdate ? "<span class='badge badge-version'>Update</span>" : "";
         const mpBadge = mod.isMultiplayerSafe ? "<span class='badge badge-community'>MP safe</span>" : "";
         const removingBadge = isRemoving ? "<span class='badge badge-danger'>Removing...</span>" : "";
+        const achievementIndicator = renderLibraryAchievementIndicator(mod);
         const versionLabel = formatVersionBadgeValue(mod.version);
+        const loadOrderLabel = mod.isEnabled ? formatLoadOrderPosition(mod.loadOrder) : "Disabled";
         return `
             <article class="library-row${sel}${isRemoving ? " is-removing" : ""}" data-mod-id="${mod.id}" draggable="${mod.isEnabled && !isRemoving ? "true" : "false"}">
                 <div class="library-cell library-enabled">
@@ -3883,12 +4233,13 @@ function renderLibraryList() {
                 <div class="library-cell library-name">
                     <p class="library-row-title">${escapeHtml(mod.name)}</p>
                     <div class="library-row-badges">
+                        ${achievementIndicator}
                         <span class="badge">${escapeHtml(versionLabel)}</span>
                         ${mpBadge}${updateBadge}${removingBadge}
                     </div>
                 </div>
                 <div class="library-cell library-order">
-                    <span class="badge">${mod.loadOrder}</span>
+                    <span class="badge">${escapeHtml(loadOrderLabel)}</span>
                 </div>
                 <div class="library-cell library-actions">
                     <button type="button" class="button-icon" data-action="move-up" data-mod-id="${mod.id}" ${!mod.isEnabled || isRemoving ? "disabled" : ""} title="Move up">${iconSvg("chevronUp")}</button>
@@ -3905,6 +4256,7 @@ function clearLibraryDragDecorations(list) {
     for (const row of list.querySelectorAll(".library-row")) {
         row.classList.remove("drag-over-top", "drag-over-bottom", "is-dragging");
     }
+    list.classList.remove("is-drag-active");
 }
 
 function syncLibraryEnabledOnlyToggle() {
@@ -4145,6 +4497,7 @@ function hookLibraryListDelegation() {
 
         state.library.dragSourceModId = modId;
         row.classList.add("is-dragging");
+        list.classList.add("is-drag-active");
         if (event.dataTransfer) {
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("text/plain", String(modId));
@@ -4215,6 +4568,15 @@ function hookLibraryListDelegation() {
         await handleLibraryDrop(list, row, event.clientY, sourceId);
         state.library.dragSourceModId = null;
     });
+
+    list.addEventListener("wheel", (event) => {
+        if (!state.library.dragSourceModId) {
+            return;
+        }
+
+        event.preventDefault();
+        list.scrollTop += event.deltaY;
+    }, { passive: false });
 }
 
 function renderLibraryProfiles() {
@@ -5155,6 +5517,12 @@ function activateTab(name) {
         if (el) el.classList.toggle("hidden", tabName !== name);
     }
 
+    if (name === "downloads") {
+        dismissDownloadFailureNotice();
+    } else {
+        renderDownloadFailureNotice();
+    }
+
     const statusMap = {
         version: "Version browser ready.",
         downloads: "Downloads queue ready.",
@@ -5294,7 +5662,8 @@ function hookSettingsControls() {
     }
 
     const dirtyInputs = [
-        "settingsPublicProfileInput", "settingsGamePathInput", "settingsModsPathInput", "settingsManagedModsPathInput",
+        "settingsPublicProfileInput", "settingsGamePathInput", "settingsLaunchOptionsInput",
+        "settingsModsPathInput", "settingsManagedModsPathInput",
         "settingsSteamCmdPathInput", "settingsSteamCmdDownloadPathInput",
         "settingsWorkshopRuntimeInput", "settingsSteamworksConcurrencyInput",
         "settingsSteamCmdConcurrencyInput", "settingsThemeInput"
@@ -5902,6 +6271,21 @@ function hookGlobalControls() {
         reopenMergerProgress();
     });
     byId("mergerProgressNoticeOpen")?.addEventListener("click", () => reopenMergerProgress());
+    const openDownloadsFromFailureNotice = async () => {
+        const opened = await activateTabGuarded("downloads");
+        if (opened) {
+            dismissDownloadFailureNotice();
+        }
+    };
+    byId("downloadFailureNotice")?.addEventListener("click", (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.closest("button")) {
+            return;
+        }
+
+        void openDownloadsFromFailureNotice();
+    });
+    byId("downloadFailureNoticeOpen")?.addEventListener("click", () => void openDownloadsFromFailureNotice());
 
     byId("detailCloseBackdrop")?.addEventListener("click", () => showDetailDrawer(false));
     byId("detailCloseButton")?.addEventListener("click", () => showDetailDrawer(false));
@@ -6001,6 +6385,7 @@ function hookGlobalControls() {
 async function init() {
     hookWindowResizeResponsiveness();
     applyDataIcons(document);
+    hookCustomTooltips();
     hookVersionControls();
     hookSettingsControls();
     hookLibraryControls();

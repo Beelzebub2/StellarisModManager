@@ -239,6 +239,7 @@ function resolveWindowsDocumentsDirectory(input?: WindowsDocumentsResolverInput)
 
 function defaultSettings(): SettingsSnapshot {
     return {
+        launchOptions: "",
         workshopDownloadRuntime: "Auto",
         steamworksMaxConcurrentDownloads: DEFAULT_STEAMWORKS_MAX_CONCURRENT_DOWNLOADS,
         steamCmdMaxConcurrentDownloads: DEFAULT_STEAMCMD_MAX_CONCURRENT_DOWNLOADS,
@@ -304,6 +305,7 @@ function normalizeSettings(rawValue: unknown): SettingsSnapshot {
 
     return {
         gamePath: getString(raw, "gamePath", "GamePath"),
+        launchOptions: getString(raw, "launchOptions", "LaunchOptions") ?? defaults.launchOptions,
         modsPath: legacyModsPath,
         managedModsPath: getString(raw, "managedModsPath", "ManagedModsPath") ?? legacyModsPath,
         steamCmdPath: getString(raw, "steamCmdPath", "SteamCmdPath"),
@@ -351,6 +353,7 @@ function normalizeSettings(rawValue: unknown): SettingsSnapshot {
 function toPersistedSettings(settings: SettingsSnapshot): Record<string, unknown> {
     return {
         GamePath: coerceString(settings.gamePath) ?? null,
+        LaunchOptions: coerceString(settings.launchOptions) ?? null,
         ModsPath: coerceString(settings.modsPath) ?? null,
         ManagedModsPath: coerceString(settings.managedModsPath) ?? null,
         SteamCmdPath: coerceString(settings.steamCmdPath) ?? null,

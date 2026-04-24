@@ -74,6 +74,15 @@
             <button id="mergerProgressNoticeOpen" type="button" class="button-secondary">Open progress</button>
         </aside>
 
+        <aside id="downloadFailureNotice" class="download-failure-notice hidden" aria-live="polite">
+            <div class="download-failure-notice-copy">
+                <strong id="downloadFailureNoticeTitle" class="download-failure-notice-title">Download failed</strong>
+                <span id="downloadFailureNoticeMessage" class="download-failure-notice-message">Open Downloads for
+                    details.</span>
+            </div>
+            <button id="downloadFailureNoticeOpen" type="button" class="button-secondary">Open downloads</button>
+        </aside>
+
         <!-- ==================== WORKSPACE ==================== -->
         <section class="workspace">
             <!-- ---- SIDEBAR ---- -->
@@ -692,6 +701,13 @@
                                             open the game. ...\Stellaris </p>
                                     </div>
                                     <div class="field-col">
+                                        <label class="field-label" for="settingsLaunchOptionsInput">Launch options</label>
+                                        <input id="settingsLaunchOptionsInput" class="field-input mono" type="text"
+                                            placeholder='Example: --safe-mode "--profile name"' />
+                                        <p class="muted settings-inline-help">Optional raw arguments passed to
+                                            <code>stellaris.exe</code> when you use Launch Game.</p>
+                                    </div>
+                                    <div class="field-col">
                                         <label class="field-label" for="settingsModsPathInput">Descriptor folder</label>
                                         <div class="path-picker-row">
                                             <input id="settingsModsPathInput" class="field-input mono" type="text"
@@ -967,6 +983,8 @@
             </div>
         </div>
     </div>
+
+    <div id="appTooltip" class="app-tooltip" role="tooltip" aria-hidden="true"></div>
 
     <script src="installPrerequisites.js"></script>
     <script src="appUpdateState.js"></script>
