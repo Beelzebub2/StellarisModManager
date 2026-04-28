@@ -6,6 +6,16 @@ use std::time::{Duration, Instant};
 
 use crate::log;
 
+#[cfg(windows)]
+const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+fn windows_installer_shell_creation_flags() -> u32 {
+    CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+}
+
 pub struct InstallerProcess {
     child: Child,
     started: Instant,
@@ -31,7 +41,6 @@ pub fn launch_background(installer_path: &Path) -> Result<InstallerProcess, Stri
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
         // Command::new on an executable with a 'requireAdministrator' manifest returns OS Error 740 
         // if this updater process is not elevated. Invoking via PowerShell's Start-Process ensures 
@@ -52,7 +61,7 @@ pub fn launch_background(installer_path: &Path) -> Result<InstallerProcess, Stri
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .creation_flags(CREATE_NEW_PROCESS_GROUP)
+            .creation_flags(windows_installer_shell_creation_flags())
             .spawn()
             .map_err(|e| format!("failed to launch installer via shell: {e}"))?;
 
@@ -262,5 +271,19 @@ pub fn open_in_browser(url: &str) {
     #[cfg(not(windows))]
     {
         let _ = Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn windows_installer_shell_creation_flags_suppress_console_windows() {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        assert_ne!(
+            super::windows_installer_shell_creation_flags() & CREATE_NO_WINDOW,
+            0,
+            "PowerShell installer helper must not flash a console window"
+        );
     }
 }

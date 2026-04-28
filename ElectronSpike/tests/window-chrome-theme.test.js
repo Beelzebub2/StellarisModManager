@@ -3,15 +3,17 @@ const assert = require("node:assert/strict");
 
 const windowChrome = require("../dist/main/windowChrome.js");
 
-test("former light palettes use dark titlebar glass with light symbols", () => {
+test("white palettes use a light titlebar overlay with dark symbols", () => {
     assert.equal(typeof windowChrome.getTitleBarOverlayOptionsForTheme, "function");
 
-    for (const themeName of ["Starlight White", "Ivory White", "Frost White"]) {
-        const options = windowChrome.getTitleBarOverlayOptionsForTheme(themeName);
-        assert.match(options.color, /^#0[0-9a-f]{5}$/i);
-        assert.equal(options.symbolColor, "#e8ecfb");
-        assert.equal(options.height, 54);
-    }
+    assert.deepEqual(
+        windowChrome.getTitleBarOverlayOptionsForTheme("Starlight White"),
+        {
+            color: "#eef4fb",
+            symbolColor: "#0f172a",
+            height: 54
+        }
+    );
 });
 
 test("dark palettes use a dark titlebar overlay with light symbols", () => {
