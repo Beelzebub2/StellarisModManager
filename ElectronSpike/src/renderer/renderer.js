@@ -22,6 +22,8 @@ const state = {
     activeCards: [],
     settingsModel: null,
     settingsDirty: false,
+    windowClosePromptActive: false,
+    windowCloseAllowed: false,
     usernamePromptShown: false,
     gameRunning: false,
     gamePollingHandle: null,
@@ -3040,19 +3042,27 @@ async function beginModsPathMigrationSave(nextSettings, moveExistingMods) {
     return true;
 }
 
-async function resolveUnsavedSettingsBeforeLeave() {
+async function resolveUnsavedSettingsBeforeLeave(options = {}) {
     if (!(state.selectedTab === "settings" && state.settingsDirty)) {
         return true;
     }
 
-    const shouldSave = await showModal(
+    const choice = await showChoiceModal(
         "Unsaved settings changes",
         "You made changes in Settings that are not saved. Save changes before leaving?",
-        "Save changes",
-        "Leave anyway"
+        {
+            confirmLabel: "Save changes",
+            alternateLabel: "Discard changes",
+            cancelLabel: "Cancel"
+        }
     );
 
-    if (shouldSave) {
+    if (choice === "cancel") {
+        setSettingsStatus("Unsaved settings kept open.");
+        return false;
+    }
+
+    if (choice === "confirm") {
         const saved = await saveSettingsPage();
         if (!saved) {
             setSettingsStatus("Could not save settings. Fix the issue before leaving this page.");
@@ -3062,8 +3072,31 @@ async function resolveUnsavedSettingsBeforeLeave() {
     }
 
     applySettingsToForm(state.settingsModel || getDefaultSettingsModel());
-    setSettingsStatus("Discarded unsaved settings changes.");
+    setSettingsStatus(options.reason === "exit"
+        ? "Discarded unsaved settings changes. Closing app."
+        : "Discarded unsaved settings changes.");
     return true;
+}
+
+async function handleWindowCloseWithUnsavedSettings() {
+    if (state.windowClosePromptActive) {
+        return;
+    }
+
+    state.windowClosePromptActive = true;
+    try {
+        const canClose = await resolveUnsavedSettingsBeforeLeave({ reason: "exit" });
+        if (!canClose) {
+            return;
+        }
+
+        state.windowCloseAllowed = true;
+        window.close();
+    } finally {
+        if (!state.windowCloseAllowed) {
+            state.windowClosePromptActive = false;
+        }
+    }
 }
 
 function setInputValue(id, v) { const el = byId(id); if (el && "value" in el) el.value = v ?? ""; }
@@ -6692,11 +6725,12 @@ function hookGlobalControls() {
     });
 
     window.addEventListener("beforeunload", (e) => {
-        if (!state.settingsDirty) {
+        if (state.windowCloseAllowed || !state.settingsDirty) {
             return;
         }
         e.preventDefault();
         e.returnValue = "";
+        void handleWindowCloseWithUnsavedSettings();
     });
 
     const handleMouseNavButton = (e) => {
