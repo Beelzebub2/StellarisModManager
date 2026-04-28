@@ -47,6 +47,9 @@ import type {
     SettingsValidationResult,
     SpikeApi,
     StellarisyncStatus,
+    ModMergerApplyAutoRequest,
+    ModMergerApplyAutoResult,
+    ModMergerOpenResultsResult,
     VersionBrowserQuery,
     VersionBrowserResult,
     VersionModDetail,
@@ -153,6 +156,10 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:getModMergerProgressStatus") as Promise<ModMergerProgressStatus>,
     modMergerSetResolution: (request: ModMergerSetResolutionRequest) =>
         ipcRenderer.invoke("spike:modMergerSetResolution", request) as Promise<ModMergerResolutionResult>,
+    modMergerApplyAuto: (request?: ModMergerApplyAutoRequest) =>
+        ipcRenderer.invoke("spike:modMergerApplyAuto", request) as Promise<ModMergerApplyAutoResult>,
+    modMergerOpenResults: () =>
+        ipcRenderer.invoke("spike:modMergerOpenResults") as Promise<ModMergerOpenResultsResult>,
     modMergerBuild: (request?: ModMergerBuildRequest) =>
         ipcRenderer.invoke("spike:modMergerBuild", request) as Promise<ModMergerBuildResult>,
     modMergerExportReport: () =>

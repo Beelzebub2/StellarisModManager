@@ -12,6 +12,7 @@ import type {
     MergeSourceMod,
     ModMergerSummary
 } from "../../../shared/types";
+import { decorateMergePlanWithAutomation } from "./autoResolver";
 import { MERGED_MOD_FOLDER_NAME } from "./descriptorWriter";
 
 const IGNORED_DIR_NAMES = new Set([".git", ".idea", "__macosx"]);
@@ -279,7 +280,9 @@ export function summarizeMergePlan(plan: MergePlan): ModMergerSummary {
         }
 
         summary.conflictingFileCount += 1;
-        if (filePlan.fileType === "script" || filePlan.fileType === "event") {
+        if (filePlan.decisionType === "script-object-merge") {
+            summary.scriptObjectConflictCount += 1;
+        } else if (filePlan.fileType === "script" || filePlan.fileType === "event") {
             summary.scriptConflictCount += 1;
         } else if (filePlan.fileType === "localisation") {
             summary.localisationConflictCount += 1;
@@ -367,6 +370,7 @@ export async function analyzeMergeSources(input: AnalyzeMergeSourcesInput): Prom
         message: "Building the conflict summary and selecting default winners."
     });
 
+    await decorateMergePlanWithAutomation(plan);
     const summary = summarizeMergePlan(plan);
     plan.unresolvedConflictCount = summary.unresolvedCount;
 

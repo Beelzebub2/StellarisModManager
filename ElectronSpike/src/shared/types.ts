@@ -532,6 +532,7 @@ export interface MergePlan {
     filePlans: MergeFilePlan[];
     unresolvedConflictCount: number;
     warnings: string[];
+    automation?: MergePlanAutomationSummary;
 }
 
 export interface MergeFilePlan {
@@ -545,6 +546,44 @@ export interface MergeFilePlan {
     outputPreview?: string | null;
     severity: MergeSeverity;
     resolutionState: MergeResolutionState;
+    decisionType?: MergeDecisionType;
+    autoRecommendation?: MergeAutoRecommendation;
+    mergeDetails?: MergeFileDetails;
+    generatedOutput?: string | null;
+    reviewState?: "not-needed" | "needs-review" | "reviewed";
+}
+
+export type MergeDecisionType =
+    | "single-provider"
+    | "identical-duplicate"
+    | "file-winner"
+    | "localisation-key-merge"
+    | "script-object-merge"
+    | "manual-text"
+    | "ignored";
+
+export type MergeAutomationConfidence = "safe" | "review" | "manual";
+
+export interface MergeAutoRecommendation {
+    canApply: boolean;
+    confidence: MergeAutomationConfidence;
+    reasonCode: string;
+    reason: string;
+}
+
+export interface MergePlanAutomationSummary {
+    safeCount: number;
+    reviewCount: number;
+    manualCount: number;
+    ignoredCount: number;
+    generatedCount: number;
+}
+
+export interface MergeFileDetails {
+    objectKeys?: string[];
+    localisationKeys?: string[];
+    duplicateKeys?: string[];
+    parseError?: string | null;
 }
 
 export type MergeFileType =
@@ -578,6 +617,7 @@ export interface ModMergerAnalyzeRequest {
     profileId?: number | null;
     includeDisabled?: boolean;
     outputModName?: string;
+    openResults?: boolean;
 }
 
 export interface ModMergerSummary {
@@ -624,6 +664,22 @@ export interface ModMergerResolutionResult {
     message: string;
     plan: MergePlan | null;
     summary: ModMergerSummary;
+}
+
+export interface ModMergerApplyAutoRequest {
+    scope?: "safe" | "assets" | "object-load-order";
+}
+
+export interface ModMergerApplyAutoResult {
+    ok: boolean;
+    message: string;
+    plan: MergePlan | null;
+    summary: ModMergerSummary;
+}
+
+export interface ModMergerOpenResultsResult {
+    ok: boolean;
+    message: string;
 }
 
 export interface ModMergerBuildRequest {
@@ -778,6 +834,8 @@ export interface SpikeApi {
     modMergerGetPlan: () => Promise<MergePlan | null>;
     getModMergerProgressStatus: () => Promise<ModMergerProgressStatus>;
     modMergerSetResolution: (request: ModMergerSetResolutionRequest) => Promise<ModMergerResolutionResult>;
+    modMergerApplyAuto: (request?: ModMergerApplyAutoRequest) => Promise<ModMergerApplyAutoResult>;
+    modMergerOpenResults: () => Promise<ModMergerOpenResultsResult>;
     modMergerBuild: (request?: ModMergerBuildRequest) => Promise<ModMergerBuildResult>;
     modMergerExportReport: () => Promise<ModMergerExportReportResult>;
     getSteamDiscoverySummary: () => Promise<SteamDiscoverySummary>;

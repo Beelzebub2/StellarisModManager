@@ -15,6 +15,8 @@
     <div class="aurora aurora-two" aria-hidden="true"></div>
 
     <main class="window-shell">
+        <div id="mergerResultsDragRegion" class="merger-results-drag-region" aria-hidden="true"></div>
+
         <!-- ==================== HEADER ==================== -->
         <header class="topbar panel">
             <div class="topbar-left">
@@ -474,7 +476,13 @@
                     <section class="merger-toolbar settings-card settings-card-primary">
                         <div class="merger-toolbar-actions">
                             <button id="mergerAnalyzeBtn" type="button">
-                                <span class="nav-icon" data-icon="refresh"></span> Analyze conflicts
+                                <span class="nav-icon" data-icon="refresh"></span> Scan
+                            </button>
+                            <button id="mergerOpenResultsBtn" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="layers"></span> Open results
+                            </button>
+                            <button id="mergerAutoBtn" type="button" class="button-secondary">
+                                <span class="nav-icon" data-icon="sparkles"></span> Auto Control
                             </button>
                             <button id="mergerBuildBtn" type="button" class="button-secondary">
                                 <span class="nav-icon" data-icon="merge"></span> Build merged mod
@@ -520,6 +528,18 @@
                         <article class="downloads-metric">
                             <p class="downloads-metric-label">Auto Resolved</p>
                             <p id="mergerMetricAutoResolved" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Safe Auto</p>
+                            <p id="mergerMetricSafeAuto" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric downloads-metric-warn">
+                            <p class="downloads-metric-label">Needs Review</p>
+                            <p id="mergerMetricNeedsReview" class="downloads-metric-value">0</p>
+                        </article>
+                        <article class="downloads-metric">
+                            <p class="downloads-metric-label">Generated</p>
+                            <p id="mergerMetricGenerated" class="downloads-metric-value">0</p>
                         </article>
                         <article class="downloads-metric downloads-metric-warn">
                             <p class="downloads-metric-label">Unresolved</p>
@@ -923,6 +943,68 @@
                     </footer>
                 </section>
             </section>
+        </section>
+
+        <section id="mergerResultsWorkspace" class="merger-results-workspace hidden">
+            <header class="merger-results-header">
+                <div>
+                    <p class="eyebrow">Merger Results</p>
+                    <h2>Review Conflicts</h2>
+                </div>
+                <div class="merger-results-actions">
+                    <button id="mergerResultsScanBtn" type="button">
+                        <span class="nav-icon" data-icon="refresh"></span> Scan
+                    </button>
+                    <button id="mergerResultsAutoBtn" type="button" class="button-secondary">
+                        <span class="nav-icon" data-icon="sparkles"></span> Auto Control
+                    </button>
+                    <button id="mergerResultsBuildBtn" type="button" class="button-secondary">
+                        <span class="nav-icon" data-icon="merge"></span> Build
+                    </button>
+                </div>
+            </header>
+            <section class="merger-results-metrics downloads-metrics">
+                <article class="downloads-metric">
+                    <p class="downloads-metric-label">Scanned Files</p>
+                    <p id="mergerResultsMetricFiles" class="downloads-metric-value">0</p>
+                </article>
+                <article class="downloads-metric downloads-metric-warn">
+                    <p class="downloads-metric-label">Conflicts Found</p>
+                    <p id="mergerResultsMetricConflicts" class="downloads-metric-value">0</p>
+                </article>
+                <article class="downloads-metric">
+                    <p class="downloads-metric-label">Auto Ready</p>
+                    <p id="mergerResultsMetricSafeAuto" class="downloads-metric-value">0</p>
+                </article>
+                <article class="downloads-metric downloads-metric-warn">
+                    <p class="downloads-metric-label">Needs Choice</p>
+                    <p id="mergerResultsMetricManual" class="downloads-metric-value">0</p>
+                </article>
+            </section>
+            <nav class="merger-results-filters" aria-label="Merger results filters">
+                <button type="button" class="button-secondary is-active" data-merger-results-filter="needs-action">Needs action</button>
+                <button type="button" class="button-secondary" data-merger-results-filter="safe">Auto ready</button>
+                <button type="button" class="button-secondary" data-merger-results-filter="manual">Needs choice</button>
+                <button type="button" class="button-secondary" data-merger-results-filter="resolved">Handled</button>
+            </nav>
+            <section class="merger-results-layout">
+                <article class="merger-results-list-shell">
+                    <header class="merger-results-list-header">
+                        <h3>Files</h3>
+                        <span id="mergerResultsCount" class="status-chip status-chip-muted">0 entries</span>
+                    </header>
+                    <div id="mergerResultsList" class="merger-results-list">
+                        <div class="merger-empty muted">Run a scan to populate merger results.</div>
+                    </div>
+                </article>
+                <article id="mergerResultsDetail" class="merger-results-detail">
+                    <div class="merger-empty muted">Select a result to inspect automation criteria and source files.</div>
+                </article>
+            </section>
+            <footer class="merger-results-footer">
+                <span id="mergerResultsStatus" class="muted">Merger results ready.</span>
+                <span id="mergerResultsOutputPath" class="status-chip status-chip-muted">Output: not built</span>
+            </footer>
         </section>
 
         <!-- ==================== STATUS BAR ==================== -->
