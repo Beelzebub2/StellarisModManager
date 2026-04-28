@@ -2,8 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesCssPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 
@@ -24,7 +24,7 @@ test("library drag handling supports wheel scrolling while a drag session is act
 });
 
 test("renderer exposes a dismissible failed-download notice that opens the Downloads page", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererJsPath, "utf8");
     const styles = fs.readFileSync(stylesCssPath, "utf8");
 

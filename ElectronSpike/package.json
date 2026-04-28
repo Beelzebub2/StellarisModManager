@@ -2,12 +2,18 @@
     "name": "stellaris-mod-manager-electron-spike",
     "version": "0.1.0",
     "private": true,
-    "description": "Phase 1 Electron migration spike for Stellaris Mod Manager",
+    "description": "Electron + Vite + React + TypeScript desktop app for Stellaris Mod Manager",
     "main": "dist/main.js",
     "scripts": {
-        "build": "tsc -p tsconfig.json",
+        "build": "npm run build:main && npm run build:renderer",
+        "build:main": "tsc -p tsconfig.main.json",
+        "build:renderer": "vite build",
         "start": "npm run build && electron .",
-        "check": "tsc -p tsconfig.json --noEmit",
+        "check": "npm run check:main && npm run check:renderer",
+        "check:main": "tsc -p tsconfig.main.json --noEmit",
+        "check:renderer": "tsc -p tsconfig.renderer.json --noEmit",
+        "dev:renderer": "vite --host 127.0.0.1",
+        "test": "node scripts/run-node-tests.mjs",
         "postinstall": "electron-rebuild -f -w better-sqlite3",
         "pack": "npm run build && electron-builder --win dir",
         "dist": "npm run build && electron-builder --win dir"
@@ -43,15 +49,21 @@
         ]
     },
     "dependencies": {
-        "better-sqlite3": "^11.8.1",
+        "better-sqlite3": "^12.9.0",
+        "react": "^19.2.5",
+        "react-dom": "^19.2.5",
         "steamworks.js": "^0.4.0"
     },
     "devDependencies": {
-        "@electron/rebuild": "^4.0.3",
+        "@electron/rebuild": "^4.0.4",
         "@types/better-sqlite3": "^7.6.12",
         "@types/node": "^22.15.3",
-        "electron": "^35.2.0",
+        "@types/react": "^19.2.14",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^4.7.0",
+        "electron": "^39.8.9",
         "electron-builder": "^26.8.1",
-        "typescript": "^5.8.3"
+        "typescript": "^5.8.3",
+        "vite": "^6.4.2"
     }
 }

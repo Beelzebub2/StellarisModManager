@@ -2,15 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const preloadTsPath = path.join(__dirname, "..", "src", "preload.ts");
 const ipcTsPath = path.join(__dirname, "..", "src", "main", "ipc.ts");
 const sharedTypesPath = path.join(__dirname, "..", "src", "shared", "types.ts");
 
 test("library context menu plumbing exists and duplicated detail actions are removed", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const rendererJs = fs.readFileSync(rendererJsPath, "utf8");
     const preloadTs = fs.readFileSync(preloadTsPath, "utf8");
     const ipcTs = fs.readFileSync(ipcTsPath, "utf8");

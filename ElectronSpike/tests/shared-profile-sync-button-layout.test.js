@@ -2,12 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const htmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 
 test("shared profile actions expose update and sync controls, with copy remaining copy-only", () => {
-    const html = fs.readFileSync(htmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererPath, "utf8");
 
     assert.match(html, /<button id="libraryUpdateSharedProfile"[\s\S]*?>[\s\S]*?Update/i);

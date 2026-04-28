@@ -2,12 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 
 test("sidebar order includes the merger workspace between Library and Workshop", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
 
     const versionIndex = html.indexOf('id="tabVersion"');
     const downloadsIndex = html.indexOf('id="tabDownloads"');
@@ -27,7 +27,7 @@ test("sidebar order includes the merger workspace between Library and Workshop",
 });
 
 test("merger page exposes the first milestone controls and status regions", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
 
     assert.match(html, /id="pageMerger"/);
     assert.match(html, /id="mergerAnalyzeBtn"/);

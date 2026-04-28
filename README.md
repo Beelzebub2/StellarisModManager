@@ -16,7 +16,7 @@
 [![Release](https://img.shields.io/github/v/release/Beelzebub2/StellarisModManager)](https://github.com/Beelzebub2/StellarisModManager/releases)
 
 
-<p align="center"><b>Desktop mod manager for Stellaris built with Electron and TypeScript.</b></p>
+<p align="center"><b>Desktop mod manager for Stellaris built with Electron, Vite, React, and TypeScript.</b></p>
 
 ## Features
 
@@ -32,7 +32,7 @@
 
 ### Requirements
 
-- Node.js 18+
+- Node.js 20+ (Node.js 22.12+ is recommended for warning-free native rebuild tooling)
 - Windows (primary target; macOS and Linux builds are supported by the bundler but untested)
 
 ### Run the desktop app
@@ -48,8 +48,8 @@ run.bat
 
 ```bat
 cd ElectronSpike
-build.bat build          :: compile TypeScript
-build.bat check          :: typecheck only (no output)
+build.bat build          :: compile Electron main/preload and Vite renderer
+build.bat check          :: typecheck main/preload and renderer
 ```
 
 ### Package a distributable
