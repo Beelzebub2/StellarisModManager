@@ -2,16 +2,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
 const root = path.join(__dirname, "..");
-const htmlPath = path.join(root, "src", "renderer", "index.html");
 const rendererPath = path.join(root, "src", "renderer", "renderer.js");
 const preloadPath = path.join(root, "src", "preload.ts");
 const ipcPath = path.join(root, "src", "main", "ipc.ts");
 const typesPath = path.join(root, "src", "shared", "types.ts");
 
 test("library exposes shared load-order suggestions behind an explicit preview/apply flow", () => {
-    const html = fs.readFileSync(htmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererPath, "utf8");
     const preload = fs.readFileSync(preloadPath, "utf8");
     const ipc = fs.readFileSync(ipcPath, "utf8");

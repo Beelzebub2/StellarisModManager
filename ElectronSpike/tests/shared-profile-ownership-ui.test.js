@@ -2,13 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const htmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const typesPath = path.join(__dirname, "..", "src", "shared", "types.ts");
 
 test("library shared profile controls expose ownership state and disable non-owner updates", () => {
-    const html = fs.readFileSync(htmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererPath, "utf8");
     const types = fs.readFileSync(typesPath, "utf8");
 

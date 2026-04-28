@@ -6844,3 +6844,5 @@ async function init() {
 }
 
 void init();
+
+export {};

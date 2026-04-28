@@ -2,13 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 
 test("merger results window shell exposes filters, list, detail, and actions", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
 
     assert.match(html, /id="mergerResultsDragRegion"/);
     assert.match(html, /id="mergerResultsWorkspace"/);

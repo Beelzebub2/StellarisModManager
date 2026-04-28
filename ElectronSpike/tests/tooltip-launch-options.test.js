@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
 const appDataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stellaris-tooltip-launch-options-"));
 process.env.APPDATA = appDataRoot;
@@ -10,7 +11,6 @@ process.env.APPDATA = appDataRoot;
 const settings = require("../dist/main/services/settings.js");
 const gameLauncher = require("../dist/main/services/gameLauncher.js");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesCssPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 const sharedTypesPath = path.join(__dirname, "..", "src", "shared", "types.ts");
@@ -45,7 +45,7 @@ test("launcher parses quoted launch options into argv", () => {
 });
 
 test("renderer exposes a shared custom tooltip host and upgrades title attributes", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererJsPath, "utf8");
     const styles = fs.readFileSync(stylesCssPath, "utf8");
 
@@ -61,7 +61,7 @@ test("renderer exposes a shared custom tooltip host and upgrades title attribute
 });
 
 test("settings page exposes launch options and renderer binds the field", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const renderer = fs.readFileSync(rendererJsPath, "utf8");
     const types = fs.readFileSync(sharedTypesPath, "utf8");
 

@@ -2,18 +2,18 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const indexHtmlPath = path.join(__dirname, "..", "src", "renderer", "index.html");
 const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 
 test("settings expose an explicit browse button for the mods path", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
 
     assert.match(html, /id="settingsModsPathBrowse"/);
 });
 
 test("settings expose a separate managed mods folder input", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const source = fs.readFileSync(rendererJsPath, "utf8");
 
     assert.match(html, /id="settingsManagedModsPathInput"/);
@@ -50,7 +50,7 @@ test("renderer shows the current mod and percent complete during mods-path migra
 });
 
 test("settings render a top-right mods-path migration notice that reopens the popup", () => {
-    const html = fs.readFileSync(indexHtmlPath, "utf8");
+    const html = readRendererShellSource();
     const source = fs.readFileSync(rendererJsPath, "utf8");
 
     assert.match(html, /id="modsPathMigrationNotice"/);
