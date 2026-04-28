@@ -28,6 +28,16 @@ export function buildMergeReport(plan: MergePlan, summary: ModMergerSummary, opt
         ""
     ];
 
+    if (plan.automation) {
+        lines.push("Auto Control");
+        lines.push(`- Safe recommendations: ${plan.automation.safeCount}`);
+        lines.push(`- Review recommendations: ${plan.automation.reviewCount}`);
+        lines.push(`- Manual decisions: ${plan.automation.manualCount}`);
+        lines.push(`- Ignored files: ${plan.automation.ignoredCount}`);
+        lines.push(`- Generated outputs: ${plan.automation.generatedCount}`);
+        lines.push("");
+    }
+
     if (warnings.length > 0) {
         lines.push("Warnings");
         for (const warning of warnings) {
@@ -45,8 +55,11 @@ export function buildMergeReport(plan: MergePlan, summary: ModMergerSummary, opt
 
     for (const filePlan of plan.filePlans) {
         const winnerLabel = filePlan.winner ? `${filePlan.winner.modName} (#${filePlan.winner.modId})` : "none";
+        const reasonLabel = filePlan.autoRecommendation?.reasonCode
+            ? ` | reason=${filePlan.autoRecommendation.reasonCode}`
+            : "";
         lines.push(
-            `- ${filePlan.virtualPath} | type=${filePlan.fileType} | state=${filePlan.resolutionState} | strategy=${filePlan.strategy} | winner=${winnerLabel}`
+            `- ${filePlan.virtualPath} | type=${filePlan.fileType} | state=${filePlan.resolutionState} | strategy=${filePlan.strategy} | decision=${filePlan.decisionType ?? "unknown"} | winner=${winnerLabel}${reasonLabel}`
         );
     }
 
@@ -65,6 +78,7 @@ export async function writeMergeArtifacts(outputModPath: string, plan: MergePlan
         buildDateUtc: new Date().toISOString(),
         appVersion: options.appVersion,
         gameVersion: String(options.gameVersion ?? "").trim() || null,
+        automation: plan.automation ?? null,
         sourceMods: plan.sourceMods,
         conflictResolutions: plan.filePlans.map((filePlan) => ({
             virtualPath: filePlan.virtualPath,
@@ -72,6 +86,10 @@ export async function writeMergeArtifacts(outputModPath: string, plan: MergePlan
             strategy: filePlan.strategy,
             resolutionState: filePlan.resolutionState,
             severity: filePlan.severity,
+            decisionType: filePlan.decisionType ?? null,
+            autoRecommendation: filePlan.autoRecommendation ?? null,
+            reviewState: filePlan.reviewState ?? null,
+            generated: Boolean(filePlan.generatedOutput && filePlan.generatedOutput.trim()),
             winnerModId: filePlan.winner?.modId ?? null,
             entries: filePlan.entries
         }))

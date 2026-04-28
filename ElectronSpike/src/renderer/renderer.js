@@ -78,6 +78,7 @@ const state = {
         plan: null,
         summary: null,
         selectedVirtualPath: null,
+        resultsFilter: "needs-action",
         lastBuildOutputPath: null,
         lastReportPath: null,
         progress: {
@@ -162,6 +163,7 @@ const ICON_PATHS = Object.freeze({
     refresh: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
     home: '<path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
     merge: '<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="m9 8-4 4 4 4"/><path d="m15 8 4 4-4 4"/><path d="M14 12H10"/>',
+    layers: '<path d="m12 2 9 5-9 5-9-5 9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/>',
     sparkles: '<path d="M12 3l1.7 4.3L18 9l-4.3 1.7L12 15l-1.7-4.3L6 9l4.3-1.7L12 3z"/><path d="M19 14l.9 2.1L22 17l-2.1.9L19 20l-.9-2.1L16 17l2.1-.9L19 14z"/><path d="M5 14l.9 2.1L8 17l-2.1.9L5 20l-.9-2.1L2 17l2.1-.9L5 14z"/>',
     chevronUp: '<polyline points="18 15 12 9 6 15"/>',
     chevronDown: '<polyline points="6 9 12 15 18 9"/>'
@@ -606,6 +608,7 @@ function setLibraryStatus(text) {
 
 function setMergerStatus(text) {
     setText("mergerStatus", text);
+    setText("mergerResultsStatus", text);
     if (state.selectedTab === "merger") setGlobalStatus(text);
 }
 
@@ -5065,7 +5068,9 @@ function buildMergerSummaryFromPlan(plan) {
         }
 
         summary.conflictingFileCount += 1;
-        if (filePlan.fileType === "script" || filePlan.fileType === "event") {
+        if (filePlan.decisionType === "script-object-merge") {
+            summary.scriptObjectConflictCount += 1;
+        } else if (filePlan.fileType === "script" || filePlan.fileType === "event") {
             summary.scriptConflictCount += 1;
         } else if (filePlan.fileType === "localisation") {
             summary.localisationConflictCount += 1;
@@ -5079,6 +5084,16 @@ function buildMergerSummaryFromPlan(plan) {
 
 function getMergerSummary() {
     return state.merger.summary || buildMergerSummaryFromPlan(state.merger.plan);
+}
+
+function getMergerAutomationSummary() {
+    return state.merger.plan?.automation || {
+        safeCount: 0,
+        reviewCount: 0,
+        manualCount: 0,
+        ignoredCount: 0,
+        generatedCount: 0
+    };
 }
 
 function getMergerConflictCandidates() {
@@ -5139,6 +5154,35 @@ function formatMergerSeverity(value) {
     }
 }
 
+function formatMergerReasonCode(value) {
+    switch (value) {
+        case "identical-duplicate": return "Identical duplicate";
+        case "localisation-non-overlap": return "Auto ready: unique localisation keys";
+        case "script-object-non-overlap": return "Auto ready: unique script objects";
+        case "localisation-key-collision": return "Needs choice: duplicate localisation key";
+        case "script-object-collision": return "Needs choice: duplicate script object";
+        case "parse-error": return "Needs choice: parse issue";
+        case "blocked-path": return "Needs choice: protected path";
+        case "winner-required": return "Needs choice: pick a winner";
+        case "file-read-error": return "Needs choice: source read failed";
+        case "single-provider": return "Single source";
+        default: return value ? String(value).replace(/-/g, " ") : "Needs choice";
+    }
+}
+
+function formatMergerResultStateLabel(filePlan) {
+    if (filePlan.autoRecommendation?.canApply === true && filePlan.resolutionState === "unresolved") {
+        return "Auto ready";
+    }
+    if (filePlan.resolutionState === "unresolved") {
+        return "Needs choice";
+    }
+    if (filePlan.resolutionState === "auto" || filePlan.resolutionState === "manual") {
+        return "Handled";
+    }
+    return formatMergerResolutionState(filePlan.resolutionState);
+}
+
 function formatMergerGroupLabel(key) {
     switch (key) {
         case "script": return "Script conflicts";
@@ -5163,11 +5207,22 @@ function syncMergerButtons() {
     const hasPlan = !!state.merger.plan;
     const hasOutputPath = !!(state.merger.lastBuildOutputPath || state.merger.plan?.outputModPath);
     const isBusy = state.merger.progress.active === true;
+    const automation = getMergerAutomationSummary();
 
     const buildBtn = byId("mergerBuildBtn");
     if (buildBtn) buildBtn.disabled = !hasPlan || isBusy;
+    const resultsBuildBtn = byId("mergerResultsBuildBtn");
+    if (resultsBuildBtn) resultsBuildBtn.disabled = !hasPlan || isBusy;
     const analyzeBtn = byId("mergerAnalyzeBtn");
     if (analyzeBtn) analyzeBtn.disabled = isBusy;
+    const resultsScanBtn = byId("mergerResultsScanBtn");
+    if (resultsScanBtn) resultsScanBtn.disabled = isBusy;
+    const openResultsBtn = byId("mergerOpenResultsBtn");
+    if (openResultsBtn) openResultsBtn.disabled = isBusy;
+    const autoBtn = byId("mergerAutoBtn");
+    if (autoBtn) autoBtn.disabled = !hasPlan || isBusy || automation.safeCount <= 0;
+    const resultsAutoBtn = byId("mergerResultsAutoBtn");
+    if (resultsAutoBtn) resultsAutoBtn.disabled = !hasPlan || isBusy || automation.safeCount <= 0;
     const openBtn = byId("mergerOpenOutputBtn");
     if (openBtn) openBtn.disabled = !hasOutputPath || isBusy;
     const exportBtn = byId("mergerExportReportBtn");
@@ -5177,6 +5232,7 @@ function syncMergerButtons() {
 function renderMergerSummary() {
     const plan = state.merger.plan;
     const summary = getMergerSummary();
+    const automation = getMergerAutomationSummary();
     setMergerMetric("mergerMetricEnabledMods", summary.enabledModCount);
     setMergerMetric("mergerMetricFilesScanned", summary.scannedFileCount);
     setMergerMetric("mergerMetricFileConflicts", summary.conflictingFileCount);
@@ -5184,6 +5240,9 @@ function renderMergerSummary() {
     setMergerMetric("mergerMetricLocalisationConflicts", summary.localisationConflictCount);
     setMergerMetric("mergerMetricAssetConflicts", summary.assetConflictCount);
     setMergerMetric("mergerMetricAutoResolved", summary.autoResolvedCount);
+    setMergerMetric("mergerMetricSafeAuto", automation.safeCount);
+    setMergerMetric("mergerMetricNeedsReview", automation.manualCount + automation.reviewCount);
+    setMergerMetric("mergerMetricGenerated", automation.generatedCount);
     setMergerMetric("mergerMetricUnresolved", summary.unresolvedCount);
 
     const profileLabel = plan?.profileName ? `Profile: ${plan.profileName}` : "Profile: --";
@@ -5193,6 +5252,7 @@ function renderMergerSummary() {
     setText("mergerEnabledChip", enabledModsLabel);
     setText("mergerAnalysisChip", analysisLabel);
     setText("mergerLastOutputPath", state.merger.lastBuildOutputPath || plan?.outputModPath || "Not built yet.");
+    setText("mergerResultsOutputPath", `Output: ${state.merger.lastBuildOutputPath || plan?.outputModPath || "not built"}`);
 
     syncMergerButtons();
 }
@@ -5274,6 +5334,14 @@ function renderMergerDetailPanel() {
     const entries = (filePlan.entries || [])
         .slice()
         .sort((left, right) => left.loadOrder - right.loadOrder || left.modId - right.modId);
+    const recommendation = filePlan.autoRecommendation || {};
+    const recommendationLabel = recommendation.reason
+        || "No automation criteria matched this file.";
+    const generatedPreview = String(filePlan.generatedOutput || filePlan.outputPreview || "").trim();
+    const detailKeys = [
+        ...(Array.isArray(filePlan.mergeDetails?.objectKeys) ? filePlan.mergeDetails.objectKeys : []),
+        ...(Array.isArray(filePlan.mergeDetails?.localisationKeys) ? filePlan.mergeDetails.localisationKeys : [])
+    ].slice(0, 8);
 
     panel.innerHTML = `
         <header class="merger-detail-header">
@@ -5291,8 +5359,9 @@ function renderMergerDetailPanel() {
             <div class="merger-detail-card">
                 <p class="settings-key">Current winner</p>
                 <p class="settings-value">${escapeHtml(filePlan.winner?.modName || "No winner selected")}</p>
-                <p class="muted">Strategy: ${escapeHtml(filePlan.strategy)}</p>
+                <p class="muted">Strategy: ${escapeHtml(filePlan.strategy)} | Decision: ${escapeHtml(filePlan.decisionType || "file-winner")}</p>
                 <div class="merger-detail-actions">
+                    <button id="mergerApplyAutoFromDetail" type="button" class="button-secondary"${mergerBusy || !recommendation.canApply ? " disabled" : ""}>Auto Control</button>
                     <button id="mergerUseLoadOrderWinner" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Use load-order winner</button>
                     <button id="mergerIgnoreFile" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Ignore file</button>
                 </div>
@@ -5315,11 +5384,18 @@ function renderMergerDetailPanel() {
             </div>
         </div>
         <div class="merger-detail-card">
-            <p class="settings-key">Warnings</p>
-            <p class="muted">This milestone keeps full-file winners deterministic. Script-object merging and manual text editing come later.</p>
+            <p class="settings-key">Auto Control</p>
+            <p class="settings-value">${escapeHtml(recommendation.reasonCode || "manual-review")}</p>
+            <p class="muted">${escapeHtml(recommendationLabel)}</p>
+            ${detailKeys.length > 0 ? `<p class="muted">Keys: ${escapeHtml(detailKeys.join(", "))}${detailKeys.length >= 8 ? ", ..." : ""}</p>` : ""}
+            ${filePlan.mergeDetails?.parseError ? `<p class="muted">Parse issue: ${escapeHtml(filePlan.mergeDetails.parseError)}</p>` : ""}
+            ${generatedPreview ? `<pre class="merger-generated-preview">${escapeHtml(generatedPreview.slice(0, 1200))}</pre>` : ""}
         </div>
     `;
 
+    byId("mergerApplyAutoFromDetail")?.addEventListener("click", () => {
+        void runMergerApplyAuto();
+    });
     byId("mergerUseLoadOrderWinner")?.addEventListener("click", () => {
         void runMergerSetResolution({
             virtualPath: filePlan.virtualPath,
@@ -5346,10 +5422,215 @@ function renderMergerDetailPanel() {
     }
 }
 
+function getFilteredMergerResults() {
+    const candidates = getMergerConflictCandidates()
+        .slice()
+        .sort((left, right) => {
+            const leftSafe = left.autoRecommendation?.canApply === true && left.resolutionState === "unresolved" ? 0 : 1;
+            const rightSafe = right.autoRecommendation?.canApply === true && right.resolutionState === "unresolved" ? 0 : 1;
+            return leftSafe - rightSafe || left.virtualPath.localeCompare(right.virtualPath);
+        });
+
+    switch (state.merger.resultsFilter) {
+        case "needs-action":
+            return candidates.filter((filePlan) => filePlan.resolutionState === "unresolved");
+        case "safe":
+            return candidates.filter((filePlan) =>
+                filePlan.resolutionState === "unresolved"
+                && filePlan.autoRecommendation?.canApply === true
+                && filePlan.autoRecommendation?.confidence === "safe"
+            );
+        case "manual":
+            return candidates.filter((filePlan) =>
+                filePlan.resolutionState === "unresolved"
+                && !(filePlan.autoRecommendation?.canApply === true && filePlan.autoRecommendation?.confidence === "safe")
+            );
+        case "resolved":
+            return candidates.filter((filePlan) => filePlan.resolutionState !== "unresolved");
+        default:
+            return candidates.filter((filePlan) => filePlan.resolutionState === "unresolved");
+    }
+}
+
+function renderMergerResultsDetail(filePlan) {
+    const detail = byId("mergerResultsDetail");
+    if (!detail) return;
+
+    if (!filePlan) {
+        detail.innerHTML = '<div class="merger-empty muted">Select a result to inspect automation criteria and source files.</div>';
+        return;
+    }
+
+    const entries = (filePlan.entries || [])
+        .slice()
+        .sort((left, right) => left.loadOrder - right.loadOrder || left.modId - right.modId);
+    const recommendation = filePlan.autoRecommendation || {};
+    const generatedPreview = String(filePlan.generatedOutput || filePlan.outputPreview || "").trim();
+    const duplicateKeys = Array.isArray(filePlan.mergeDetails?.duplicateKeys)
+        ? filePlan.mergeDetails.duplicateKeys
+        : [];
+    const keys = [
+        ...(Array.isArray(filePlan.mergeDetails?.objectKeys) ? filePlan.mergeDetails.objectKeys : []),
+        ...(Array.isArray(filePlan.mergeDetails?.localisationKeys) ? filePlan.mergeDetails.localisationKeys : [])
+    ].slice(0, 20);
+    const mergerBusy = state.merger.progress.active === true;
+
+    detail.innerHTML = `
+        <header class="merger-detail-header">
+            <div>
+                <p class="eyebrow">Selected Result</p>
+                <h3>${escapeHtml(filePlan.virtualPath)}</h3>
+            </div>
+            <div class="merger-detail-chips">
+                <span class="status-chip status-chip-muted">${escapeHtml(formatMergerFileType(filePlan.fileType))}</span>
+                <span class="status-chip status-chip-muted">${escapeHtml(formatMergerResolutionState(filePlan.resolutionState))}</span>
+                <span class="status-chip status-chip-muted">${escapeHtml(filePlan.decisionType || "file-winner")}</span>
+            </div>
+        </header>
+        <section class="merger-results-detail-grid">
+            <article class="merger-detail-card">
+                <p class="settings-key">Automation criteria</p>
+                <p class="settings-value">${escapeHtml(formatMergerReasonCode(recommendation.reasonCode || "winner-required"))}</p>
+                <p class="muted">${escapeHtml(recommendation.reason || "This file requires an explicit winner or manual merge.")}</p>
+                ${filePlan.mergeDetails?.parseError ? `<p class="muted">Parse issue: ${escapeHtml(filePlan.mergeDetails.parseError)}</p>` : ""}
+                ${duplicateKeys.length > 0 ? `<p class="muted">Duplicate keys: ${escapeHtml(duplicateKeys.join(", "))}</p>` : ""}
+                ${keys.length > 0 ? `<p class="muted">Detected keys: ${escapeHtml(keys.join(", "))}${keys.length >= 20 ? ", ..." : ""}</p>` : ""}
+                <div class="merger-detail-actions">
+                    <button id="mergerResultsApplyAutoForFile" type="button" class="button-secondary"${mergerBusy || !recommendation.canApply ? " disabled" : ""}>Auto Control</button>
+                    <button id="mergerResultsUseWinner" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Use load-order winner</button>
+                    <button id="mergerResultsIgnoreFile" type="button" class="button-secondary"${mergerBusy ? " disabled" : ""}>Ignore</button>
+                </div>
+            </article>
+            <article class="merger-detail-card">
+                <p class="settings-key">Source mods</p>
+                <div class="merger-source-list">
+                    ${entries.map((entry) => `
+                        <button type="button" class="merger-source-row${filePlan.winner?.modId === entry.modId ? " is-current" : ""}" data-merger-results-mod-id="${entry.modId}"${mergerBusy ? " disabled" : ""}>
+                            <span class="merger-source-main">
+                                <strong>[${entry.loadOrder}] ${escapeHtml(entry.modName)}</strong>
+                                <span class="muted">${escapeHtml(entry.realPath || entry.virtualPath)}</span>
+                            </span>
+                            <span class="merger-source-meta">
+                                <span class="status-chip status-chip-muted">${formatInteger(entry.sizeBytes)} bytes</span>
+                            </span>
+                        </button>
+                    `).join("")}
+                </div>
+            </article>
+        </section>
+        ${generatedPreview ? `
+            <article class="merger-detail-card">
+                <p class="settings-key">Generated output preview</p>
+                <pre class="merger-generated-preview">${escapeHtml(generatedPreview.slice(0, 3000))}</pre>
+            </article>
+        ` : ""}
+    `;
+
+    byId("mergerResultsApplyAutoForFile")?.addEventListener("click", () => {
+        void runMergerApplyAuto();
+    });
+    byId("mergerResultsUseWinner")?.addEventListener("click", () => {
+        void runMergerSetResolution({
+            virtualPath: filePlan.virtualPath,
+            strategy: "copy-load-order-winner"
+        });
+    });
+    byId("mergerResultsIgnoreFile")?.addEventListener("click", () => {
+        void runMergerSetResolution({
+            virtualPath: filePlan.virtualPath,
+            strategy: "ignore"
+        });
+    });
+
+    for (const button of detail.querySelectorAll("[data-merger-results-mod-id]")) {
+        button.addEventListener("click", () => {
+            const selectedModId = Number.parseInt(button.getAttribute("data-merger-results-mod-id") || "", 10);
+            if (!Number.isFinite(selectedModId)) return;
+            void runMergerSetResolution({
+                virtualPath: filePlan.virtualPath,
+                strategy: "copy-load-order-winner",
+                selectedModId
+            });
+        });
+    }
+}
+
+function renderMergerResultsWorkspace() {
+    const workspace = byId("mergerResultsWorkspace");
+    if (!workspace) return;
+
+    const summary = getMergerSummary();
+    const automation = getMergerAutomationSummary();
+    const filtered = getFilteredMergerResults();
+    setMergerMetric("mergerResultsMetricFiles", summary.scannedFileCount);
+    setMergerMetric("mergerResultsMetricConflicts", summary.conflictingFileCount);
+    setMergerMetric("mergerResultsMetricSafeAuto", automation.safeCount);
+    setMergerMetric("mergerResultsMetricManual", automation.manualCount + automation.reviewCount);
+    setText("mergerResultsCount", `${formatInteger(filtered.length)} entries`);
+    setText("mergerResultsOutputPath", `Output: ${state.merger.lastBuildOutputPath || state.merger.plan?.outputModPath || "not built"}`);
+
+    for (const button of workspace.querySelectorAll("[data-merger-results-filter]")) {
+        const filter = button.getAttribute("data-merger-results-filter") || "needs-action";
+        button.classList.toggle("is-active", filter === state.merger.resultsFilter);
+        button.setAttribute("aria-pressed", filter === state.merger.resultsFilter ? "true" : "false");
+    }
+
+    const list = byId("mergerResultsList");
+    if (!list) return;
+
+    if (!state.merger.plan) {
+        list.innerHTML = '<div class="merger-empty muted">Run a scan to populate merger results.</div>';
+        renderMergerResultsDetail(null);
+        syncMergerButtons();
+        return;
+    }
+
+    if (!filtered.some((filePlan) => filePlan.virtualPath === state.merger.selectedVirtualPath)) {
+        state.merger.selectedVirtualPath = filtered[0]?.virtualPath || null;
+    }
+
+    if (filtered.length <= 0) {
+        list.innerHTML = '<div class="merger-empty muted">No entries match this filter.</div>';
+        renderMergerResultsDetail(null);
+        syncMergerButtons();
+        return;
+    }
+
+    list.innerHTML = filtered.map((filePlan) => {
+        const recommendation = filePlan.autoRecommendation || {};
+        const isSelected = filePlan.virtualPath === state.merger.selectedVirtualPath;
+        const stateLabel = formatMergerResultStateLabel(filePlan);
+        const reasonLabel = formatMergerReasonCode(recommendation.reasonCode || filePlan.decisionType || "winner-required");
+        return `
+            <button type="button" class="merger-results-row${isSelected ? " is-selected" : ""}" data-virtual-path="${escapeHtml(filePlan.virtualPath)}">
+                <span class="merger-results-row-main">
+                    <strong>${escapeHtml(filePlan.virtualPath)}</strong>
+                    <span class="merger-results-row-reason">${escapeHtml(reasonLabel)}</span>
+                </span>
+                <span class="merger-results-row-meta">
+                    <span class="status-chip status-chip-muted">${escapeHtml(stateLabel)}</span>
+                    <span class="status-chip status-chip-muted">${formatInteger((filePlan.entries || []).length)} mods</span>
+                </span>
+            </button>
+        `;
+    }).join("");
+
+    for (const button of list.querySelectorAll("[data-virtual-path]")) {
+        button.addEventListener("click", () => {
+            state.merger.selectedVirtualPath = button.getAttribute("data-virtual-path");
+            renderMergerResultsWorkspace();
+        });
+    }
+
+    renderMergerResultsDetail(getSelectedMergerFilePlan());
+    syncMergerButtons();
+}
+
 function renderMergerPage() {
     renderMergerSummary();
     renderMergerConflictTree();
     renderMergerDetailPanel();
+    renderMergerResultsWorkspace();
 }
 
 async function refreshMergerPlan() {
@@ -5370,7 +5651,7 @@ async function runMergerAnalysis() {
     beginMergerProgress("analyze", "Analyzing enabled mods...");
     setMergerStatus("Analyzing enabled mods...");
     try {
-        const result = await window.spikeApi.modMergerAnalyze();
+        const result = await window.spikeApi.modMergerAnalyze({ openResults: true });
         await refreshMergerProgressStatus();
         state.merger.plan = result.plan;
         state.merger.summary = result.summary;
@@ -5396,6 +5677,38 @@ async function runMergerSetResolution(request) {
     state.merger.summary = result.summary;
     renderMergerPage();
     setMergerStatus(result.message);
+}
+
+async function runMergerApplyAuto() {
+    if (!state.merger.plan) {
+        setMergerStatus("Scan mods before running Auto Control.");
+        return;
+    }
+
+    setMergerStatus("Applying safe Auto Control recommendations...");
+    try {
+        const result = await window.spikeApi.modMergerApplyAuto({ scope: "safe" });
+        if (result.plan) {
+            state.merger.plan = result.plan;
+        }
+        state.merger.summary = result.summary;
+        ensureMergerSelection();
+        renderMergerPage();
+        setMergerStatus(result.message);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || "Unknown Auto Control error");
+        setMergerStatus(message);
+    }
+}
+
+async function openMergerResultsWindow() {
+    try {
+        const result = await window.spikeApi.modMergerOpenResults();
+        setMergerStatus(result.message);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error || "Could not open merger results.");
+        setMergerStatus(message);
+    }
 }
 
 async function runMergerBuild() {
@@ -5471,9 +5784,20 @@ async function openMergerOutputFolder() {
 
 function hookMergerControls() {
     byId("mergerAnalyzeBtn")?.addEventListener("click", () => void runMergerAnalysis());
+    byId("mergerResultsScanBtn")?.addEventListener("click", () => void runMergerAnalysis());
+    byId("mergerOpenResultsBtn")?.addEventListener("click", () => void openMergerResultsWindow());
+    byId("mergerAutoBtn")?.addEventListener("click", () => void runMergerApplyAuto());
+    byId("mergerResultsAutoBtn")?.addEventListener("click", () => void runMergerApplyAuto());
     byId("mergerBuildBtn")?.addEventListener("click", () => void runMergerBuild());
+    byId("mergerResultsBuildBtn")?.addEventListener("click", () => void runMergerBuild());
     byId("mergerOpenOutputBtn")?.addEventListener("click", () => void openMergerOutputFolder());
     byId("mergerExportReportBtn")?.addEventListener("click", () => void runMergerExportReport());
+    for (const button of document.querySelectorAll("[data-merger-results-filter]")) {
+        button.addEventListener("click", () => {
+            state.merger.resultsFilter = button.getAttribute("data-merger-results-filter") || "needs-action";
+            renderMergerResultsWorkspace();
+        });
+    }
 }
 
 /* ============================================================
@@ -6382,10 +6706,38 @@ function hookGlobalControls() {
 /* ============================================================
    INITIALIZATION
    ============================================================ */
+function getWindowView() {
+    try {
+        return new URLSearchParams(window.location.search).get("view") || "main";
+    } catch {
+        return "main";
+    }
+}
+
 async function init() {
     hookWindowResizeResponsiveness();
     applyDataIcons(document);
     hookCustomTooltips();
+
+    const windowView = getWindowView();
+    document.body.dataset.windowView = windowView;
+    if (windowView === "merger-results") {
+        hookMergerControls();
+        hookGlobalControls();
+        try {
+            await window.spikeApi.ping();
+        } catch {
+            // The results window can still render cached plan state if ping fails.
+        }
+        await Promise.all([
+            refreshMergerPlan(),
+            refreshMergerProgressStatus()
+        ]);
+        renderMergerResultsWorkspace();
+        setMergerStatus("Merger results ready.");
+        return;
+    }
+
     hookVersionControls();
     hookSettingsControls();
     hookLibraryControls();

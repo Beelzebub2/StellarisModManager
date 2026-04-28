@@ -16,6 +16,7 @@ import type {
     LibrarySetModEnabledRequest,
     LibrarySetSharedProfileIdRequest,
     LibrarySyncSharedProfileRequest,
+    ModMergerApplyAutoRequest,
     ModMergerAnalyzeRequest,
     ModMergerBuildRequest,
     ModMergerProgressStatus,
@@ -63,11 +64,13 @@ import { getModsPathMigrationStatus } from "./services/modsPathMigrationState";
 import { getModMergerProgressStatus } from "./services/modMergerProgressState";
 import {
     modMergerAnalyze,
+    modMergerApplyAuto,
     modMergerBuild,
     modMergerExportReport,
     modMergerGetPlan,
     modMergerSetResolution
 } from "./services/modMerger";
+import { openModMergerResultsWindow } from "./services/modMerger/resultsWindow";
 import { getLegacyPaths } from "./services/paths";
 import {
     autoConfigureSteamCmdSnapshot,
@@ -154,6 +157,8 @@ const CHANNELS = {
     modMergerGetPlan: "spike:modMergerGetPlan",
     modMergerProgressStatus: "spike:getModMergerProgressStatus",
     modMergerSetResolution: "spike:modMergerSetResolution",
+    modMergerApplyAuto: "spike:modMergerApplyAuto",
+    modMergerOpenResults: "spike:modMergerOpenResults",
     modMergerBuild: "spike:modMergerBuild",
     modMergerExportReport: "spike:modMergerExportReport",
     steamDiscovery: "spike:getSteamDiscoverySummary",
@@ -405,6 +410,8 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.modMergerGetPlan);
     ipcMain.removeHandler(CHANNELS.modMergerProgressStatus);
     ipcMain.removeHandler(CHANNELS.modMergerSetResolution);
+    ipcMain.removeHandler(CHANNELS.modMergerApplyAuto);
+    ipcMain.removeHandler(CHANNELS.modMergerOpenResults);
     ipcMain.removeHandler(CHANNELS.modMergerBuild);
     ipcMain.removeHandler(CHANNELS.modMergerExportReport);
     ipcMain.removeHandler(CHANNELS.steamDiscovery);
@@ -659,7 +666,15 @@ export function registerIpcHandlers(): void {
     });
 
     ipcMain.handle(CHANNELS.modMergerAnalyze, async (_event, request?: ModMergerAnalyzeRequest) => {
-        return modMergerAnalyze(request);
+        const result = await modMergerAnalyze(request);
+        if (result.ok && request?.openResults === true) {
+            const openResult = await openModMergerResultsWindow();
+            if (!openResult.ok) {
+                logError(`Failed to open merger results window: ${openResult.message}`);
+            }
+        }
+
+        return result;
     });
 
     ipcMain.handle(CHANNELS.modMergerGetPlan, async () => {
@@ -672,6 +687,14 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.modMergerSetResolution, async (_event, request: ModMergerSetResolutionRequest) => {
         return modMergerSetResolution(request);
+    });
+
+    ipcMain.handle(CHANNELS.modMergerApplyAuto, async (_event, request?: ModMergerApplyAutoRequest) => {
+        return modMergerApplyAuto(request);
+    });
+
+    ipcMain.handle(CHANNELS.modMergerOpenResults, async () => {
+        return openModMergerResultsWindow();
     });
 
     ipcMain.handle(CHANNELS.modMergerBuild, async (_event, request?: ModMergerBuildRequest) => {

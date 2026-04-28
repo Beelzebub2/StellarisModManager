@@ -31,9 +31,15 @@ test("merger page exposes the first milestone controls and status regions", () =
 
     assert.match(html, /id="pageMerger"/);
     assert.match(html, /id="mergerAnalyzeBtn"/);
+    assert.match(html, />\s*Scan\s*</);
+    assert.match(html, /id="mergerOpenResultsBtn"/);
+    assert.match(html, /id="mergerAutoBtn"/);
     assert.match(html, /id="mergerBuildBtn"/);
     assert.match(html, /id="mergerOpenOutputBtn"/);
     assert.match(html, /id="mergerExportReportBtn"/);
+    assert.match(html, /id="mergerMetricSafeAuto"/);
+    assert.match(html, /id="mergerMetricNeedsReview"/);
+    assert.match(html, /id="mergerMetricGenerated"/);
     assert.match(html, /id="mergerConflictTree"/);
     assert.match(html, /id="mergerDetailPanel"/);
 });

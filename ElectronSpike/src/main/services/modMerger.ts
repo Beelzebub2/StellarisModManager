@@ -6,6 +6,8 @@ import type {
     MergeFilePlan,
     MergePlan,
     MergeSourceMod,
+    ModMergerApplyAutoRequest,
+    ModMergerApplyAutoResult,
     ModMergerAnalyzeRequest,
     ModMergerAnalyzeResult,
     ModMergerBuildRequest,
@@ -29,6 +31,7 @@ import {
     startModMergerProgress,
     updateModMergerProgress
 } from "./modMergerProgressState";
+import { applyAutoResolutions, buildAutomationSummary } from "./modMerger/autoResolver";
 
 interface DbModMergeRow {
     Id: number;
@@ -306,6 +309,7 @@ function refreshFilePlanSeverity(filePlan: MergeFilePlan): void {
 function updateCurrentPlanSummary(plan: MergePlan): ModMergerSummary {
     const summary = summarizeMergePlan(plan);
     plan.unresolvedConflictCount = summary.unresolvedCount;
+    plan.automation = buildAutomationSummary(plan);
     return summary;
 }
 
@@ -363,6 +367,12 @@ function resolveBuildOutputTarget(rootPath: string, virtualPath: string): string
     }
 
     return targetPath;
+}
+
+function isGeneratedMergeStrategy(filePlan: MergeFilePlan): boolean {
+    return filePlan.strategy === "manual-text-merge"
+        || filePlan.strategy === "localisation-key-merge"
+        || filePlan.strategy === "script-object-merge";
 }
 
 async function buildMergedModFromPlan(input: {
@@ -445,9 +455,11 @@ async function buildMergedModFromPlan(input: {
             const targetPath = resolveBuildOutputTarget(outputModPath, filePlan.virtualPath);
             await fsp.mkdir(path.dirname(targetPath), { recursive: true });
 
-            if (filePlan.strategy === "manual-text-merge" && filePlan.outputPreview !== undefined && filePlan.outputPreview !== null) {
-                await fsp.writeFile(targetPath, normalizeGeneratedText(filePlan.outputPreview), "utf8");
+            const generatedText = filePlan.generatedOutput ?? filePlan.outputPreview ?? null;
+            if (isGeneratedMergeStrategy(filePlan) && generatedText !== null) {
+                await fsp.writeFile(targetPath, normalizeGeneratedText(generatedText), "utf8");
                 generatedFileCount += 1;
+                processedFilePlans += 1;
                 continue;
             }
 
@@ -590,6 +602,17 @@ export async function buildMergedModForTest(input: {
     });
 }
 
+export function applyAutoResolutionsForTest(
+    plan: MergePlan,
+    request?: ModMergerApplyAutoRequest
+): { plan: MergePlan; summary: ModMergerSummary } {
+    const summary = applyAutoResolutions(plan, request?.scope ?? "safe");
+    return {
+        plan,
+        summary
+    };
+}
+
 export async function modMergerAnalyze(request?: ModMergerAnalyzeRequest): Promise<ModMergerAnalyzeResult> {
     const settings = loadSettingsSnapshot() ?? {};
     const descriptorRoot = resolveDescriptorModsPath(settings);
@@ -680,6 +703,9 @@ export function modMergerSetResolution(request: ModMergerSetResolutionRequest): 
         filePlan.strategy = "ignore";
         filePlan.resolutionState = "ignored";
         filePlan.outputPreview = null;
+        filePlan.generatedOutput = null;
+        filePlan.decisionType = "ignored";
+        filePlan.reviewState = "not-needed";
     } else if (request.strategy === "manual-text-merge") {
         if (!isTextMergeablePlan(filePlan)) {
             return {
@@ -702,7 +728,10 @@ export function modMergerSetResolution(request: ModMergerSetResolutionRequest): 
 
         filePlan.strategy = "manual-text-merge";
         filePlan.outputPreview = normalizeGeneratedText(manualText);
+        filePlan.generatedOutput = filePlan.outputPreview;
+        filePlan.decisionType = "manual-text";
         filePlan.resolutionState = "manual";
+        filePlan.reviewState = "reviewed";
     } else {
         const winner = request.selectedModId !== null && request.selectedModId !== undefined
             ? filePlan.entries.find((entry) => entry.modId === request.selectedModId)
@@ -719,7 +748,10 @@ export function modMergerSetResolution(request: ModMergerSetResolutionRequest): 
         filePlan.strategy = "copy-load-order-winner";
         filePlan.winner = winner;
         filePlan.outputPreview = null;
+        filePlan.generatedOutput = null;
+        filePlan.decisionType = "file-winner";
         filePlan.resolutionState = filePlan.entries.length > 1 ? "manual" : "auto";
+        filePlan.reviewState = "reviewed";
     }
 
     refreshFilePlanSeverity(filePlan);
@@ -727,6 +759,30 @@ export function modMergerSetResolution(request: ModMergerSetResolutionRequest): 
     return {
         ok: true,
         message: `Updated resolution for ${request.virtualPath}.`,
+        plan: currentPlan,
+        summary
+    };
+}
+
+export function modMergerApplyAuto(request?: ModMergerApplyAutoRequest): ModMergerApplyAutoResult {
+    if (!currentPlan) {
+        return {
+            ok: false,
+            message: "No merge plan is loaded.",
+            plan: null,
+            summary: buildEmptySummary()
+        };
+    }
+
+    const before = currentPlan.automation?.safeCount ?? 0;
+    const summary = applyAutoResolutions(currentPlan, request?.scope ?? "safe");
+    const appliedCount = before - (currentPlan.automation?.safeCount ?? 0);
+
+    return {
+        ok: true,
+        message: appliedCount > 0
+            ? `Auto Control applied ${appliedCount} safe merge(s).`
+            : "Auto Control did not find any safe merge recommendations to apply.",
         plan: currentPlan,
         summary
     };

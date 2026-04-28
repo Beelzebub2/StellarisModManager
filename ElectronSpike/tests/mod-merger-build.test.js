@@ -36,6 +36,8 @@ test("build writes merged winners, descriptors, manifest, and report", async () 
 
     writeFile(modAPath, "common/defines/test.txt", "from_a = yes\n");
     writeFile(modBPath, "common/defines/test.txt", "from_b = yes\n");
+    writeFile(modAPath, "localisation/english/build_l_english.yml", "l_english:\n build_a:0 \"Build Alpha\"\n");
+    writeFile(modBPath, "localisation/english/build_l_english.yml", "l_english:\n build_b:0 \"Build Beta\"\n");
     writeFile(modAPath, "events/unique.txt", "country_event = { id = unique.1 }\n");
 
     try {
@@ -51,6 +53,8 @@ test("build writes merged winners, descriptors, manifest, and report", async () 
             outputModName: "SMM Merged Mod",
             gameVersion: "4.3.2"
         });
+
+        modMerger.applyAutoResolutionsForTest(analysis.plan, { scope: "safe" });
 
         const build = await modMerger.buildMergedModForTest({
             plan: analysis.plan,
@@ -71,6 +75,13 @@ test("build writes merged winners, descriptors, manifest, and report", async () 
         const mergedConflictContent = fs.readFileSync(path.join(build.outputModPath, "common", "defines", "test.txt"), "utf8");
         assert.equal(mergedConflictContent, "from_b = yes\n");
 
+        const generatedLocalisationContent = fs.readFileSync(
+            path.join(build.outputModPath, "localisation", "english", "build_l_english.yml"),
+            "utf8"
+        );
+        assert.match(generatedLocalisationContent, /build_a:0 "Build Alpha"/);
+        assert.match(generatedLocalisationContent, /build_b:0 "Build Beta"/);
+
         const descriptorContent = fs.readFileSync(path.join(descriptorRoot, "smm_merged.mod"), "utf8");
         assert.match(descriptorContent, /name="SMM Merged Mod"/);
         assert.match(descriptorContent, /path="mods-merged\/smm_merged"/);
@@ -78,9 +89,17 @@ test("build writes merged winners, descriptors, manifest, and report", async () 
         const manifestContent = fs.readFileSync(path.join(build.outputModPath, ".smm-merge-manifest.json"), "utf8");
         assert.match(manifestContent, /"appVersion": "0\.1\.0-test"/);
         assert.match(manifestContent, /"virtualPath": "common\/defines\/test\.txt"/);
+        const manifest = JSON.parse(manifestContent);
+        const localisationResolution = manifest.conflictResolutions.find(
+            (resolution) => resolution.virtualPath === "localisation/english/build_l_english.yml"
+        );
+        assert.equal(localisationResolution.decisionType, "localisation-key-merge");
+        assert.equal(localisationResolution.autoRecommendation.reasonCode, "localisation-non-overlap");
+        assert.equal(localisationResolution.generated, true);
 
         const reportContent = fs.readFileSync(path.join(build.outputModPath, "merge-report.txt"), "utf8");
         assert.match(reportContent, /Source Mods/);
+        assert.match(reportContent, /Auto Control/);
         assert.match(reportContent, /common\/defines\/test\.txt/);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });

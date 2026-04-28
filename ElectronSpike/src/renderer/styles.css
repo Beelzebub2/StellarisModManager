@@ -3665,6 +3665,202 @@ button.merger-source-row.is-current:hover:not(:disabled) {
     background: var(--bg-3);
 }
 
+.merger-generated-preview {
+    max-height: 260px;
+    overflow: auto;
+    margin: 0;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-1);
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.merger-results-drag-region {
+    display: none;
+}
+
+.merger-results-workspace {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    gap: 12px;
+}
+
+.merger-results-workspace.hidden {
+    display: none;
+}
+
+.merger-results-header,
+.merger-results-actions,
+.merger-results-list-header,
+.merger-results-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.merger-results-header {
+    -webkit-app-region: drag;
+}
+
+.merger-results-actions {
+    -webkit-app-region: no-drag;
+}
+
+.merger-results-actions,
+.merger-results-filters {
+    flex-wrap: wrap;
+}
+
+.merger-results-filters {
+    display: flex;
+    gap: 8px;
+}
+
+.merger-results-filters .button-secondary.is-active {
+    background: var(--accent-soft);
+    border-color: var(--accent-border);
+    color: var(--accent);
+}
+
+.merger-results-layout {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.2fr);
+    gap: 12px;
+}
+
+.merger-results-list-shell,
+.merger-results-detail {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
+    background: var(--bg-2);
+}
+
+.merger-results-list {
+    min-height: 0;
+    max-height: calc(100vh - 330px);
+    overflow: auto;
+    display: grid;
+    align-content: start;
+    gap: 8px;
+    padding-right: 4px;
+}
+
+.merger-results-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 58px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-3);
+    color: inherit;
+    text-align: left;
+}
+
+.merger-results-row:hover:not(:disabled),
+.merger-results-row.is-selected {
+    border-color: var(--accent-border);
+    background: color-mix(in srgb, var(--accent-soft) 34%, var(--bg-3));
+    filter: none;
+    box-shadow: none;
+}
+
+.merger-results-row-main,
+.merger-results-row-meta {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+}
+
+.merger-results-row-main strong {
+    display: block;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+}
+
+.merger-results-row-reason {
+    min-width: 0;
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.merger-results-row-meta {
+    justify-items: end;
+    min-width: 104px;
+}
+
+.merger-results-detail {
+    overflow: auto;
+    max-height: calc(100vh - 220px);
+}
+
+.merger-results-detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 10px;
+}
+
+body[data-window-view="merger-results"] {
+    overflow: hidden;
+}
+
+body[data-window-view="merger-results"] .aurora,
+body[data-window-view="merger-results"] .topbar,
+body[data-window-view="merger-results"] .workspace,
+body[data-window-view="merger-results"] .statusbar {
+    display: none !important;
+}
+
+body[data-window-view="merger-results"] .window-shell {
+    height: var(--app-vh);
+    min-height: var(--app-vh);
+    grid-template-rows: minmax(0, 1fr);
+    padding: calc(env(titlebar-area-height, 44px) + 10px) 16px 16px;
+}
+
+body[data-window-view="merger-results"] .merger-results-drag-region {
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: max(138px, calc(var(--app-vw) - env(titlebar-area-width, calc(var(--app-vw) - 138px))));
+    height: env(titlebar-area-height, 44px);
+    z-index: 120;
+    -webkit-app-region: drag;
+}
+
+body[data-window-view="merger-results"] button,
+body[data-window-view="merger-results"] input,
+body[data-window-view="merger-results"] select,
+body[data-window-view="merger-results"] textarea {
+    -webkit-app-region: no-drag;
+}
+
+body[data-window-view="merger-results"] #mergerResultsWorkspace {
+    display: grid !important;
+}
+
 .settings-card {
     padding: 18px;
     display: grid;
@@ -5076,7 +5272,9 @@ pre {
     }
 
     .merger-main,
-    .merger-detail-grid {
+    .merger-detail-grid,
+    .merger-results-layout,
+    .merger-results-detail-grid {
         grid-template-columns: 1fr;
     }
 
@@ -5173,7 +5371,9 @@ pre {
 
 @media (max-width: 1400px) {
     .merger-main,
-    .merger-detail-grid {
+    .merger-detail-grid,
+    .merger-results-layout,
+    .merger-results-detail-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -5254,6 +5454,9 @@ pre {
     .merger-toolbar,
     .merger-tree-row,
     .merger-source-row,
+    .merger-results-header,
+    .merger-results-row,
+    .merger-results-footer,
     .merger-detail-header {
         flex-direction: column;
     }
@@ -5264,7 +5467,8 @@ pre {
     }
 
     .merger-tree-row-meta,
-    .merger-source-meta {
+    .merger-source-meta,
+    .merger-results-row-meta {
         justify-items: start;
     }
 
