@@ -69,8 +69,10 @@ interface DbProfileRow {
     IsActive: number;
     CreatedAt: string | null;
     SharedProfileId?: string | null;
+    SharedProfileCreator?: string | null;
     SharedProfileRevision?: number | null;
     SharedProfileUpdatedUtc?: string | null;
+    SharedProfileOwnerToken?: string | null;
 }
 
 interface DbModRow {
@@ -151,6 +153,7 @@ interface RemoteLoadOrderResolvePayload {
 interface SharedProfilePublishPayload {
     name: string;
     creator: string;
+    ownerToken: string;
     mods: string[];
 }
 
@@ -289,6 +292,10 @@ export function getSharedProfilePublishTarget(value: string | null | undefined):
     }
 
     return { shouldCreate: false, sharedProfileId };
+}
+
+function createSharedProfileOwnerToken(): string {
+    return crypto.randomBytes(32).toString("hex");
 }
 
 function parseTags(value: string | null | undefined): string[] {
@@ -737,12 +744,20 @@ function ensureSharedProfileSyncColumns(db: Database.Database): void {
         db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileId TEXT NULL").run();
     }
 
+    if (!columns.has("SharedProfileCreator")) {
+        db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileCreator TEXT NULL").run();
+    }
+
     if (!columns.has("SharedProfileRevision")) {
         db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileRevision INTEGER NULL").run();
     }
 
     if (!columns.has("SharedProfileUpdatedUtc")) {
         db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileUpdatedUtc TEXT NULL").run();
+    }
+
+    if (!columns.has("SharedProfileOwnerToken")) {
+        db.prepare("ALTER TABLE Profiles ADD COLUMN SharedProfileOwnerToken TEXT NULL").run();
     }
 }
 
@@ -893,12 +908,15 @@ function syncDlcLoadFromDb(db: Database.Database, settingsOverride?: SettingsSna
 }
 
 function mapProfileRow(row: DbProfileRow): LibraryProfile {
+    const sharedProfileOwnerToken = row.SharedProfileOwnerToken?.trim() || "";
     return {
         id: row.Id,
         name: row.Name,
         sharedProfileId: row.SharedProfileId?.trim() || null,
+        sharedProfileCreator: row.SharedProfileCreator?.trim() || null,
         sharedProfileRevision: normalizeSharedProfileRevision(row.SharedProfileRevision),
         sharedProfileUpdatedUtc: normalizeSharedProfileUpdatedUtc(row.SharedProfileUpdatedUtc),
+        sharedProfileCanUpdate: sharedProfileOwnerToken.length > 0,
         isActive: row.IsActive === 1,
         createdAtUtc: row.CreatedAt || null
     };
@@ -1003,12 +1021,18 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
         const sharedProfileSelection = profileColumns.has("SharedProfileId")
             ? "SharedProfileId"
             : "NULL AS SharedProfileId";
+        const sharedProfileCreatorSelection = profileColumns.has("SharedProfileCreator")
+            ? "SharedProfileCreator"
+            : "NULL AS SharedProfileCreator";
         const sharedProfileRevisionSelection = profileColumns.has("SharedProfileRevision")
             ? "SharedProfileRevision"
             : "NULL AS SharedProfileRevision";
         const sharedProfileUpdatedUtcSelection = profileColumns.has("SharedProfileUpdatedUtc")
             ? "SharedProfileUpdatedUtc"
             : "NULL AS SharedProfileUpdatedUtc";
+        const sharedProfileOwnerTokenSelection = profileColumns.has("SharedProfileOwnerToken")
+            ? "SharedProfileOwnerToken"
+            : "NULL AS SharedProfileOwnerToken";
 
         const rows = db
             .prepare(
@@ -1017,8 +1041,10 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
                         IsActive,
                         CreatedAt,
                         ${sharedProfileSelection},
+                        ${sharedProfileCreatorSelection},
                         ${sharedProfileRevisionSelection},
-                        ${sharedProfileUpdatedUtcSelection}
+                        ${sharedProfileUpdatedUtcSelection},
+                        ${sharedProfileOwnerTokenSelection}
                  FROM Profiles
                  ORDER BY Name COLLATE NOCASE ASC, Id ASC`
             )
@@ -1039,8 +1065,10 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
                             IsActive,
                             CreatedAt,
                             ${sharedProfileSelection},
+                            ${sharedProfileCreatorSelection},
                             ${sharedProfileRevisionSelection},
-                            ${sharedProfileUpdatedUtcSelection}
+                            ${sharedProfileUpdatedUtcSelection},
+                            ${sharedProfileOwnerTokenSelection}
                      FROM Profiles
                      ORDER BY Name COLLATE NOCASE ASC, Id ASC`
                 )
@@ -1825,8 +1853,10 @@ export function setLibraryProfileSharedId(request: LibrarySetSharedProfileIdRequ
         db.prepare(`
             UPDATE Profiles
             SET SharedProfileId = ?,
+                SharedProfileCreator = NULL,
                 SharedProfileRevision = NULL,
-                SharedProfileUpdatedUtc = NULL
+                SharedProfileUpdatedUtc = NULL,
+                SharedProfileOwnerToken = NULL
             WHERE Id = ?
         `).run(sharedProfileId, request.profileId);
         return { ok: true, message: "Shared profile ID saved." };
@@ -1853,8 +1883,13 @@ export async function publishLibrarySharedProfile(
 
     try {
         const profile = db
-            .prepare("SELECT Id, Name, SharedProfileId FROM Profiles WHERE Id = ?")
-            .get(request.profileId) as { Id: number; Name: string; SharedProfileId?: string | null } | undefined;
+            .prepare("SELECT Id, Name, SharedProfileId, SharedProfileOwnerToken FROM Profiles WHERE Id = ?")
+            .get(request.profileId) as {
+                Id: number;
+                Name: string;
+                SharedProfileId?: string | null;
+                SharedProfileOwnerToken?: string | null;
+            } | undefined;
         if (!profile) {
             return {
                 ok: false,
@@ -1890,6 +1925,7 @@ export async function publishLibrarySharedProfile(
         }
 
         const publishTarget = getSharedProfilePublishTarget(profile.SharedProfileId ?? "");
+        const ownerToken = profile.SharedProfileOwnerToken?.trim() || createSharedProfileOwnerToken();
         const profileMods = db
             .prepare(
                 `SELECT m.${workshopColumn} AS WorkshopId
@@ -1912,6 +1948,7 @@ export async function publishLibrarySharedProfile(
         const payload: SharedProfilePublishPayload = {
             name: profile.Name?.trim() || "Shared Profile",
             creator,
+            ownerToken,
             mods
         };
         const endpoint = publishTarget.shouldCreate || !publishTarget.sharedProfileId
@@ -1964,13 +2001,17 @@ export async function publishLibrarySharedProfile(
         db.prepare(`
             UPDATE Profiles
             SET SharedProfileId = ?,
+                SharedProfileCreator = ?,
                 SharedProfileRevision = ?,
-                SharedProfileUpdatedUtc = ?
+                SharedProfileUpdatedUtc = ?,
+                SharedProfileOwnerToken = ?
             WHERE Id = ?
         `).run(
             sharedProfileId,
+            String(remoteProfile.creator ?? payload.creator).trim() || payload.creator,
             normalizeSharedProfileRevision(remoteProfile.revision),
             normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc),
+            ownerToken,
             request.profileId
         );
 
@@ -2475,6 +2516,9 @@ export async function syncLibrarySharedProfile(
         const profileName = typeof remoteProfile.name === "string" && remoteProfile.name.trim()
             ? remoteProfile.name.trim()
             : null;
+        const remoteCreator = typeof remoteProfile.creator === "string" && remoteProfile.creator.trim()
+            ? remoteProfile.creator.trim()
+            : null;
 
         if (!hasRemoteSharedProfileChanged(profile, sharedProfileId, remoteProfile)) {
             return {
@@ -2540,13 +2584,20 @@ export async function syncLibrarySharedProfile(
             db.prepare(`
                 UPDATE Profiles
                 SET SharedProfileId = ?,
+                    SharedProfileCreator = ?,
                     SharedProfileRevision = ?,
-                    SharedProfileUpdatedUtc = ?
+                    SharedProfileUpdatedUtc = ?,
+                    SharedProfileOwnerToken = CASE
+                        WHEN COALESCE(SharedProfileId, '') = ? THEN SharedProfileOwnerToken
+                        ELSE NULL
+                    END
                 WHERE Id = ?
             `).run(
                 sharedProfileId,
+                remoteCreator,
                 normalizeSharedProfileRevision(remoteProfile.revision),
                 normalizeSharedProfileUpdatedUtc(remoteProfile.updatedUtc),
+                sharedProfileId,
                 request.profileId
             );
 
@@ -3210,8 +3261,10 @@ function ensureProfilesTables(db: Database.Database): void {
             IsActive INTEGER NOT NULL DEFAULT 0,
             CreatedAt TEXT NULL,
             SharedProfileId TEXT NULL,
+            SharedProfileCreator TEXT NULL,
             SharedProfileRevision INTEGER NULL,
-            SharedProfileUpdatedUtc TEXT NULL
+            SharedProfileUpdatedUtc TEXT NULL,
+            SharedProfileOwnerToken TEXT NULL
         )`);
     }
 

@@ -51,6 +51,8 @@ test("renderer exposes a shared custom tooltip host and upgrades title attribute
 
     assert.match(html, /id="appTooltip"/);
     assert.match(renderer, /querySelectorAll\("\[title\]"\)/);
+    assert.match(renderer, /dataset\.tooltip\s*=\s*title/);
+    assert.doesNotMatch(renderer, /if\s*\(![^)]*\.dataset\.tooltip\)\s*{\s*[^}]*\.dataset\.tooltip\s*=\s*title/);
     assert.match(renderer, /removeAttribute\("title"\)/);
     assert.match(renderer, /MutationObserver/);
     assert.match(renderer, /setTimeout\(/);

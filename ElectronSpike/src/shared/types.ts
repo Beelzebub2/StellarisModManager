@@ -334,8 +334,10 @@ export interface LibraryProfile {
     id: number;
     name: string;
     sharedProfileId: string | null;
+    sharedProfileCreator: string | null;
     sharedProfileRevision: number | null;
     sharedProfileUpdatedUtc: string | null;
+    sharedProfileCanUpdate: boolean;
     isActive: boolean;
     createdAtUtc: string | null;
 }

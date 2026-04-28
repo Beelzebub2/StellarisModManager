@@ -227,9 +227,7 @@ function upgradeNativeTitlesToTooltips(root = document) {
     if (root instanceof HTMLElement && root.hasAttribute("title")) {
         const title = String(root.getAttribute("title") || "").trim();
         if (title) {
-            if (!root.dataset.tooltip) {
-                root.dataset.tooltip = title;
-            }
+            root.dataset.tooltip = title;
             if (!root.getAttribute("aria-label") && !String(root.textContent || "").trim()) {
                 root.setAttribute("aria-label", title);
             }
@@ -247,9 +245,7 @@ function upgradeNativeTitlesToTooltips(root = document) {
             continue;
         }
 
-        if (!el.dataset.tooltip) {
-            el.dataset.tooltip = title;
-        }
+        el.dataset.tooltip = title;
 
         if (!el.getAttribute("aria-label") && !String(el.textContent || "").trim()) {
             el.setAttribute("aria-label", title);
@@ -4586,6 +4582,7 @@ function renderLibraryProfiles() {
     const snapshot = state.library.snapshot;
     const select = byId("libraryProfileSelect");
     const sharedValue = byId("librarySharedProfileValue");
+    const sharedOwnership = byId("librarySharedProfileOwnership");
     if (!snapshot || !select) return;
 
     select.innerHTML = snapshot.profiles
@@ -4594,13 +4591,29 @@ function renderLibraryProfiles() {
 
     const active = getActiveLibraryProfile();
     const currentSharedId = (active?.sharedProfileId || "").trim();
+    const sharedProfileCreator = String(active?.sharedProfileCreator || "").trim();
+    const canUpdateSharedProfile = active?.sharedProfileCanUpdate === true;
     if (sharedValue) {
+        const sharedValueTitle = currentSharedId || "No shared profile ID set";
         sharedValue.textContent = currentSharedId || "No shared profile ID set";
         sharedValue.classList.toggle("is-empty", !currentSharedId);
-        if (currentSharedId) {
-            sharedValue.title = currentSharedId;
+        sharedValue.title = sharedValueTitle;
+        sharedValue.dataset.tooltip = sharedValueTitle;
+    }
+
+    if (sharedOwnership) {
+        if (!active) {
+            sharedOwnership.textContent = "No active profile";
+        } else if (!currentSharedId) {
+            sharedOwnership.textContent = "Not shared yet";
+        } else if (canUpdateSharedProfile) {
+            sharedOwnership.textContent = sharedProfileCreator
+                ? `Owned by you as ${sharedProfileCreator}`
+                : "Owned by you";
         } else {
-            sharedValue.title = "No shared profile ID set";
+            sharedOwnership.textContent = sharedProfileCreator
+                ? `Owned by ${sharedProfileCreator}`
+                : "Owned by another creator";
         }
     }
 
@@ -4613,11 +4626,21 @@ function renderLibraryProfiles() {
     }
 
     const updateButton = byId("libraryUpdateSharedProfile");
+    const updateButtonLabel = byId("libraryUpdateSharedProfileLabel");
     if (updateButton) {
-        updateButton.disabled = !active;
-        updateButton.title = currentSharedId
-            ? "Send this profile's current enabled mods and load order to Stellarisync"
-            : "Publish this profile to Stellarisync and create a shared profile ID";
+        const updateTitle = !active
+            ? "No active profile"
+            : currentSharedId && !canUpdateSharedProfile
+                ? "Only the profile creator can update this shared profile."
+                : currentSharedId
+                    ? "Send this profile's current enabled mods and load order to Stellarisync"
+                    : "Publish this profile to Stellarisync and create a shared profile ID";
+        updateButton.disabled = !active || (Boolean(currentSharedId) && !canUpdateSharedProfile);
+        updateButton.title = updateTitle;
+        updateButton.dataset.tooltip = updateTitle;
+    }
+    if (updateButtonLabel) {
+        updateButtonLabel.textContent = currentSharedId ? "Update" : "Publish";
     }
 
     const shareButton = byId("libraryShareProfile");

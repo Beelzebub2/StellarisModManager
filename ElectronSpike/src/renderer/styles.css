@@ -2771,6 +2771,12 @@ button:disabled {
     color: var(--text-3);
 }
 
+.library-shared-ownership {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
 .library-menu {
     position: relative;
 }

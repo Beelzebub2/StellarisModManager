@@ -96,14 +96,24 @@ async function run() {
             body: {
                 name: "MP Saturday",
                 creator: "TestPilot",
+                ownerToken: fetchCalls[0].body.ownerToken,
                 mods: ["123456789"]
             }
         }]);
+        assert.match(fetchCalls[0].body.ownerToken, /^[a-f0-9]{64}$/);
 
         const updatedDb = new Database(path.join(productDir, "mods.db"), { readonly: true });
-        const savedId = updatedDb.prepare("SELECT SharedProfileId FROM Profiles WHERE Id = 1").get();
+        const savedId = updatedDb.prepare(`
+            SELECT SharedProfileId, SharedProfileCreator, SharedProfileOwnerToken
+            FROM Profiles
+            WHERE Id = 1
+        `).get();
         updatedDb.close();
-        assert.deepEqual(savedId, { SharedProfileId: "1234567890abcdef1234567890abcdef" });
+        assert.deepEqual(savedId, {
+            SharedProfileId: "1234567890abcdef1234567890abcdef",
+            SharedProfileCreator: "TestPilot",
+            SharedProfileOwnerToken: fetchCalls[0].body.ownerToken
+        });
 
         process.exitCode = 0;
     } finally {
