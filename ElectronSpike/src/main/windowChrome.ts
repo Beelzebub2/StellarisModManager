@@ -12,9 +12,9 @@ const TITLE_BAR_OVERLAY_BY_THEME: Record<string, { color: string; symbolColor: s
     "Obsidian Ember": { color: "#111722", symbolColor: "#e2e8f0" },
     "Graphite Moss": { color: "#17201d", symbolColor: "#e8f2ea" },
     "Nocturne Slate": { color: "#141b2c", symbolColor: "#e8ecfb" },
-    "Starlight White": { color: "#eef4fb", symbolColor: "#0f172a" },
-    "Ivory White": { color: "#f7efe2", symbolColor: "#1f2937" },
-    "Frost White": { color: "#edf5ff", symbolColor: "#0f172a" }
+    "Starlight White": { color: "#060b14", symbolColor: "#e8ecfb" },
+    "Ivory White": { color: "#090c10", symbolColor: "#e8ecfb" },
+    "Frost White": { color: "#061018", symbolColor: "#e8ecfb" }
 };
 
 export function normalizeThemePaletteName(value: string | undefined): string {

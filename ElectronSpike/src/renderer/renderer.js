@@ -128,12 +128,6 @@ const THEME_PALETTE_TO_KEY = Object.freeze({
     "Frost White": "frost-white"
 });
 
-const LIGHT_THEME_PALETTES = new Set([
-    "Starlight White",
-    "Ivory White",
-    "Frost White"
-]);
-
 const ICON_PATHS = Object.freeze({
     versions: '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
     library: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
@@ -547,34 +541,23 @@ function normalizeThemePaletteName(value) {
 }
 
 function buildThemePaletteOptionsMarkup(palettes) {
-    const dark = [];
-    const light = [];
+    const variants = [];
 
     for (const palette of palettes || []) {
-        const normalized = normalizeThemePaletteName(palette);
-        if (LIGHT_THEME_PALETTES.has(normalized)) {
-            light.push(normalized);
-        } else {
-            dark.push(normalized);
-        }
+        variants.push(normalizeThemePaletteName(palette));
     }
 
-    const uniqueDark = [...new Set(dark)];
-    const uniqueLight = [...new Set(light)];
+    const uniqueVariants = [...new Set(variants)];
 
     const renderOptions = (items) => items
         .map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`)
         .join("");
 
-    const chunks = [];
-    if (uniqueDark.length > 0) {
-        chunks.push(`<optgroup label="Dark Themes">${renderOptions(uniqueDark)}</optgroup>`);
-    }
-    if (uniqueLight.length > 0) {
-        chunks.push(`<optgroup label="Light Themes">${renderOptions(uniqueLight)}</optgroup>`);
+    if (uniqueVariants.length === 0) {
+        return "";
     }
 
-    return chunks.join("");
+    return `<optgroup label="Dark Glass Themes">${renderOptions(uniqueVariants)}</optgroup>`;
 }
 
 function applyThemePalette(paletteName) {
