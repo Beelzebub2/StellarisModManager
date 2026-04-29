@@ -3,9 +3,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { readRendererShellSource } = require("./helpers/renderer-shell-source");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 
-const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
+const resultsWindowPath = path.join(__dirname, "..", "src", "main", "services", "modMerger", "resultsWindow.ts");
+const preloadPath = path.join(__dirname, "..", "src", "preload.ts");
+const ipcPath = path.join(__dirname, "..", "src", "main", "ipc.ts");
+const typesPath = path.join(__dirname, "..", "src", "shared", "types.ts");
 
 test("merger results window shell exposes filters, list, detail, and actions", () => {
     const html = readRendererShellSource();
@@ -28,7 +32,7 @@ test("merger results window shell exposes filters, list, detail, and actions", (
 });
 
 test("renderer has a dedicated merger results window initialization path", () => {
-    const js = fs.readFileSync(rendererJsPath, "utf8");
+    const js = readRendererRuntimeSource();
 
     assert.match(js, /getWindowView\(\)/);
     assert.match(js, /view"\)\s*\|\|\s*"main"/);
@@ -41,6 +45,46 @@ test("renderer has a dedicated merger results window initialization path", () =>
     assert.match(js, /resultsFilter:\s*"needs-action"/);
     assert.match(js, /case "needs-action"/);
     assert.match(js, /class="merger-results-row-reason"/);
+});
+
+test("merger results window loads the built Vite renderer before source files", () => {
+    const source = fs.readFileSync(resultsWindowPath, "utf8");
+    const distIndex = source.indexOf('"dist", "renderer", "index.html"');
+    const sourceIndex = source.indexOf('"src", "renderer", "index.html"');
+
+    assert.ok(distIndex >= 0, "dist renderer candidate should exist");
+    assert.ok(sourceIndex >= 0, "source renderer fallback should exist");
+    assert.ok(distIndex < sourceIndex, "dist renderer must be preferred so file:// windows do not load main.tsx directly");
+    assert.match(source, /resultsWindow\.webContents\.on\("console-message"/);
+});
+
+test("merger results exposes simple review and advanced code-level inspection modes", () => {
+    const html = readRendererShellSource();
+    const js = readRendererRuntimeSource();
+    const css = fs.readFileSync(stylesPath, "utf8");
+    const preload = fs.readFileSync(preloadPath, "utf8");
+    const ipc = fs.readFileSync(ipcPath, "utf8");
+    const types = fs.readFileSync(typesPath, "utf8");
+
+    assert.match(html, /data-merger-results-mode="review"/);
+    assert.match(html, /data-merger-results-mode="advanced"/);
+    assert.match(html, /id="mergerResultsMetricNeedsAction"/);
+    assert.match(html, /id="mergerResultsMetricHandled"/);
+
+    assert.match(js, /resultsMode:\s*"review"/);
+    assert.match(js, /function renderMergerResultsAdvancedPanel/);
+    assert.match(js, /merger-advanced-code-panel/);
+    assert.match(js, /modMergerReadFilePreview/);
+    assert.match(js, /data-merger-preview-mod-id/);
+
+    assert.match(preload, /modMergerReadFilePreview/);
+    assert.match(ipc, /modMergerReadFilePreview/);
+    assert.match(types, /interface ModMergerReadFilePreviewRequest/);
+    assert.match(types, /interface ModMergerReadFilePreviewResult/);
+
+    assert.match(css, /\.merger-results-mode-toggle/);
+    assert.match(css, /\.merger-advanced-code-panel/);
+    assert.match(css, /\.merger-code-viewer/);
 });
 
 test("results window css hides the main app chrome and expands the workspace", () => {

@@ -5,8 +5,8 @@ const os = require("node:os");
 const path = require("node:path");
 
 const library = require("../dist/main/services/library.js");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 
-const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesCssPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 
 test("library service evaluates achievement compatibility using checksum-folder content", () => {
@@ -42,7 +42,7 @@ test("library service evaluates achievement compatibility using checksum-folder 
 });
 
 test("library rows render an achievement compatibility indicator", () => {
-    const renderer = fs.readFileSync(rendererJsPath, "utf8");
+    const renderer = readRendererRuntimeSource();
     const styles = fs.readFileSync(stylesCssPath, "utf8");
 
     assert.match(renderer, /mod\.achievementStatus/);
@@ -53,7 +53,7 @@ test("library rows render an achievement compatibility indicator", () => {
 });
 
 test("restart warning is skipped when the setting is disabled", () => {
-    const renderer = fs.readFileSync(rendererJsPath, "utf8");
+    const renderer = readRendererRuntimeSource();
 
     assert.match(renderer, /warnBeforeRestartGame/);
     assert.match(renderer, /state\.settingsModel\?\.warnBeforeRestartGame\s*!==\s*false/);

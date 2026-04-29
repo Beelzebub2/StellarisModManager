@@ -2,14 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 const { readRendererShellSource } = require("./helpers/renderer-shell-source");
 
-const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
 const stylesPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 
 test("merger page lets conflict lists grow downward up to a max height before scrolling", () => {
     const html = readRendererShellSource();
-    const js = fs.readFileSync(rendererJsPath, "utf8");
+    const js = readRendererRuntimeSource();
     const css = fs.readFileSync(stylesPath, "utf8");
 
     assert.match(html, /id="pageMerger" class(Name)?="page-section page-section-merger hidden"/);
