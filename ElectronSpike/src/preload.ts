@@ -50,6 +50,8 @@ import type {
     ModMergerApplyAutoRequest,
     ModMergerApplyAutoResult,
     ModMergerOpenResultsResult,
+    ModMergerReadFilePreviewRequest,
+    ModMergerReadFilePreviewResult,
     VersionBrowserQuery,
     VersionBrowserResult,
     VersionModDetail,
@@ -160,6 +162,8 @@ const api: SpikeApi = {
         ipcRenderer.invoke("spike:modMergerApplyAuto", request) as Promise<ModMergerApplyAutoResult>,
     modMergerOpenResults: () =>
         ipcRenderer.invoke("spike:modMergerOpenResults") as Promise<ModMergerOpenResultsResult>,
+    modMergerReadFilePreview: (request: ModMergerReadFilePreviewRequest) =>
+        ipcRenderer.invoke("spike:modMergerReadFilePreview", request) as Promise<ModMergerReadFilePreviewResult>,
     modMergerBuild: (request?: ModMergerBuildRequest) =>
         ipcRenderer.invoke("spike:modMergerBuild", request) as Promise<ModMergerBuildResult>,
     modMergerExportReport: () =>

@@ -13,3 +13,12 @@ test("library menu triggers clip and reserve caret space so hover states do not 
     assert.match(css, /\.library-menu-caret\s*\{[\s\S]*width:\s*12px;/);
     assert.match(css, /\.library-menu-caret\s*\{[\s\S]*height:\s*12px;/);
 });
+
+test("shared profile action menu aligns with the shared id value field", () => {
+    const css = fs.readFileSync(stylesPath, "utf8");
+
+    assert.match(css, /\.library-profile-row-shared\s*\{[^}]*align-items:\s*start;/);
+    assert.match(css, /\.library-profile-row-shared\s+\.library-profile-actions\s*\{[^}]*align-self:\s*start;/);
+    assert.match(css, /\.library-profile-row-shared\s+\.library-profile-actions\s*\{[^}]*margin-top:\s*18px;/);
+    assert.match(css, /@media \(max-height:\s*760px\)[\s\S]*\.library-profile-row-shared\s+\.library-profile-actions\s*\{[\s\S]*margin-top:\s*0;/);
+});

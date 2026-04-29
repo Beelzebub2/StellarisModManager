@@ -13,6 +13,8 @@ import type {
     ModMergerBuildRequest,
     ModMergerBuildResult,
     ModMergerExportReportResult,
+    ModMergerReadFilePreviewRequest,
+    ModMergerReadFilePreviewResult,
     ModMergerResolutionResult,
     ModMergerSetResolutionRequest,
     ModMergerSummary
@@ -50,6 +52,7 @@ interface DbProfileRow {
 }
 
 let currentPlan: MergePlan | null = null;
+const MAX_MERGER_FILE_PREVIEW_BYTES = 256 * 1024;
 
 function buildEmptySummary(): ModMergerSummary {
     return {
@@ -675,8 +678,147 @@ export async function modMergerAnalyze(request?: ModMergerAnalyzeRequest): Promi
     }
 }
 
+function buildFilePreviewFailure(
+    request: ModMergerReadFilePreviewRequest,
+    message: string
+): ModMergerReadFilePreviewResult {
+    return {
+        ok: false,
+        message,
+        virtualPath: String(request?.virtualPath ?? ""),
+        modId: request?.modId ?? null,
+        modName: null,
+        sourcePath: null,
+        sizeBytes: 0,
+        truncated: false,
+        content: null
+    };
+}
+
+async function readTextPreview(filePath: string): Promise<{
+    content: string | null;
+    sizeBytes: number;
+    truncated: boolean;
+    message: string;
+}> {
+    const stat = await fsp.stat(filePath);
+    if (!stat.isFile()) {
+        return {
+            content: null,
+            sizeBytes: stat.size,
+            truncated: false,
+            message: "This source is not a regular file."
+        };
+    }
+
+    const bytesToRead = Math.min(stat.size, MAX_MERGER_FILE_PREVIEW_BYTES);
+    const buffer = Buffer.alloc(bytesToRead);
+    const handle = await fsp.open(filePath, "r");
+    try {
+        await handle.read(buffer, 0, bytesToRead, 0);
+    } finally {
+        await handle.close();
+    }
+
+    if (buffer.includes(0)) {
+        return {
+            content: null,
+            sizeBytes: stat.size,
+            truncated: stat.size > MAX_MERGER_FILE_PREVIEW_BYTES,
+            message: "Binary file preview is unavailable."
+        };
+    }
+
+    return {
+        content: buffer.toString("utf8"),
+        sizeBytes: stat.size,
+        truncated: stat.size > MAX_MERGER_FILE_PREVIEW_BYTES,
+        message: stat.size > MAX_MERGER_FILE_PREVIEW_BYTES
+            ? "Preview is truncated to the first 256 KiB."
+            : "Preview loaded."
+    };
+}
+
 export function modMergerGetPlan(): MergePlan | null {
     return currentPlan;
+}
+
+async function readFilePreviewFromPlan(
+    plan: MergePlan,
+    request: ModMergerReadFilePreviewRequest
+): Promise<ModMergerReadFilePreviewResult> {
+    const virtualPath = String(request?.virtualPath ?? "").trim();
+    const filePlan = plan.filePlans.find((candidate) => candidate.virtualPath === virtualPath);
+    if (!filePlan) {
+        return buildFilePreviewFailure(request, `Could not find merge entry for ${virtualPath || "the selected file"}.`);
+    }
+
+    const requestedModId = request.modId ?? null;
+    const entry = requestedModId !== null && requestedModId !== undefined
+        ? filePlan.entries.find((candidate) => candidate.modId === requestedModId)
+        : filePlan.winner || filePlan.entries[0];
+    if (!entry) {
+        return buildFilePreviewFailure(request, "No source file is available for this merge entry.");
+    }
+
+    if (!entry.realPath || !fs.existsSync(entry.realPath)) {
+        return {
+            ok: false,
+            message: "Source file is missing. Re-run the merger scan.",
+            virtualPath: filePlan.virtualPath,
+            modId: entry.modId,
+            modName: entry.modName,
+            sourcePath: entry.realPath || null,
+            sizeBytes: 0,
+            truncated: false,
+            content: null
+        };
+    }
+
+    try {
+        const preview = await readTextPreview(entry.realPath);
+        return {
+            ok: preview.content !== null,
+            message: preview.message,
+            virtualPath: filePlan.virtualPath,
+            modId: entry.modId,
+            modName: entry.modName,
+            sourcePath: entry.realPath,
+            sizeBytes: preview.sizeBytes,
+            truncated: preview.truncated,
+            content: preview.content
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not read source preview.";
+        return {
+            ok: false,
+            message,
+            virtualPath: filePlan.virtualPath,
+            modId: entry.modId,
+            modName: entry.modName,
+            sourcePath: entry.realPath,
+            sizeBytes: 0,
+            truncated: false,
+            content: null
+        };
+    }
+}
+
+export async function readModMergerFilePreviewForTest(
+    plan: MergePlan,
+    request: ModMergerReadFilePreviewRequest
+): Promise<ModMergerReadFilePreviewResult> {
+    return readFilePreviewFromPlan(plan, request);
+}
+
+export async function modMergerReadFilePreview(
+    request: ModMergerReadFilePreviewRequest
+): Promise<ModMergerReadFilePreviewResult> {
+    if (!currentPlan) {
+        return buildFilePreviewFailure(request, "No merge plan is loaded.");
+    }
+
+    return readFilePreviewFromPlan(currentPlan, request);
 }
 
 export function modMergerSetResolution(request: ModMergerSetResolutionRequest): ModMergerResolutionResult {

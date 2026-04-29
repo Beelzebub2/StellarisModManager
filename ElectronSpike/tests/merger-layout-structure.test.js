@@ -1,10 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const { readRendererShellSource } = require("./helpers/renderer-shell-source");
-
-const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 
 test("sidebar order includes the merger workspace between Library and Workshop", () => {
     const html = readRendererShellSource();
@@ -45,7 +42,7 @@ test("merger page exposes the first milestone controls and status regions", () =
 });
 
 test("renderer tab wiring includes the merger workspace and status mapping", () => {
-    const js = fs.readFileSync(rendererJsPath, "utf8");
+    const js = readRendererRuntimeSource();
 
     assert.match(js, /selectedTab:\s*"version"/);
     assert.match(js, /merger:\s*"tabMerger"/);

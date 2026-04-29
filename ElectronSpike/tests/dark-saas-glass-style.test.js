@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 
 const stylesPath = path.join(__dirname, "..", "src", "renderer", "styles.css");
 
@@ -55,8 +56,7 @@ test("white palette variants keep bright polished glass surfaces", () => {
 });
 
 test("theme selector separates dark and white palettes", () => {
-    const rendererPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
-    const source = fs.readFileSync(rendererPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(source, /LIGHT_THEME_PALETTES/);
     assert.match(source, /Dark Themes/);

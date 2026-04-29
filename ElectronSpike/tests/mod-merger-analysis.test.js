@@ -78,3 +78,59 @@ test("analysis detects file conflicts, safe duplicates, and deterministic winner
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
 });
+
+test("file preview reads the selected merger source without exposing arbitrary paths", async () => {
+    assert.equal(typeof modMerger.analyzeModMergerSourcesForTest, "function");
+    assert.equal(typeof modMerger.readModMergerFilePreviewForTest, "function");
+
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "smm-mod-merger-preview-"));
+    const descriptorRoot = path.join(tempRoot, "Documents", "Paradox Interactive", "Stellaris", "mod");
+    const outputRoot = path.join(tempRoot, "Documents", "Paradox Interactive", "Stellaris", "mods-merged");
+    const modAPath = path.join(tempRoot, "mods", "mod-a");
+    const modBPath = path.join(tempRoot, "mods", "mod-b");
+
+    writeFile(modAPath, "common/script_values/alpha.txt", "value_a = 1\n");
+    writeFile(modBPath, "common/script_values/alpha.txt", "value_b = 2\n");
+
+    try {
+        const result = await modMerger.analyzeModMergerSourcesForTest({
+            profileId: 9,
+            profileName: "Preview",
+            sourceMods: [
+                buildSourceMod(21, "Mod A", 0, modAPath),
+                buildSourceMod(22, "Mod B", 1, modBPath)
+            ],
+            descriptorRoot,
+            outputRoot,
+            outputModName: "SMM Merged Mod",
+            gameVersion: "4.3.2"
+        });
+
+        const preview = await modMerger.readModMergerFilePreviewForTest(result.plan, {
+            virtualPath: "common/script_values/alpha.txt",
+            modId: 21
+        });
+        assert.equal(preview.ok, true);
+        assert.equal(preview.modName, "Mod A");
+        assert.equal(preview.content, "value_a = 1\n");
+        assert.equal(preview.truncated, false);
+        assert.ok(preview.sourcePath.startsWith(modAPath));
+
+        const winnerPreview = await modMerger.readModMergerFilePreviewForTest(result.plan, {
+            virtualPath: "common/script_values/alpha.txt"
+        });
+        assert.equal(winnerPreview.ok, true);
+        assert.equal(winnerPreview.modId, 22);
+        assert.equal(winnerPreview.content, "value_b = 2\n");
+
+        const missing = await modMerger.readModMergerFilePreviewForTest(result.plan, {
+            virtualPath: path.join(tempRoot, "outside.txt"),
+            modId: 21
+        });
+        assert.equal(missing.ok, false);
+        assert.equal(missing.sourcePath, null);
+        assert.match(missing.message, /Could not find merge entry/);
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});

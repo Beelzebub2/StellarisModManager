@@ -1,10 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
 const { readRendererShellSource } = require("./helpers/renderer-shell-source");
-
-const rendererJsPath = path.join(__dirname, "..", "src", "renderer", "renderer.js");
+const { readRendererRuntimeSource } = require("./helpers/renderer-runtime-source");
 
 test("settings expose an explicit browse button for the mods path", () => {
     const html = readRendererShellSource();
@@ -14,7 +11,7 @@ test("settings expose an explicit browse button for the mods path", () => {
 
 test("settings expose a separate managed mods folder input", () => {
     const html = readRendererShellSource();
-    const source = fs.readFileSync(rendererJsPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(html, /id="settingsManagedModsPathInput"/);
     assert.match(html, /Managed mods folder/i);
@@ -23,7 +20,7 @@ test("settings expose a separate managed mods folder input", () => {
 });
 
 test("renderer defines a three-way modal for mods-path migration", () => {
-    const source = fs.readFileSync(rendererJsPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(source, /function showChoiceModal/);
     assert.match(source, /Change managed mods folder/i);
@@ -31,7 +28,7 @@ test("renderer defines a three-way modal for mods-path migration", () => {
 });
 
 test("renderer exposes a backgroundable progress popup and launch lock for mods-path migration", () => {
-    const source = fs.readFileSync(rendererJsPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(source, /modsPathMigration:\s*\{/);
     assert.match(source, /Run in background/i);
@@ -41,7 +38,7 @@ test("renderer exposes a backgroundable progress popup and launch lock for mods-
 });
 
 test("renderer shows the current mod and percent complete during mods-path migration", () => {
-    const source = fs.readFileSync(rendererJsPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(source, /currentModName/);
     assert.match(source, /progressPercent/);
@@ -51,7 +48,7 @@ test("renderer shows the current mod and percent complete during mods-path migra
 
 test("settings render a top-right mods-path migration notice that reopens the popup", () => {
     const html = readRendererShellSource();
-    const source = fs.readFileSync(rendererJsPath, "utf8");
+    const source = readRendererRuntimeSource();
 
     assert.match(html, /id="modsPathMigrationNotice"/);
     assert.match(source, /function renderModsPathMigrationBackgroundNotice/);

@@ -20,6 +20,7 @@ import type {
     ModMergerAnalyzeRequest,
     ModMergerBuildRequest,
     ModMergerProgressStatus,
+    ModMergerReadFilePreviewRequest,
     ModMergerSetResolutionRequest,
     ModsPathMigrationRequest,
     ModsPathMigrationStatus,
@@ -68,6 +69,7 @@ import {
     modMergerBuild,
     modMergerExportReport,
     modMergerGetPlan,
+    modMergerReadFilePreview,
     modMergerSetResolution
 } from "./services/modMerger";
 import { openModMergerResultsWindow } from "./services/modMerger/resultsWindow";
@@ -159,6 +161,7 @@ const CHANNELS = {
     modMergerSetResolution: "spike:modMergerSetResolution",
     modMergerApplyAuto: "spike:modMergerApplyAuto",
     modMergerOpenResults: "spike:modMergerOpenResults",
+    modMergerReadFilePreview: "spike:modMergerReadFilePreview",
     modMergerBuild: "spike:modMergerBuild",
     modMergerExportReport: "spike:modMergerExportReport",
     steamDiscovery: "spike:getSteamDiscoverySummary",
@@ -412,6 +415,7 @@ export function registerIpcHandlers(): void {
     ipcMain.removeHandler(CHANNELS.modMergerSetResolution);
     ipcMain.removeHandler(CHANNELS.modMergerApplyAuto);
     ipcMain.removeHandler(CHANNELS.modMergerOpenResults);
+    ipcMain.removeHandler(CHANNELS.modMergerReadFilePreview);
     ipcMain.removeHandler(CHANNELS.modMergerBuild);
     ipcMain.removeHandler(CHANNELS.modMergerExportReport);
     ipcMain.removeHandler(CHANNELS.steamDiscovery);
@@ -695,6 +699,10 @@ export function registerIpcHandlers(): void {
 
     ipcMain.handle(CHANNELS.modMergerOpenResults, async () => {
         return openModMergerResultsWindow();
+    });
+
+    ipcMain.handle(CHANNELS.modMergerReadFilePreview, async (_event, request: ModMergerReadFilePreviewRequest) => {
+        return modMergerReadFilePreview(request);
     });
 
     ipcMain.handle(CHANNELS.modMergerBuild, async (_event, request?: ModMergerBuildRequest) => {

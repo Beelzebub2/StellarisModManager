@@ -684,6 +684,23 @@ export interface ModMergerOpenResultsResult {
     message: string;
 }
 
+export interface ModMergerReadFilePreviewRequest {
+    virtualPath: string;
+    modId?: number | null;
+}
+
+export interface ModMergerReadFilePreviewResult {
+    ok: boolean;
+    message: string;
+    virtualPath: string;
+    modId: number | null;
+    modName: string | null;
+    sourcePath: string | null;
+    sizeBytes: number;
+    truncated: boolean;
+    content: string | null;
+}
+
 export interface ModMergerBuildRequest {
     outputModName?: string;
     cleanOutputFolder?: boolean;
@@ -838,6 +855,7 @@ export interface SpikeApi {
     modMergerSetResolution: (request: ModMergerSetResolutionRequest) => Promise<ModMergerResolutionResult>;
     modMergerApplyAuto: (request?: ModMergerApplyAutoRequest) => Promise<ModMergerApplyAutoResult>;
     modMergerOpenResults: () => Promise<ModMergerOpenResultsResult>;
+    modMergerReadFilePreview: (request: ModMergerReadFilePreviewRequest) => Promise<ModMergerReadFilePreviewResult>;
     modMergerBuild: (request?: ModMergerBuildRequest) => Promise<ModMergerBuildResult>;
     modMergerExportReport: () => Promise<ModMergerExportReportResult>;
     getSteamDiscoverySummary: () => Promise<SteamDiscoverySummary>;
