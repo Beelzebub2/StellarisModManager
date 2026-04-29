@@ -352,6 +352,7 @@ export interface LibraryModItem {
     loadOrder: number;
     installedAtUtc: string | null;
     lastUpdatedAtUtc: string | null;
+    workshopUpdatedAtUtc: string | null;
     installedPath: string;
     descriptorPath: string;
     totalSubscribers: number;

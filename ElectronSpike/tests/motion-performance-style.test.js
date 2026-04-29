@@ -102,3 +102,15 @@ test("ambient background stays static instead of continuously animating the full
     assert.doesNotMatch(blockForSelector(css, ".aurora-one"), /animation\s*:/);
     assert.doesNotMatch(blockForSelector(css, ".aurora-two"), /animation\s*:/);
 });
+
+test("library vote display updates immediately instead of feeling sluggish", () => {
+    const css = readCss();
+    const worksBar = blockForSelector(css, ".consensus-bar-works");
+    const brokenBar = blockForSelector(css, ".consensus-bar-broken");
+    const voteButton = blockForSelector(css, ".vote-btn");
+
+    assert.match(worksBar, /transition:\s*none;/);
+    assert.match(brokenBar, /transition:\s*none;/);
+    assert.doesNotMatch(voteButton, /var\(--dur-base\)|var\(--dur-slow\)|\b1\d{2,}ms\b|\d+s\b/);
+    assert.match(voteButton, /60ms/);
+});

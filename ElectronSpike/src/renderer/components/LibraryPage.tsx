@@ -159,7 +159,7 @@ export function LibraryPage(): ReactElement {
                                                     <p className="settings-key">Game Version</p>
                                                     <p id="libraryDetailGameVersion" className="settings-value">-</p>
                                                     <p className="settings-key">Last Updated</p>
-                                                    <p id="libraryDetailInstalledAt" className="settings-value">-</p>
+                                                    <p id="libraryDetailLastUpdated" className="settings-value">-</p>
                                                 </div>
                                             </div>
             

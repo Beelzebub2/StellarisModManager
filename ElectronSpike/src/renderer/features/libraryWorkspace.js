@@ -1,4 +1,4 @@
-import { byId, escapeHtml, formatInteger, formatUtc, setText, toDisplayValue } from "../runtime/dom.js";
+import { byId, escapeHtml, formatHumanDateTime, formatInteger, setText, toDisplayValue } from "../runtime/dom.js";
 import { iconSvg } from "../runtime/icons.js";
 import { showChoiceModal, showModal, showPrompt } from "../runtime/modal.js";
 import { getDefaultSettingsModel } from "../runtime/settingsModel.js";
@@ -715,7 +715,7 @@ export function createLibraryWorkspaceController({
         setText("libraryDetailWorkshopId", mod.workshopId || "Ã¢â‚¬â€");
         setText("libraryDetailVersion", toDisplayValue(mod.version));
         setText("libraryDetailGameVersion", toDisplayValue(mod.gameVersion));
-        setText("libraryDetailInstalledAt", formatUtc(mod.lastUpdatedAtUtc || mod.installedAtUtc));
+        setText("libraryDetailLastUpdated", formatHumanDateTime(mod.workshopUpdatedAtUtc, "Unknown"));
 
         // Subscriber chip
         const subChip = byId("libraryDetailSubscribersChip");

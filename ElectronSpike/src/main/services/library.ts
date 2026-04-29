@@ -86,6 +86,7 @@ interface DbModRow {
     LoadOrder: number;
     InstalledAt: string | null;
     LastUpdatedAt: string | null;
+    WorkshopUpdatedAt?: string | null;
     TotalSubscribers?: number | null;
     IsMultiplayerSafe?: number | null;
     Tags?: string | null;
@@ -626,6 +627,28 @@ function normalizeDetectedGameVersion(rawVersion: string | null | undefined): st
     return `${match[1]}.${match[2]}`;
 }
 
+function normalizeSteamWorkshopUpdatedAt(value: unknown): string | null {
+    if (value === null || value === undefined) {
+        return null;
+    }
+
+    const raw = typeof value === "number"
+        ? value
+        : Number.parseFloat(String(value).trim());
+
+    if (!Number.isFinite(raw) || raw <= 0) {
+        return null;
+    }
+
+    const timestampMs = raw > 10_000_000_000 ? raw : raw * 1000;
+    const date = new Date(timestampMs);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+export function normalizeSteamWorkshopUpdatedAtForTest(value: unknown): string | null {
+    return normalizeSteamWorkshopUpdatedAt(value);
+}
+
 
 function openDb(): Database.Database | null {
     const dbPath = getLegacyPaths().modsDbPath;
@@ -939,6 +962,7 @@ function mapModRow(row: DbModRow, defaultGameVersion: string | null): LibraryMod
         loadOrder: Number(row.LoadOrder) || 0,
         installedAtUtc: row.InstalledAt || null,
         lastUpdatedAtUtc: row.LastUpdatedAt || null,
+        workshopUpdatedAtUtc: row.WorkshopUpdatedAt || null,
         installedPath: row.InstalledPath,
         descriptorPath: row.DescriptorPath,
         totalSubscribers: Number(row.TotalSubscribers ?? 0) || 0,
@@ -992,7 +1016,8 @@ function readLibrarySnapshot(db: Database.Database): LibrarySnapshot {
         modColumns.has("Tags") ? ", Tags" : ", NULL AS Tags",
         modColumns.has("Description") ? ", Description" : ", NULL AS Description",
         modColumns.has("ThumbnailUrl") ? ", ThumbnailUrl" : ", NULL AS ThumbnailUrl",
-        modColumns.has("GameVersion") ? ", GameVersion" : ", NULL AS GameVersion"
+        modColumns.has("GameVersion") ? ", GameVersion" : ", NULL AS GameVersion",
+        modColumns.has("WorkshopUpdatedAt") ? ", WorkshopUpdatedAt" : ", NULL AS WorkshopUpdatedAt"
     ].join("");
 
     const modRows = db
@@ -1134,6 +1159,7 @@ function ensureProfileExists(db: Database.Database): void {
 
 function ensureLibrarySchema(db: Database.Database): void {
     ensureModsTable(db);
+    ensureModsMetadataColumns(db);
     ensureProfilesTables(db);
     ensureSharedProfileSyncColumns(db);
     ensureProfileExists(db);
@@ -2819,15 +2845,27 @@ export async function checkLibraryUpdates(): Promise<LibraryActionResult> {
 
         const hasThumbnailCol = modColumns.has("ThumbnailUrl");
         const hasSubscribersCol = modColumns.has("TotalSubscribers");
+        const hasWorkshopUpdatedCol = modColumns.has("WorkshopUpdatedAt");
 
-        const enrichStmt = db.prepare(
-            `UPDATE Mods
-             SET TotalSubscribers = COALESCE(?, TotalSubscribers)
-                 ${hasThumbnailCol ? ", ThumbnailUrl = COALESCE(NULLIF(?, ''), ThumbnailUrl)" : ""}
-             WHERE ${workshopColumn} = ?`
-        );
+        const enrichAssignments = [
+            hasSubscribersCol ? "TotalSubscribers = COALESCE(?, TotalSubscribers)" : "",
+            hasThumbnailCol ? "ThumbnailUrl = COALESCE(NULLIF(?, ''), ThumbnailUrl)" : "",
+            hasWorkshopUpdatedCol ? "WorkshopUpdatedAt = COALESCE(?, WorkshopUpdatedAt)" : ""
+        ].filter((entry) => entry.length > 0);
+
+        const enrichStmt = enrichAssignments.length > 0
+            ? db.prepare(
+                `UPDATE Mods
+                 SET ${enrichAssignments.join(", ")}
+                 WHERE ${workshopColumn} = ?`
+            )
+            : null;
 
         const enrichTx = db.transaction(() => {
+            if (!enrichStmt) {
+                return;
+            }
+
             for (const workshopId of workshopIds) {
                 const detail = details.get(workshopId);
                 if (!detail) continue;
@@ -2837,21 +2875,29 @@ export async function checkLibraryUpdates(): Promise<LibraryActionResult> {
                 const thumbValue = hasThumbnailCol
                     ? (detail.preview_url?.trim() || null)
                     : undefined;
+                const workshopUpdatedAt = normalizeSteamWorkshopUpdatedAt(detail.time_updated);
+                const values: Array<string | number | null> = [];
 
-                if (hasSubscribersCol && (subsValue !== null || thumbValue !== undefined)) {
-                    enrichStmt.run(
-                        ...(hasThumbnailCol
-                            ? [subsValue, thumbValue, workshopId]
-                            : [subsValue, workshopId])
-                    );
+                if (hasSubscribersCol) {
+                    values.push(subsValue);
+                }
+                if (hasThumbnailCol) {
+                    values.push(thumbValue ?? null);
+                }
+                if (hasWorkshopUpdatedCol) {
+                    values.push(workshopUpdatedAt);
+                }
+
+                if (values.some((value) => value !== null)) {
+                    enrichStmt.run(...values, workshopId);
                 }
             }
         });
 
         for (const workshopId of workshopIds) {
             const detail = details.get(workshopId);
-            const remoteRaw = Number(detail?.time_updated ?? 0);
-            const remoteUpdated = Number.isFinite(remoteRaw) ? remoteRaw * 1000 : 0;
+            const remoteUpdatedAt = normalizeSteamWorkshopUpdatedAt(detail?.time_updated);
+            const remoteUpdated = Date.parse(remoteUpdatedAt ?? "");
             const localUpdated = localUpdatedById.get(workshopId) ?? 0;
             const hasUpdate = remoteUpdated > localUpdated + 60_000;
             updateFlagsByWorkshopId.set(workshopId, hasUpdate);
@@ -3249,8 +3295,28 @@ function ensureModsTable(db: Database.Database): void {
         Tags TEXT NULL,
         Description TEXT NULL,
         ThumbnailUrl TEXT NULL,
-        GameVersion TEXT NULL
+        GameVersion TEXT NULL,
+        WorkshopUpdatedAt TEXT NULL
     )`);
+}
+
+function ensureModsMetadataColumns(db: Database.Database): void {
+    if (!hasTable(db, "Mods")) return;
+
+    const columns = getTableColumns(db, "Mods");
+    const addColumn = (columnName: string, definition: string): void => {
+        if (!columns.has(columnName)) {
+            db.prepare(`ALTER TABLE Mods ADD COLUMN ${definition}`).run();
+        }
+    };
+
+    addColumn("TotalSubscribers", "TotalSubscribers INTEGER NULL DEFAULT 0");
+    addColumn("IsMultiplayerSafe", "IsMultiplayerSafe INTEGER NULL DEFAULT 0");
+    addColumn("Tags", "Tags TEXT NULL");
+    addColumn("Description", "Description TEXT NULL");
+    addColumn("ThumbnailUrl", "ThumbnailUrl TEXT NULL");
+    addColumn("GameVersion", "GameVersion TEXT NULL");
+    addColumn("WorkshopUpdatedAt", "WorkshopUpdatedAt TEXT NULL");
 }
 
 function ensureProfilesTables(db: Database.Database): void {

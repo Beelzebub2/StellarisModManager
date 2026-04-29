@@ -39,6 +39,19 @@ export function formatUtc(value) {
     return date.toISOString().replace("T", " ").replace(".000Z", " UTC");
 }
 
+export function formatHumanDateTime(value, fallback = "Never") {
+    if (!value || typeof value !== "string") return fallback;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit"
+    }).format(date);
+}
+
 export function formatInteger(value) {
     return Number(value || 0).toLocaleString();
 }

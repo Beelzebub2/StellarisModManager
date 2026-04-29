@@ -4349,7 +4349,7 @@ pre {
     height: 100%;
     background: var(--success);
     border-radius: var(--r-pill) 0 0 var(--r-pill);
-    transition: width 160ms var(--ease);
+    transition: none;
     min-width: 0;
 }
 
@@ -4357,7 +4357,7 @@ pre {
     height: 100%;
     background: var(--danger);
     border-radius: 0 var(--r-pill) var(--r-pill) 0;
-    transition: width 160ms var(--ease);
+    transition: none;
     min-width: 0;
 }
 
@@ -4420,11 +4420,11 @@ pre {
     border: 1.5px solid;
     cursor: pointer;
     transition:
-        background var(--dur-fast) var(--ease-out),
-        border-color var(--dur-fast) var(--ease-out),
-        color var(--dur-fast) var(--ease-out),
-        box-shadow var(--dur-base) var(--ease-out),
-        transform var(--dur-fast) var(--ease-out);
+        background 60ms var(--ease-out),
+        border-color 60ms var(--ease-out),
+        color 60ms var(--ease-out),
+        box-shadow 60ms var(--ease-out),
+        transform 60ms var(--ease-out);
 }
 
 .vote-btn:active:not(:disabled) {
