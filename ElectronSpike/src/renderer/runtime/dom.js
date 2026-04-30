@@ -32,24 +32,27 @@ export function toDisplayValue(value, fallback = "Not set") {
     return fallback;
 }
 
-export function formatUtc(value) {
-    if (!value || typeof value !== "string") return "Never";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return value;
-    return date.toISOString().replace("T", " ").replace(".000Z", " UTC");
-}
+const humanDateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+});
 
-export function formatHumanDateTime(value, fallback = "Never") {
+function formatDateTimeValue(value, fallback) {
     if (!value || typeof value !== "string") return fallback;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
-    return new Intl.DateTimeFormat(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit"
-    }).format(date);
+    return humanDateTimeFormatter.format(date);
+}
+
+export function formatUtc(value) {
+    return formatDateTimeValue(value, "Never");
+}
+
+export function formatHumanDateTime(value, fallback = "Never") {
+    return formatDateTimeValue(value, fallback);
 }
 
 export function formatInteger(value) {
