@@ -37,6 +37,8 @@ test("renderer has a dedicated merger results window initialization path", () =>
     assert.match(js, /getWindowView\(\)/);
     assert.match(js, /view"\)\s*\|\|\s*"main"/);
     assert.match(js, /windowView === "merger-results"/);
+    assert.match(js, /async function refreshTopbarShell\(\)[\s\S]*getAppVersion\(\)[\s\S]*applyAppIcon\(\)[\s\S]*refreshStellarisyncStatus\(\)/);
+    assert.match(js, /windowView === "merger-results"[\s\S]*refreshTopbarShell\(\)/);
     assert.match(js, /refreshMergerPlan\(\)/);
     assert.match(js, /renderMergerResultsWorkspace\(\)/);
     assert.match(js, /modMergerAnalyze\(\{\s*openResults:\s*true\s*\}\)/);
@@ -87,16 +89,51 @@ test("merger results exposes simple review and advanced code-level inspection mo
     assert.match(css, /\.merger-code-viewer/);
 });
 
-test("results window css hides the main app chrome and expands the workspace", () => {
+test("merger results advanced mode renders generated output as a color coded diff", () => {
+    const js = readRendererRuntimeSource();
+    const css = fs.readFileSync(stylesPath, "utf8");
+
+    assert.match(js, /renderMergerDiffViewer/);
+    assert.match(js, /function getDefaultMergerPreviewModId/);
+    assert.match(js, /firstNonWinner/);
+    assert.match(js, /merger-diff-legend/);
+    assert.match(js, /merger-diff-line merger-diff-line-add/);
+    assert.match(js, /merger-diff-line merger-diff-line-remove/);
+    assert.match(js, /merger-diff-line merger-diff-line-context/);
+    assert.match(css, /\.merger-diff-viewer/);
+    assert.match(css, /\.merger-diff-legend/);
+    assert.match(css, /\.merger-diff-line-add/);
+    assert.match(css, /\.merger-diff-line-remove/);
+});
+
+test("results window keeps the app topbar while isolating the merger workspace", () => {
     const css = fs.readFileSync(stylesPath, "utf8");
 
     assert.match(css, /body\[data-window-view="merger-results"\]/);
-    assert.match(css, /body\[data-window-view="merger-results"\]\s+\.topbar/);
+    assert.doesNotMatch(css, /body\[data-window-view="merger-results"\]\s+\.topbar[\s\S]*display:\s*none\s*!important/);
     assert.match(css, /body\[data-window-view="merger-results"\]\s+\.workspace/);
     assert.match(css, /body\[data-window-view="merger-results"\]\s+#mergerResultsWorkspace/);
+    assert.match(css, /body\[data-window-view="merger-results"\]\s+\.window-shell\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
     assert.match(css, /\.merger-results-drag-region[\s\S]*-webkit-app-region:\s*drag/);
     assert.match(css, /body\[data-window-view="merger-results"\]\s+button[\s\S]*-webkit-app-region:\s*no-drag/);
     assert.match(css, /\.merger-results-layout/);
     assert.match(css, /\.merger-results-row[\s\S]*grid-template-columns/);
     assert.match(css, /\.merger-results-row-reason/);
+});
+
+test("results window panels constrain long paths and code without overflowing the page", () => {
+    const css = fs.readFileSync(stylesPath, "utf8");
+
+    assert.match(css, /\.merger-results-workspace\s*\{[\s\S]*overflow:\s*hidden/);
+    assert.match(css, /\.merger-results-detail\s*\{[\s\S]*overflow:\s*auto/);
+    assert.match(css, /\.merger-results-list-shell,\s*[\r\n]+\.merger-results-detail\s*\{[\s\S]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+    assert.match(css, /\.merger-advanced-grid\s*\{[\s\S]*min-width:\s*0/);
+    assert.match(css, /\.merger-advanced-grid\s*>\s*section\s*\{[\s\S]*min-width:\s*0/);
+    assert.match(css, /body\[data-window-view="merger-results"\]\s+#mergerResultsWorkspace\s*\{[\s\S]*overflow:\s*auto/);
+    assert.match(css, /\.merger-detail-card\s*\{[\s\S]*min-width:\s*0/);
+    assert.match(css, /\.merger-detail-header\s*\{[\s\S]*min-width:\s*0/);
+    assert.match(css, /\.merger-detail-header h3,[\s\S]*\{[\s\S]*overflow-wrap:\s*anywhere/);
+    assert.match(css, /\.merger-source-row\s*\{[\s\S]*min-width:\s*0/);
+    assert.match(css, /\.merger-code-viewer[\s\S]*max-width:\s*100%/);
+    assert.match(css, /\.merger-source-main[\s\S]*overflow-wrap:\s*anywhere/);
 });

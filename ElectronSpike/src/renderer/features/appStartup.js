@@ -44,6 +44,19 @@ export function createAppStartupController({
     renderSettingsSubtabs,
     revealNewlyAddedDisabledMods
 }) {
+    async function refreshTopbarShell() {
+        try {
+            await window.spikeApi.ping();
+            const version = await window.spikeApi.getAppVersion();
+            setText("appVersionText", `v${version}`);
+        } catch {
+            setText("appVersionText", "v0.1.0");
+        }
+
+        await applyAppIcon();
+        await refreshStellarisyncStatus();
+    }
+
     async function init() {
         hookWindowResizeResponsiveness();
         applyDataIcons(document);
@@ -54,11 +67,7 @@ export function createAppStartupController({
         if (windowView === "merger-results") {
             hookMergerControls();
             hookGlobalControls();
-            try {
-                await window.spikeApi.ping();
-            } catch {
-                // The results window can still render cached plan state if ping fails.
-            }
+            await refreshTopbarShell();
             await Promise.all([
                 refreshMergerPlan(),
                 refreshMergerProgressStatus()
@@ -77,17 +86,7 @@ export function createAppStartupController({
         initWorkshop();
         renderSettingsSubtabs();
 
-        // Handshake + version
-        try {
-            await window.spikeApi.ping();
-            const version = await window.spikeApi.getAppVersion();
-            setText("appVersionText", `v${version}`);
-        } catch {
-            setText("appVersionText", "v0.1.0");
-        }
-
-        await applyAppIcon();
-
+        await refreshTopbarShell();
         await bootstrapSelectedVersionFromSettings();
 
         // Load all data in parallel
@@ -98,7 +97,6 @@ export function createAppStartupController({
             refreshMergerPlan(),
             refreshMergerProgressStatus(),
             refreshQueueSnapshot(),
-            refreshStellarisyncStatus(),
             refreshModsPathMigrationStatus(),
             refreshGameRunningStatus()
         ]);

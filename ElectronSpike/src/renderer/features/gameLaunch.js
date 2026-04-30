@@ -5,10 +5,11 @@ import { setGlobalStatus } from "../runtime/status.js";
 import { state } from "../runtime/state.js";
 
 export async function refreshStellarisyncStatus() {
+    const chip = byId("stellarisyncChip");
+    const text = byId("stellarisyncText");
+
     try {
         const status = await window.spikeApi.getStellarisyncStatus();
-        const chip = byId("stellarisyncChip");
-        const text = byId("stellarisyncText");
 
         if (chip && text) {
             if (status.online) {
@@ -20,7 +21,10 @@ export async function refreshStellarisyncStatus() {
             }
         }
     } catch {
-        // Non-fatal status indicator.
+        if (chip && text) {
+            chip.className = "status-chip status-chip-offline";
+            text.textContent = "Stellarisync Unavailable";
+        }
     }
 }
 

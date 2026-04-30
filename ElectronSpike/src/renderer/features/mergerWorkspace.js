@@ -1,4 +1,5 @@
 import { byId, escapeHtml, formatInteger, formatUtc, setText } from "../runtime/dom.js";
+import { renderMergerDiffViewer } from "./mergerDiff.js";
 import { showModal } from "../runtime/modal.js";
 import { state } from "../runtime/state.js";
 import { setMergerStatus } from "../runtime/status.js";
@@ -180,6 +181,22 @@ export function createMergerWorkspaceController({
         state.merger.previewSelectedModId = null;
     }
 
+    function hasGeneratedMergerOutput(filePlan) {
+        return String(filePlan?.generatedOutput || filePlan?.outputPreview || "").trim().length > 0;
+    }
+
+    function getDefaultMergerPreviewModId(filePlan, entries) {
+        const winnerModId = filePlan?.winner?.modId ?? null;
+        if (hasGeneratedMergerOutput(filePlan)) {
+            const firstNonWinner = entries.find((entry) => entry.modId !== winnerModId);
+            if (firstNonWinner) {
+                return firstNonWinner.modId;
+            }
+        }
+
+        return winnerModId ?? entries[0]?.modId ?? null;
+    }
+
     function getActiveMergerPreviewModId(filePlan, entries) {
         const selectedModId = state.merger.previewSelectedModId;
         if (
@@ -190,7 +207,7 @@ export function createMergerWorkspaceController({
             return selectedModId;
         }
 
-        return filePlan.winner?.modId ?? entries[0]?.modId ?? null;
+        return getDefaultMergerPreviewModId(filePlan, entries);
     }
 
     function setMergerResultsNextStep(text, detail) {
@@ -260,15 +277,36 @@ export function createMergerWorkspaceController({
         return `<pre class="merger-code-viewer"><code>${escapeHtml(previewRecord.content + truncated)}</code></pre>`;
     }
 
-    function renderGeneratedCodeViewer(filePlan, generatedPreview) {
+    function renderGeneratedCodeViewer(filePlan, entries, generatedPreview) {
+        const selectedPreviewModId = getActiveMergerPreviewModId(filePlan, entries);
+        const selectedPreview = selectedPreviewModId === null
+            ? null
+            : getMergerPreviewRecord(filePlan, selectedPreviewModId);
+        const selectedContent = selectedPreview?.content || "";
+
         if (generatedPreview) {
-            return `<pre class="merger-code-viewer"><code>${escapeHtml(generatedPreview)}</code></pre>`;
+            return renderMergerDiffViewer(
+                selectedContent,
+                generatedPreview,
+                "No generated output is available for this file."
+            );
         }
 
         const winner = filePlan.winner;
         if (winner) {
             const previewRecord = getMergerPreviewRecord(filePlan, winner.modId);
-            return renderMergerCodeViewer(previewRecord, "Load the current winner source to inspect the exact file that will be copied.");
+            if (previewRecord?.content) {
+                return renderMergerDiffViewer(
+                    selectedContent,
+                    previewRecord.content,
+                    "Load the current winner source to inspect the exact file that will be copied."
+                );
+            }
+
+            return renderMergerCodeViewer(
+                previewRecord,
+                "Load the current winner source to inspect the exact file that will be copied."
+            );
         }
 
         return '<div class="merger-code-viewer is-empty">No generated output or winner is selected for this file.</div>';
@@ -321,8 +359,8 @@ export function createMergerWorkspaceController({
                             : renderMergerCodeViewer(selectedPreview)}
                     </section>
                     <section class="merger-advanced-output">
-                        <p class="settings-key">Generated or winner output</p>
-                        ${renderGeneratedCodeViewer(filePlan, generatedPreview)}
+                        <p class="settings-key">Output diff against selected source</p>
+                        ${renderGeneratedCodeViewer(filePlan, entries, generatedPreview)}
                     </section>
                 </div>
             </article>
